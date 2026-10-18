@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=simpleplay
+Comment=A small, clean mp3 player
+Exec=simpleplay %F
+Icon=simpleplay
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+MimeType=audio/mpeg;
+StartupWMClass=simpleplay
