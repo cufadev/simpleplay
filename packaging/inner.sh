@@ -16,12 +16,14 @@ python3 -m venv /tmp/uvenv
 /tmp/uvenv/bin/pip install -q uv
 /tmp/uvenv/bin/uv venv -q --python 3.13 /tmp/venv
 /tmp/uvenv/bin/uv pip install -q --python /tmp/venv/bin/python \
-    pyinstaller PySide6 pygame mutagen numpy miniaudio
+    pyinstaller PySide6 pygame mutagen numpy miniaudio certifi
 /tmp/venv/bin/python --version
 cd /src
 /tmp/venv/bin/pyinstaller --noconfirm --clean --onedir --name simpleplay \
     --distpath /out --workpath /tmp/work --specpath /tmp/work \
     --add-data "/src/icon/simpleplay-256.png:icon" \
+    --hidden-import _cffi_backend --hidden-import miniaudio \
+    --collect-data certifi \
     --exclude-module tkinter --exclude-module PIL \
     --exclude-module PySide6.QtNetwork --exclude-module PySide6.QtSvg \
     simpleplay.py

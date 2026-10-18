@@ -1,0 +1,17 @@
+# simpleplay - dependencias para ejecutarlo desde el código (Windows, Linux y macOS).
+# Python 3.10 a 3.13 (se desarrolla y prueba con 3.13).
+#
+#   py -3.13 -m venv .venv                       (en Windows)
+#   .venv\Scripts\pip install -r requirements.txt
+#   .venv\Scripts\python simpleplay.py
+#
+PySide6-Essentials>=6.8   # interfaz (Qt): solo Core, Gui y Widgets, sin los módulos que no se usan
+pygame>=2.6        # reproducción de audio
+mutagen>=1.47      # leer y escribir las etiquetas del mp3 (título, artista, portada)
+numpy>=2.0         # análisis del espectro (FFT)
+miniaudio>=1.60    # decodificador incluido para el espectro (no hace falta ffmpeg)
+certifi>=2024.0    # certificados HTTPS de respaldo para la escoba (MusicBrainz)
+
+# Opcional: ffmpeg instalado en el sistema acelera el espectro en archivos muy largos.
+# Solo para armar el ejecutable (no hace falta para usarlo):
+#   pip install pyinstaller

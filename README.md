@@ -19,10 +19,13 @@ No streaming, no accounts, no ads.
   that react to the real audio.
 - Previous, play/pause, next, shuffle, and a time bar you can click or drag to seek.
 - A playlist panel that slides open; add files with the **+** button, with a right click,
-  by dragging mp3 files onto the window, or from the command line.
+  by dragging mp3 files onto the window, or from the command line. Select several tracks with
+  `Ctrl`/`Shift`+click and remove them with the **-** button.
 - Remembers your last session (playlist, track, position, shuffle) and starts paused,
   ready to resume.
 - Smooth transitions for play/pause, cover changes, the playlist and the buttons.
+- Media keys and desktop controls (MPRIS): play/pause, next and previous from your keyboard
+  and from the KDE and GNOME media widgets.
 - Volume is left to the system mixer.
 - The interface is in English or Spanish, following your system language.
 
@@ -31,8 +34,8 @@ No streaming, no accounts, no ads.
 Get the AppImage from the [Releases](../../releases) page, then make it executable and run it:
 
 ```
-chmod +x simpleplay-1.0-x86_64.AppImage
-./simpleplay-1.0-x86_64.AppImage
+chmod +x simpleplay-1.1-x86_64.AppImage
+./simpleplay-1.1-x86_64.AppImage
 ```
 
 On GNOME you can also right click the file, open **Properties > Permissions** and enable
@@ -44,7 +47,7 @@ Requirements:
   Fedora 36+, Linux Mint 21+, Arch and similar).
 - `libGL` and `libEGL` (every desktop install has them).
 - FUSE 2 to run AppImages directly (`libfuse2t64` on recent Ubuntu). Without it, run
-  `./simpleplay-1.0-x86_64.AppImage --appimage-extract-and-run`.
+  `./simpleplay-1.1-x86_64.AppImage --appimage-extract-and-run`.
 
 It does not add itself to your applications menu. Use
 [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher), or copy
@@ -52,10 +55,20 @@ It does not add itself to your applications menu. Use
 
 ## Run from source
 
+Python 3.10 to 3.13. On Linux and macOS:
+
 ```
 python3 -m venv .venv
-.venv/bin/pip install PySide6 pygame mutagen numpy miniaudio
+.venv/bin/pip install -r requirements.txt
 .venv/bin/python simpleplay.py [file.mp3 ...]
+```
+
+On Windows (PowerShell or Command Prompt, with Python from python.org and "Add to PATH" ticked):
+
+```
+py -3.13 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python simpleplay.py
 ```
 
 `ffmpeg` is optional: if installed, the spectrum bars seek faster inside very long files;
@@ -65,13 +78,51 @@ otherwise the bundled `miniaudio` decoder is used.
 
 | Action | How |
 |---|---|
-| Play / pause | center button, or the space bar |
-| Seek | click or drag the time bar |
+| Play / pause | center button, `Space`, or the media key |
+| Previous / next | the buttons, `P` / `N`, or the media keys |
+| Seek | click or drag the time bar; `Left` / `Right` jump 5 s |
 | Track info / spectrum | click the top pill |
-| Playlist | the list button (inside it, **+** adds more tracks) |
-| Open files | **+**, right click > Open files, drag and drop, or command line |
+| Playlist | the list button (inside it, **+** adds tracks and **-** removes the selected one) |
+| Open files | **+**, `Ctrl+O`, right click > Open files, drag and drop, or command line |
+| Select several tracks | `Ctrl`+click or `Shift`+click in the list |
+| Remove the selected tracks | the **-** button or `Delete` (the files are not deleted) |
 | Move the window | drag any empty area |
 | Quit | `Esc`, or right click > Close |
+
+## Troubleshooting
+
+The spectrum bars stay flat, or something else looks wrong? Check how the audio is decoded
+without opening the window:
+
+```
+./simpleplay-1.1-x86_64.AppImage --diagnose some-song.mp3
+```
+
+(or `python simpleplay.py --diagnose some-song.mp3` from source). To see what the player is
+doing while it runs, start it with `SIMPLEPLAY_DEBUG=1` from a terminal and include the
+output when reporting a problem.
+
+## Clean up your library from the command line
+
+Files downloaded from YouTube usually have no tags and names like
+`Gustavo Cerati - Pulsar (Official Video) [FCdOGM-Ac-8].mp3`. `tools/limpiar_biblioteca.py` takes the
+artist and the title out of the name (or out of the tags that already exist), dropping `(Official
+Video)`, `[id]`, `- Topic`, and writes them into the files. It does not need the player to be running.
+
+```
+python tools/limpiar_biblioteca.py ~/Music                  # only shows what it would change
+python tools/limpiar_biblioteca.py ~/Music --aplicar        # writes the clean title and artist
+python tools/limpiar_biblioteca.py ~/Music --musicbrainz    # also looks up album, year and cover art
+python tools/limpiar_biblioteca.py --deshacer               # puts the last run back as it was
+```
+
+- By default it **changes nothing**: it prints one line per file and a summary.
+- When it writes, the previous tags and cover are saved first and files go through a temporary
+  copy, so `--deshacer` restores them exactly. File names are never touched.
+- Names without an artist (`Black [id]`) are reported as having no data; they cannot be guessed.
+- `--musicbrainz` needs internet and takes around 6 seconds per file. It only accepts a clearly
+  matching official studio album, whose length is close to the file's. Its results are still
+  being tuned: look at the dry run before using `--aplicar`.
 
 ## Build the AppImage
 

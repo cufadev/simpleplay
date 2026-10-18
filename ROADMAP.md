@@ -2,43 +2,47 @@
 
 Ideas for future versions. What is already done is in [CHANGELOG.md](CHANGELOG.md).
 
-## Fill in an mp3's metadata automatically
+## The broom: fill in track info from inside the player (written, switched off)
 
-Identify a song and fill in its title, artist and cover art without the user doing anything.
+A button next to the controls that looks the selected tracks up on MusicBrainz and writes title,
+artist, album, year and cover art into the mp3 files, with undo. The code is in `simpleplay.py`
+and is enabled with `SIMPLEPLAY_ESCOBA=1`, but it is hidden in 1.1 because on the author's machine
+it did not recognize tracks and the cause was not found. In tests it completed about three
+quarters of the tracks that have an artist in their name (33 of 44 in two samples of a real
+library) with no wrong artist, so the problem may be in how it is used or in the environment.
+The command-line tool `tools/limpiar_biblioteca.py` shares the same search code and prints why
+each file was skipped, which should help find out.
+
+### Recognize tracks from the audio (second stage)
+
+Tracks whose name carries no artist (`Black [id]`: 45 of 155 in the author's library) cannot be
+looked up by text.
 
 ### How it would work
-- Audio fingerprint with **Chromaprint** (`fpcalc`, package `chromaprint-tools`), looked up
-  on **AcoustID** (`pyacoustid`). It is an open, free service, but it needs your own
-  application key.
-- The result is then queried against **MusicBrainz** (title, artist, album) and
-  **Cover Art Archive** (cover art). MusicBrainz requires a descriptive User-Agent and
-  limits requests to about 1 per second.
+- Audio fingerprint with **Chromaprint** (`fpcalc`, package `chromaprint-tools`), looked up on
+  **AcoustID** (`pyacoustid`). It is an open, free service, but it needs your own application key.
+- The result gives the MusicBrainz recording, so the rest of the broom (album choice, cover art,
+  safe writing, undo) is reused as it is.
 - Only the fingerprint (a short string) leaves the computer, never the audio.
-- It works well for known studio recordings. With remixes, live versions or obscure music
-  it may find nothing; in that case the file is left untouched.
-
-### What "automatic" would mean
-- When opening a track that is missing its title or artist, identify it in the background
-  without interrupting playback, and fill in the data when the answer arrives (the pill
-  and the cover update by themselves, with the existing transitions).
-- Fill in only empty fields, and never overwrite tags that already exist.
-- Accept a result only on a high-confidence match; if in doubt, leave it as it is.
-- Writing tags into the mp3 changes the file for good. Decide beforehand whether to write
-  directly, keep a backup copy, or store the data separately (in the session file)
-  without touching the mp3.
+- It works well for known studio recordings. With remixes, live versions or obscure music it may
+  find nothing; in that case the file is left untouched.
+- The AppImage would have to bundle `fpcalc`.
 
 ### Still to decide
-- Register an AcoustID key and install `chromaprint-tools`.
-- Where to store the key (a config file, never in the code).
-- Whether to write into the mp3 or keep the data aside.
+- Register an AcoustID key and decide where to store it (a config file, never in the code).
+- Whether to offer the fingerprint automatically when the text search finds nothing.
 
-### Before starting
-Try it with 5 or 6 real tracks to measure how many are actually recognized.
+### Ideas to improve the text search
+- Let the user correct a wrong match, or pick from the candidates, before writing.
+- Remember tracks that were skipped, so the broom does not ask MusicBrainz about them again.
 
 ## Windows and macOS versions
 
 The libraries used (PySide6, pygame, numpy, mutagen, miniaudio) all run on both systems, so
 this is mostly packaging and a few small code changes.
+
+Status: `requirements.txt` is ready and checked to have Windows wheels; a first run on a real Windows
+machine is pending, and the macOS handler for opened files is not written yet.
 
 ### Code changes needed
 - Store the session file with `QStandardPaths` (`%APPDATA%` on Windows,
