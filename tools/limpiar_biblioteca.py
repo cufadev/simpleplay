@@ -48,7 +48,7 @@ def proponer(ruta, usar_mb):
     tit, art = etiquetas(ruta)
     cands = sp.candidatos(ruta, tit, art)
     if not cands:
-        return "sin_datos", None, "el nombre no tiene artista y no hay etiqueta de artista"
+        return "sin_datos", None, "no se pudo deducir un artista con seguridad (sin artista en el nombre o formato dudoso)"
     if usar_mb:
         try:
             dur = MP3(ruta).info.length

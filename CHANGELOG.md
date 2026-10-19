@@ -3,6 +3,35 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
+## [1.2] - 2026-10-18
+
+### Added
+- **Search box** in the playlist (`Ctrl+F`): it shows only the tracks that contain every word you
+  type, ignoring accents and capitals, and also looks at the album. `Enter` plays the first result
+  and `Esc` clears the search before it closes the player.
+- **Sorting** by artist, title or album, or back to the order the tracks were added. The track that
+  is playing keeps playing and the selection is kept. The order is saved with the session.
+- **Reorder by dragging** tracks in the playlist.
+- **Repeat mode**: off, the whole list, or one track (`R` or the button at the left of the
+  controls). It is remembered, and desktop media widgets can change it too (MPRIS `LoopStatus`).
+  The previous button restarts the track, or goes to the last one when repeating the list.
+- **Add a whole folder** (with its subfolders) from the **+** button (`Ctrl+Shift+O`), by dragging a
+  folder onto the window, or from the command line. Tracks already in the list are not added again,
+  and the last folder used is remembered.
+- A short message in the pill when tracks are added.
+
+### Changed
+- The playlist shows **"Artist - Title" from the tags** instead of the file name, so a library
+  cleaned with `tools/limpiar_biblioteca.py` or tagged with MusicBrainz Picard looks clean. Tracks
+  without useful tags show their file name without the `[YouTube id]` and `(Official Video)` noise
+  (only on screen, the file is not renamed).
+- The **+**, **-** and sort buttons of the playlist are smaller (32, 28 and 28 px).
+
+### Fixed
+- `tools/limpiar_biblioteca.py` no longer proposes nonsense for names written the other way round
+  (`Title (Cover) - Artist`, now read correctly), for DJ mixes and track lists, or for a loose
+  `Official Video HD` at the end of a title.
+
 ## [1.1] - 2026-10-18
 
 ### Added

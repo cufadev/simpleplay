@@ -1,0 +1,77 @@
+# Builds the Windows version (a folder with simpleplay.exe, zipped) whenever a release is
+# published, checks that it starts, and attaches the zip to that release.
+# It can also be run by hand from the Actions tab (workflow_dispatch) to just build and download it.
+name: Build Windows
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the zip to (leave empty to only build)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build with PyInstaller
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onedir --windowed --name simpleplay `
+            --icon icon\simpleplay.ico --add-data "icon\simpleplay-256.png;icon" `
+            --hidden-import miniaudio --hidden-import _cffi_backend --collect-data certifi `
+            --exclude-module tkinter --exclude-module PIL simpleplay.py
+
+      - name: Smoke test - the audio decoder works inside the build
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\simpleplay\simpleplay.exe" -ArgumentList "--diagnose","tests\silencio.mp3" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "--diagnose failed with exit code $($p.ExitCode)" }
+
+      - name: Smoke test - the window starts and stays up
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          SDL_AUDIODRIVER: dummy
+        run: |
+          $p = Start-Process -FilePath "dist\simpleplay\simpleplay.exe" -ArgumentList "tests\silencio.mp3" -PassThru
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) { throw "simpleplay exited early with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+
+      - name: Zip
+        shell: pwsh
+        run: |
+          $ver = (Select-String -Path simpleplay.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
+          Compress-Archive -Path dist\simpleplay\* -DestinationPath "simpleplay-$ver-windows-x64.zip"
+          "ZIP=simpleplay-$ver-windows-x64.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simpleplay-windows-x64
+          path: ${{ env.ZIP }}
+
+      - name: Attach to the release
+        if: github.event_name == 'release' || inputs.tag != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: gh release upload $env:TAG $env:ZIP --clobber

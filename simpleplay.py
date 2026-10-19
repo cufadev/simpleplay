@@ -29,14 +29,14 @@ from mutagen.id3 import ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TDRC, APIC
 from mutagen.mp3 import MP3
 from PySide6.QtCore import (Qt, QTimer, QRectF, QPointF, QSize, Signal, QLocale, QUrl, QObject,
                             ClassInfo, Property, Slot, QMetaType,
-                            QStandardPaths, QVariantAnimation, QEasingCurve)
+                            QStandardPaths, QVariantAnimation, QEasingCurve, QPoint, QItemSelectionModel)
 from PySide6.QtGui import (QShortcut, QKeySequence, QIcon, QFont, QFontMetrics, QPainter, QColor, QPixmap, QImage, QLinearGradient,
-                           QPainterPath, QPolygonF, QPen)
+                           QPainterPath, QPolygonF, QPen, QPalette)
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QSlider, QAbstractButton, QListWidget,
                                QFileDialog, QFrame, QLayout, QMenu, QSizePolicy,
                                QStackedLayout, QGraphicsOpacityEffect, QMessageBox,
-                               QAbstractItemView)
+                               QAbstractItemView, QLineEdit, QListWidgetItem)
 
 try:
     from PySide6.QtDBus import (QDBusConnection, QDBusAbstractAdaptor, QDBusObjectPath,
@@ -45,7 +45,7 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.1"
+VERSION = "1.2"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
@@ -117,12 +117,74 @@ QFrame#panel { background: rgba(22,22,24,235); border-radius: 18px; }
 QListWidget { background: transparent; color: white; border: none; padding: 0; outline: 0; }
 QListWidget::item { padding: 6px 8px; border-radius: 8px; }
 QListWidget::item:selected { background: rgba(255,78,1,190); color: white; }
+QLineEdit { background: rgba(255,255,255,26); color: white; border: none; border-radius: 14px;
+            padding: 7px 12px; selection-background-color: #ff4e01; }
+QMenu { background: #1e1e22; color: #f2f2f2; border: 1px solid rgba(255,255,255,30); border-radius: 10px; padding: 6px; }
+QMenu::item { padding: 7px 22px 7px 14px; border-radius: 6px; }
+QMenu::item:selected { background: #ff4e01; }
+QMenu::item:disabled { color: rgba(255,255,255,110); }
+QMenu::separator { height: 1px; background: rgba(255,255,255,30); margin: 5px 8px; }
 """
 
 
 def fmt(s):
     s = max(int(s), 0)
     return f"{s // 60}:{s % 60:02d}"
+
+
+def datos_lista(ruta):
+    """Lo que la lista necesita de un tema: nombre para mostrar, artista, título, álbum y n.º de pista."""
+    art = tit = alb = ""
+    pista = 0
+    try:
+        t = ID3(ruta)
+        tit = str(t["TIT2"]).strip() if "TIT2" in t else ""
+        art = str(t["TPE1"]).strip() if "TPE1" in t else ""
+        alb = str(t["TALB"]).strip() if "TALB" in t else ""
+        m = re.match(r"\d+", str(t["TRCK"])) if "TRCK" in t else None
+        pista = int(m.group()) if m else 0
+    except Exception:
+        pass
+    # sin etiquetas útiles: el nombre del archivo, sin "[id de YouTube]" ni "(Official Video)" (solo para mostrar)
+    limpio = limpiar_nombre(Path(ruta).stem) or Path(ruta).stem
+    return {"nombre": f"{art} - {tit}" if tit and art else (tit or limpio),
+            "artista": art, "titulo": tit or limpio, "album": alb, "pista": pista}
+
+
+def nombre_para_lista(ruta):
+    """Lo que se ve en la lista: "Artista - Título" de las etiquetas; si faltan, el título o el nombre limpio."""
+    return datos_lista(ruta)["nombre"]
+
+
+def buscar_mp3(rutas):
+    """Expande carpetas (con sus subcarpetas) y devuelve los mp3, sin repetir y en orden."""
+    out, vistos = [], set()
+    for r in rutas:
+        p = Path(r)
+        if p.is_dir():
+            hallados = sorted((x for x in p.rglob("*") if x.suffix.lower() == ".mp3" and x.is_file()),
+                              key=lambda x: str(x).lower())
+        else:
+            hallados = [p] if p.suffix.lower() == ".mp3" and p.is_file() else []
+        for x in hallados:
+            if str(x) not in vistos:
+                vistos.add(str(x))
+                out.append(str(x))
+    return out
+
+
+ORDENES = ("original", "artista", "titulo", "album")
+
+
+def clave_orden(modo, d):
+    """Clave para ordenar un tema según el modo. Sin acentos ni mayúsculas; los datos vacíos van al final."""
+    def n(t):
+        return (t == "", _norm(t))
+    if modo == "artista":
+        return (n(d["artista"]), n(d["album"]), d["pista"] or 9999, n(d["titulo"]))
+    if modo == "album":
+        return (n(d["album"]), d["pista"] or 9999, n(d["titulo"]))
+    return (n(d["titulo"]), n(d["artista"]))
 
 
 def leer_meta(path):
@@ -257,12 +319,16 @@ def diagnosticar(ruta):
     print("archivo:", ruta)
     print("ffmpeg:", shutil.which("ffmpeg") or "no está instalado (se usa miniaudio)")
     mejor = None
+    try:  # un tema corto no tiene un segundo 5: se arranca más cerca del principio
+        inicio = min(5.0, max(0.0, MP3(ruta).info.length - 3))
+    except Exception:
+        inicio = 0.0
     for nombre, fn in (("ffmpeg", tramo_ffmpeg), ("miniaudio", tramo_miniaudio)):
         if nombre == "ffmpeg" and not shutil.which("ffmpeg"):
             continue
         t0 = time.time()
         try:
-            m = fn(ruta, 5.0)
+            m = fn(ruta, inicio)
             rms = float(np.sqrt(np.mean(m.astype(float) ** 2))) if len(m) else 0.0
             print(f"{nombre}: {len(m) / SR:.1f} s de audio en {time.time() - t0:.2f} s, nivel RMS {rms:.0f}")
             if len(m) > VENTANA and mejor is None:
@@ -273,7 +339,7 @@ def diagnosticar(ruta):
         print("resultado: NO se pudo decodificar; las barras del espectro quedarían planas")
         return 1
     ref = nivel_referencia(mejor)
-    db = bandas_db(mejor[SR:SR + VENTANA])
+    db = bandas_db(mejor[min(SR, len(mejor) - VENTANA):][:VENTANA])
     vals = np.clip((db - (ref - RANGO_DB)) / RANGO_DB, 0, 1)
     print("espectro de ejemplo:", "".join(" ▁▂▃▄▅▆▇█"[int(round(v * 8))] for v in vals), f"(referencia {ref:.1f} dB)")
     print("resultado: el espectro debería funcionar")
@@ -306,6 +372,8 @@ def limpiar_nombre(texto):
     t = re.sub(r"\[[^\]]*\]", " ", t)                                  # [id de YouTube], [HD], [Ultra Music]...
     t = re.sub(r"\([^)]*\)", lambda m: "" if RUIDO.search(m.group(0)) else m.group(0), t)
     t = re.sub(r"\s*[-–—|]\s*(topic|vevo)\s*$", "", t, flags=re.I)
+    # "Official Video HD" suelto al final (sin paréntesis)
+    t = re.sub(r"\s+(official|oficial)(\s+(music|video|audio|lyrics?|hd|4k|videoclip))*\s*$", "", t, flags=re.I)
     return re.sub(r"\s+", " ", t).strip(" -–—|")
 
 
@@ -322,9 +390,9 @@ def candidatos(ruta, titulo_tag, artista_tag):
     out, invertidos = [], []
     for base in (tit, nombre):
         if " - " in base:
-            a, t = base.split(" - ", 1)
-            out.append((a.strip(), t.strip()))
-            invertidos.append((t.strip(), a.strip()))  # por si el archivo dice "Título - Artista"
+            a, t = (limpiar_nombre(x) for x in base.split(" - ", 1))  # cada parte por separado
+            out.append((a, t))
+            invertidos.append((t, a))  # por si el archivo dice "Título - Artista"
     if art and tit:
         out.append((art, tit))
     if art and nombre and " - " not in nombre:
@@ -333,6 +401,8 @@ def candidatos(ruta, titulo_tag, artista_tag):
     for a, t in out + invertidos:
         if "|" in a + t or len(a) > 60 or len(t) > 90:
             continue  # parece un mix o una lista de temas, no un tema: no se adivina
+        if re.search(r'[()"]', a) or t.count("_") >= 2:
+            continue  # "Título (Cover) - Artista" escrito al revés, o un listado: no se adivina
         if a and t and (a.lower(), t.lower()) not in vistos:
             vistos.add((a.lower(), t.lower()))
             res.append((a, t))
@@ -652,6 +722,7 @@ class IconButton(QAbstractButton):
         self.setFixedSize(size, size)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
+        self.badge = ""  # texto chico sobre el ícono (el "1" del modo repetir un tema)
         self.angulo = 0.0  # vaivén del ícono mientras el botón está "trabajando"
         self._fase = 0.0
         self._osc = QTimer(self)
@@ -739,6 +810,13 @@ class IconButton(QAbstractButton):
                 p.rotate(self.angulo)
                 p.translate(-x, -y)
             self._icono(p, self.kind, x, y, s, w)
+        if self.badge:
+            p.setPen(w)
+            f = p.font()
+            f.setPixelSize(max(int(self.width() * 0.32), 8))
+            f.setBold(True)
+            p.setFont(f)
+            p.drawText(QRectF(x - s * 0.9, y - s * 0.9, s * 1.8, s * 1.8), Qt.AlignCenter, self.badge)
 
     def _icono(self, p, k, x, y, s, w):
         p.setBrush(w)
@@ -759,6 +837,23 @@ class IconButton(QAbstractButton):
         elif k == "list":
             for dy in (-0.85, 0, 0.85):
                 p.drawRoundedRect(QRectF(x - s * 1.1, y + dy * s - s * 0.14, s * 2.2, s * 0.28), 1, 1)
+        elif k == "repeat":
+            pen = QPen(w, 1.7)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawPolyline(QPolygonF([QPointF(x - s * 1.05, y + s * 0.15), QPointF(x - s * 1.05, y - s * 0.4),
+                                      QPointF(x - s * 0.7, y - s * 0.75), QPointF(x + s * 0.55, y - s * 0.75)]))
+            p.drawPolyline(QPolygonF([QPointF(x + s * 1.05, y - s * 0.15), QPointF(x + s * 1.05, y + s * 0.4),
+                                      QPointF(x + s * 0.7, y + s * 0.75), QPointF(x - s * 0.55, y + s * 0.75)]))
+            p.setPen(Qt.NoPen)
+            p.setBrush(w)
+            tri((x + s * 0.5, y - s * 1.1), (x + s * 0.5, y - s * 0.4), (x + s * 1.0, y - s * 0.75))
+            tri((x - s * 0.5, y + s * 0.4), (x - s * 0.5, y + s * 1.1), (x - s * 1.0, y + s * 0.75))
+        elif k == "sort":
+            for dy, ancho in ((-0.8, 2.2), (0.0, 1.5), (0.8, 0.8)):
+                p.drawRoundedRect(QRectF(x - s * 1.1, y + dy * s - s * 0.14, s * ancho, s * 0.28), 1, 1)
         elif k == "broom":
             # se dibuja derecha (cabeza abajo) y se inclina: el mango queda arriba a la derecha
             u = s * 1.2
@@ -1059,6 +1154,12 @@ if HAY_DBUS:
         MaximumRate = Property(float, lambda s: 1.0)
         Volume = Property(float, lambda s: 1.0)  # el volumen lo maneja el sistema
         Shuffle = Property(bool, lambda s: s.p.btn_shuffle.isChecked(), _poner_shuffle)
+
+        def _poner_loop(self, v):
+            self.p.poner_repetir({"None": "off", "Playlist": "all", "Track": "one"}.get(v, "off"))
+            self.p.guardar_estado()
+
+        LoopStatus = Property(str, lambda s: {"off": "None", "all": "Playlist", "one": "Track"}[s.p.repetir], _poner_loop)
         CanGoNext = Property(bool, lambda s: bool(s.p.pistas))
         CanGoPrevious = Property(bool, lambda s: bool(s.p.pistas))
         CanPlay = Property(bool, lambda s: bool(s.p.pistas))
@@ -1173,6 +1274,11 @@ class Player(QWidget):
         self.vaciada = False   # el usuario quitó todos los temas (hay que guardar la lista vacía)
         self.meta = {"titulo": "", "artista": "", "arte": ""}
         self.mpris = None
+        self.datos = {}              # ruta -> datos_lista(ruta): nombre, artista, título, álbum, pista
+        self.orden_original = []     # orden en que se agregaron (para volver con "Orden en que se agregaron")
+        self.modo_orden = "original"
+        self.repetir = "off"         # off | all | one
+        self.carpeta_musica = ""     # última carpeta usada en los diálogos
         self.etiquetando = False  # la escoba está trabajando
         self.etiquetador = None
         self.lote_undo = None
@@ -1256,14 +1362,14 @@ class Player(QWidget):
         self.btn_prev = IconButton("prev", 44)
         self.btn_play = IconButton("play", 50)
         self.btn_next = IconButton("next", 44)
+        self.btn_repetir = IconButton("repeat", 30)
+        self.btn_repetir.clicked.connect(self.alternar_repetir)
         botones = QHBoxLayout()
         botones.setSpacing(14)
-        if ESCOBA:
-            botones.addWidget(self.btn_escoba)  # mismo ancho que el shuffle: los 3 botones quedan centrados
-        else:
-            self.btn_escoba.setParent(self)
-            self.btn_escoba.hide()
-            botones.addSpacing(30)  # el mismo hueco, para que los 3 botones sigan centrados
+        # repetir a la izquierda y shuffle a la derecha: fila simétrica, el play queda en el centro justo
+        botones.addWidget(self.btn_repetir)
+        self.btn_escoba.setParent(self)  # la escoba (solo con SIMPLEPLAY_ESCOBA=1) va en la fila de la lista
+        self.btn_escoba.hide()
         botones.addStretch()
         for b in (self.btn_prev, self.btn_play, self.btn_next):
             botones.addWidget(b)
@@ -1283,26 +1389,45 @@ class Player(QWidget):
         pygame.mixer.music.set_volume(1.0)  # el volumen se maneja desde el sistema
 
         self.lista = QListWidget()
-        self.lista.setFixedHeight(140)
+        self.lista.setFixedHeight(168)  # unas 5 filas
         self.lista.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.lista.setTextElideMode(Qt.ElideRight)
         self.lista.setSelectionMode(QAbstractItemView.ExtendedSelection)  # Ctrl/Shift para varios
-        self.btn_quitar = IconButton("minus", 36)
+        self.lista.setDragDropMode(QAbstractItemView.InternalMove)        # arrastrar para reordenar
+        self.lista.setDefaultDropAction(Qt.MoveAction)
+        self.lista.model().rowsMoved.connect(self._reordenado)
+        self.buscador = QLineEdit()
+        self.buscador.setPlaceholderText(tr("Buscar en la lista…", "Search the list…"))
+        self.buscador.setClearButtonEnabled(True)
+        pal = self.buscador.palette()
+        pal.setColor(QPalette.PlaceholderText, QColor(255, 255, 255, 120))
+        self.buscador.setPalette(pal)
+        self.buscador.textChanged.connect(self._filtrar)
+        self.buscador.returnPressed.connect(self._reproducir_primero)
+        self.btn_orden = IconButton("sort", 28)
+        self.btn_orden.setToolTip(tr("Ordenar la lista", "Sort the list"))
+        self.btn_orden.clicked.connect(self._menu_orden)
+        self.btn_quitar = IconButton("minus", 28)
         self.btn_quitar.setToolTip(tr("Quitar el tema seleccionado", "Remove the selected track"))
         self.btn_quitar.clicked.connect(self.quitar)
-        self.btn_abrir = IconButton("plus", 36)
-        self.btn_abrir.setToolTip(tr("Agregar temas", "Add tracks"))
-        self.btn_abrir.clicked.connect(self.abrir)
+        self.btn_abrir = IconButton("plus", 32)
+        self.btn_abrir.setToolTip(tr("Agregar archivos o una carpeta", "Add files or a folder"))
+        self.btn_abrir.clicked.connect(self._menu_agregar)
         abajo = QHBoxLayout()
         abajo.setSpacing(8)
+        abajo.addWidget(self.btn_orden, 0, Qt.AlignVCenter)
+        if ESCOBA:
+            self.btn_escoba.setFixedSize(28, 28)
+            abajo.addWidget(self.btn_escoba, 0, Qt.AlignVCenter)
         abajo.addStretch()
-        abajo.addWidget(self.btn_quitar)
-        abajo.addWidget(self.btn_abrir)
+        abajo.addWidget(self.btn_quitar, 0, Qt.AlignVCenter)
+        abajo.addWidget(self.btn_abrir, 0, Qt.AlignVCenter)
         self.panel = QFrame()
         self.panel.setObjectName("panel")
         pv = QVBoxLayout(self.panel)
         pv.setContentsMargins(10, 10, 10, 10)
-        pv.setSpacing(6)
+        pv.setSpacing(8)
+        pv.addWidget(self.buscador)
         pv.addWidget(self.lista)
         pv.addLayout(abajo)
         # contenedor que se anima: alto de 0 al total + opacidad; el aire con la tarjeta va dentro
@@ -1346,13 +1471,16 @@ class Player(QWidget):
 
         # atajos de teclado (con QShortcut mandan sobre el widget que tenga el foco)
         for tecla, accion in ((QKeySequence(Qt.Key_Space), self.play_pausa),
-                              (QKeySequence(Qt.Key_Escape), self.close),
+                              (QKeySequence(Qt.Key_Escape), self._esc),
                               (QKeySequence(Qt.Key_Left), lambda: self.saltar_rel(-5)),
                               (QKeySequence(Qt.Key_Right), lambda: self.saltar_rel(5)),
                               (QKeySequence(Qt.Key_N), self.siguiente),
                               (QKeySequence(Qt.Key_P), self.anterior),
                               (QKeySequence(Qt.Key_Delete), self.quitar),
-                              (QKeySequence(QKeySequence.Open), self.abrir)):
+                              (QKeySequence(QKeySequence.Open), self.abrir),
+                              (QKeySequence("Ctrl+Shift+O"), self.abrir_carpeta),
+                              (QKeySequence(QKeySequence.Find), self.enfocar_buscador),
+                              (QKeySequence(Qt.Key_R), self.alternar_repetir)):
             QShortcut(tecla, self).activated.connect(accion)
 
         if HAY_DBUS and not os.environ.get("SIMPLEPLAY_NO_MPRIS"):
@@ -1404,31 +1532,163 @@ class Player(QWidget):
             return ""
 
     # --- archivos ---
+    def _carpeta_inicial(self):
+        if self.carpeta_musica and Path(self.carpeta_musica).is_dir():
+            return self.carpeta_musica
+        return QStandardPaths.writableLocation(QStandardPaths.MusicLocation)
+
     def abrir(self):
         archivos, _ = QFileDialog.getOpenFileNames(
-            self, tr("Abrir", "Open"),
-            QStandardPaths.writableLocation(QStandardPaths.MusicLocation), "MP3 (*.mp3)")
-        self.agregar(archivos)
-
-    def agregar(self, archivos, mostrar=True):
-        primera = not self.pistas
-        for a in archivos:
-            self.pistas.append(a)
-            self.lista.addItem(Path(a).stem)
+            self, tr("Abrir", "Open"), self._carpeta_inicial(), "MP3 (*.mp3)")
         if archivos:
+            self.carpeta_musica = str(Path(archivos[0]).parent)
+            self.agregar(archivos, avisar=True)
+            self.guardar_estado()
+
+    def abrir_carpeta(self):
+        carpeta = QFileDialog.getExistingDirectory(
+            self, tr("Abrir carpeta", "Open folder"), self._carpeta_inicial())
+        if carpeta:
+            self.carpeta_musica = carpeta
+            self.agregar([carpeta], avisar=True)
+            self.guardar_estado()
+
+    def _menu_agregar(self):
+        menu = QMenu(self)
+        menu.addAction(tr("Agregar archivos…", "Add files…"), self.abrir)
+        menu.addAction(tr("Agregar una carpeta…", "Add a folder…"), self.abrir_carpeta)
+        menu.exec(self.btn_abrir.mapToGlobal(QPoint(0, self.btn_abrir.height())))
+
+    def agregar(self, archivos, mostrar=True, avisar=False):
+        """Agrega mp3 (o carpetas, con sus subcarpetas) a la lista; los que ya estaban no se repiten."""
+        primera = not self.pistas
+        existentes = set(self.pistas)
+        nuevos = [r for r in buscar_mp3(archivos) if r not in existentes]
+        for r in nuevos:
+            self.pistas.append(r)
+            self.orden_original.append(r)
+            self.datos[r] = datos_lista(r)
+            item = QListWidgetItem(self.datos[r]["nombre"])
+            item.setData(Qt.UserRole, r)
+            self.lista.addItem(item)
+        if nuevos:
             self.vaciada = False
+            self._filtrar(self.buscador.text())  # respeta una búsqueda en curso
         if primera and self.pistas:
             self.lista.setCurrentRow(0)
             if mostrar:
                 self.mostrar_meta(0)
+        if avisar:
+            self._aviso(tr(f"{len(nuevos)} temas agregados", f"{len(nuevos)} tracks added") if nuevos
+                        else tr("No hay temas nuevos para agregar", "No new tracks to add"))
         self.mpris_cambio("CanGoNext", "CanGoPrevious", "CanPlay")
 
     def filas_elegidas(self):
-        """Filas seleccionadas en la lista; si no hay, la fila marcada."""
-        filas = {self.lista.row(it) for it in self.lista.selectedItems()}
-        if not filas and self.lista.currentRow() >= 0:
-            filas = {self.lista.currentRow()}
+        """Filas seleccionadas y visibles en la lista; si no hay, la fila marcada."""
+        filas = {self.lista.row(it) for it in self.lista.selectedItems() if not it.isHidden()}
+        fila = self.lista.currentRow()
+        if not filas and fila >= 0 and not self.lista.item(fila).isHidden():
+            filas = {fila}
         return sorted(i for i in filas if 0 <= i < len(self.pistas))
+
+    # --- buscar, ordenar y reordenar ---
+    def _filtrar(self, texto):
+        """Muestra solo los temas que contienen todas las palabras buscadas (sin acentos ni mayúsculas)."""
+        palabras = _norm(texto).split()
+        for i in range(self.lista.count()):
+            item = self.lista.item(i)
+            d = self.datos.get(item.data(Qt.UserRole))
+            pajar = _norm(f"{d['nombre']} {d['album']}") if d else ""
+            item.setHidden(bool(palabras) and not all(w in pajar for w in palabras))
+        # con una búsqueda activa no se arrastra: las posiciones visibles no son las reales
+        self.lista.setDragDropMode(QAbstractItemView.NoDragDrop if palabras else QAbstractItemView.InternalMove)
+
+    def _reproducir_primero(self):
+        for i in range(self.lista.count()):
+            if not self.lista.item(i).isHidden():
+                self.buscador.clearFocus()
+                self.reproducir(i)
+                return
+
+    def enfocar_buscador(self):
+        if not self.lista_abierta:
+            self.btn_lista.setChecked(True)
+        self.buscador.setFocus()
+        self.buscador.selectAll()
+
+    def _esc(self):
+        """Esc primero sale de la búsqueda; con la búsqueda vacía cierra el reproductor."""
+        if self.buscador.hasFocus() or self.buscador.text():
+            self.buscador.clear()
+            self.buscador.clearFocus()
+            return
+        self.close()
+
+    def _menu_orden(self):
+        menu = QMenu(self)
+        for modo, es, en in (("original", "En el orden en que se agregaron", "In the order they were added"),
+                             ("artista", "Por artista", "By artist"),
+                             ("titulo", "Por título", "By title"),
+                             ("album", "Por álbum", "By album")):
+            marca = "✓  " if modo == self.modo_orden else "     "
+            menu.addAction(marca + tr(es, en), lambda m=modo: self.ordenar(m))
+        menu.exec(self.btn_orden.mapToGlobal(QPoint(0, self.btn_orden.height())))
+
+    def ordenar(self, modo):
+        """Reordena la lista; el tema que suena sigue sonando y la selección se conserva."""
+        if len(self.pistas) < 2 or modo not in ORDENES:
+            return
+        self.modo_orden = modo
+        if modo == "original":
+            presentes = set(self.pistas)
+            nuevo = [r for r in self.orden_original if r in presentes]
+        else:
+            nuevo = sorted(self.pistas, key=lambda r: clave_orden(modo, self.datos[r]))
+        self._rehacer_lista(nuevo)
+        self.guardar_estado()
+
+    def _ruta_en(self, indice):
+        return self.pistas[indice] if 0 <= indice < len(self.pistas) else None
+
+    def _rehacer_lista(self, nuevas):
+        actual_r, pend = self._ruta_en(self.actual), self.pendiente
+        pend_r = self._ruta_en(pend[0]) if pend else None
+        elegidas = {self.pistas[i] for i in self.filas_elegidas()}
+        self.lista.blockSignals(True)
+        self.lista.clear()
+        for r in nuevas:
+            item = QListWidgetItem(self.datos[r]["nombre"])
+            item.setData(Qt.UserRole, r)
+            self.lista.addItem(item)
+        self.lista.blockSignals(False)
+        self.pistas = list(nuevas)
+        if actual_r is not None:
+            self.actual = nuevas.index(actual_r)
+        if pend_r is not None:
+            self.pendiente = (nuevas.index(pend_r), pend[1])
+        fila = self.actual if self.actual >= 0 else (self.pendiente[0] if self.pendiente else -1)
+        if fila >= 0:
+            self.lista.setCurrentRow(fila, QItemSelectionModel.SelectionFlag.NoUpdate)
+            self.lista.scrollToItem(self.lista.item(fila))
+        for i, r in enumerate(nuevas):
+            if r in elegidas:
+                self.lista.item(i).setSelected(True)
+        self._filtrar(self.buscador.text())
+
+    def _reordenado(self, *_):
+        """El usuario arrastró temas en la lista: alinear las rutas y los índices con el nuevo orden."""
+        nuevas = [self.lista.item(i).data(Qt.UserRole) for i in range(self.lista.count())]
+        if sorted(nuevas) != sorted(self.pistas) or nuevas == self.pistas:
+            return
+        actual_r, pend = self._ruta_en(self.actual), self.pendiente
+        pend_r = self._ruta_en(pend[0]) if pend else None
+        self.pistas = nuevas
+        if actual_r is not None:
+            self.actual = nuevas.index(actual_r)
+        if pend_r is not None:
+            self.pendiente = (nuevas.index(pend_r), pend[1])
+        self.modo_orden = "manual"
+        self.guardar_estado()
 
     def quitar(self):
         """Quita de la lista los temas seleccionados (los archivos no se borran)."""
@@ -1443,6 +1703,8 @@ class Player(QWidget):
         for i in reversed(filas):
             self.lista.takeItem(i)
             del self.pistas[i]
+        presentes = set(self.pistas)
+        self.orden_original = [r for r in self.orden_original if r in presentes]
         if not self.pistas:
             self.vaciar()
         elif actual_quitado or pend_quitado:
@@ -1572,6 +1834,7 @@ class Player(QWidget):
         self.chunk = None
         self.token += 1
         self.vaciada = True
+        self.orden_original = []
         self.meta = {"titulo": "", "artista": "", "arte": ""}
         self.titulo.set_text(tr("Sin pista", "No track"))
         self.artista.set_text("")
@@ -1611,7 +1874,8 @@ class Player(QWidget):
         else:
             i, pos = max(self.lista.currentRow(), 0), 0.0
         datos = {"pistas": self.pistas, "indice": i, "pos": round(pos, 1),
-                 "shuffle": self.btn_shuffle.isChecked()}
+                 "shuffle": self.btn_shuffle.isChecked(), "repetir": self.repetir,
+                 "carpeta": self.carpeta_musica, "orden_original": self.orden_original}
         try:
             ESTADO.parent.mkdir(parents=True, exist_ok=True)
             tmp = ESTADO.with_suffix(".tmp")
@@ -1627,6 +1891,8 @@ class Player(QWidget):
         except (OSError, ValueError):
             return
         self.btn_shuffle.setChecked(bool(d.get("shuffle")))
+        self.poner_repetir(d.get("repetir", "off"))
+        self.carpeta_musica = d.get("carpeta", "")
         if not con_pistas:
             return
         pistas = [a for a in d.get("pistas", []) if Path(a).exists()]
@@ -1637,6 +1903,9 @@ class Player(QWidget):
         guardada = previas[d.get("indice", 0)] if 0 <= d.get("indice", 0) < len(previas) else None
         i = pistas.index(guardada) if guardada in pistas else 0
         self.agregar(pistas, mostrar=False)
+        presentes = set(pistas)  # el "orden original" guardado, solo con los temas que siguen existiendo
+        guardado = [r for r in d.get("orden_original", []) if r in presentes]
+        self.orden_original = guardado + [r for r in pistas if r not in set(guardado)]
         self.lista.setCurrentRow(i)
         self.mostrar_meta(i)
         self._preparar(i, float(d.get("pos", 0)) if guardada in pistas else 0.0)
@@ -1717,10 +1986,26 @@ class Player(QWidget):
         finally:
             self.pidiendo = False
 
+    def _medir_panel(self):
+        """Alto del panel de la lista según lo que realmente necesita su contenido (buscador, lista, botones).
+
+        Se mide al abrirlo y no al arrancar: antes de mostrarse, los widgets todavía no tienen su tamaño
+        final (fuente y estilos del escritorio) y el panel quedaba más bajo que su contenido.
+        """
+        self.panel.setMinimumHeight(0)
+        self.panel.setMaximumHeight(16777215)
+        lay = self.panel.layout()
+        lay.invalidate()
+        lay.activate()
+        alto = max(lay.totalMinimumSize().height(), lay.totalSizeHint().height())
+        self.panel.setFixedHeight(alto)
+        self.caja_h = alto + self.caja.layout().contentsMargins().top()
+
     def alternar_lista(self, abrir):
         self.lista_abierta = abrir
         self.despliegue.stop()
         if abrir:
+            self._medir_panel()
             self.caja.show()
         self.despliegue.setStartValue(self.mezcla_lista if hasattr(self, "mezcla_lista") else 0.0)
         self.despliegue.setEndValue(1.0 if abrir else 0.0)
@@ -1809,22 +2094,51 @@ class Player(QWidget):
         self.t_actual.setText("0:00")
         self.t_resta.setText("-0:00")
 
-    def siguiente(self):
+    def poner_repetir(self, modo):
+        if modo not in ("off", "all", "one"):
+            return
+        self.repetir = modo
+        b = self.btn_repetir
+        b.badge = "1" if modo == "one" else ""
+        b._animar("chk", 0.0 if modo == "off" else 1.0, 260)
+        b.setToolTip({"off": tr("Repetir: no", "Repeat: off"),
+                      "all": tr("Repetir: toda la lista", "Repeat: the whole list"),
+                      "one": tr("Repetir: este tema", "Repeat: this track")}[modo])
+        b.update()
+        self.mpris_cambio("LoopStatus")
+
+    def alternar_repetir(self):
+        """No repetir -> toda la lista -> un tema -> no repetir."""
+        self.poner_repetir({"off": "all", "all": "one", "one": "off"}[self.repetir])
+        self.guardar_estado()
+
+    def fin_de_pista(self):
+        """El tema terminó solo: con 'repetir un tema' vuelve a empezar; si no, sigue con el próximo."""
+        if self.repetir == "one" and self.actual >= 0:
+            self.reproducir(self.actual)
+        else:
+            self.siguiente()
+
+    def siguiente(self, *_):
         if not self.pistas:
             return
         if self.btn_shuffle.isChecked() and len(self.pistas) > 1:
             self.reproducir(random.choice([n for n in range(len(self.pistas)) if n != self.actual]))
         elif self.actual + 1 < len(self.pistas):
             self.reproducir(self.actual + 1)
+        elif self.repetir == "all":
+            self.reproducir(0)  # al final de la lista, vuelve al principio
         else:
             self.parar()
 
-    def anterior(self):
+    def anterior(self, *_):
         if self.actual < 0:
             return
         # pasados 3 s vuelve al inicio de la pista, si no, a la anterior
-        if self.posicion() > 3 or self.actual == 0:
+        if self.posicion() > 3:
             self.reproducir(self.actual)
+        elif self.actual == 0:
+            self.reproducir(len(self.pistas) - 1 if self.repetir == "all" else 0)
         else:
             self.reproducir(self.actual - 1)
 
@@ -1858,7 +2172,7 @@ class Player(QWidget):
         self.t_actual.setText(fmt(pos))
         self.t_resta.setText("-" + fmt(self.duracion - pos))
         if not self.pausado and not pygame.mixer.music.get_busy():
-            self.siguiente()
+            self.fin_de_pista()
 
     def mousePressEvent(self, e):
         # sin barra de título: se mueve arrastrando cualquier zona vacía
@@ -1870,14 +2184,14 @@ class Player(QWidget):
             e.acceptProposedAction()
 
     def dropEvent(self, e):
-        self.agregar([u.toLocalFile() for u in e.mimeData().urls()
-                      if u.toLocalFile().lower().endswith(".mp3")])
+        self.agregar([u.toLocalFile() for u in e.mimeData().urls()], avisar=True)  # archivos o carpetas
 
     def contextMenuEvent(self, e):
         menu = QMenu(self)
         menu.addAction(f"simpleplay v{VERSION}").setEnabled(False)
         menu.addSeparator()
         menu.addAction(tr("Abrir archivos…", "Open files…"), self.abrir)
+        menu.addAction(tr("Abrir carpeta…", "Open folder…"), self.abrir_carpeta)
         menu.addAction(tr("Cerrar", "Close"), self.close)
         menu.exec(e.globalPos())
 
@@ -1891,8 +2205,8 @@ if __name__ == "__main__":
     app.setDesktopFileName("simpleplay")  # Wayland: une la ventana con su .desktop e ícono
     app.setWindowIcon(QIcon(recurso("icon/simpleplay-256.png")))
     w = Player()
-    args = [a for a in sys.argv[1:] if a.lower().endswith(".mp3")]
-    w.restaurar(con_pistas=not args)  # con archivos por parámetro, solo se recuerda el shuffle
+    args = buscar_mp3([a for a in sys.argv[1:] if not a.startswith("-")])  # archivos o carpetas
+    w.restaurar(con_pistas=not args)  # con archivos por parámetro, solo se recuerdan shuffle, repetir y carpeta
     w.agregar(args)
     w.show()
     sys.exit(app.exec())

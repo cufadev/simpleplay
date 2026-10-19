@@ -17,10 +17,13 @@ No streaming, no accounts, no ads.
 - Title and artist scroll when they don't fit.
 - Click the top pill to switch between the track info and **Winamp-style spectrum bars**
   that react to the real audio.
-- Previous, play/pause, next, shuffle, and a time bar you can click or drag to seek.
-- A playlist panel that slides open; add files with the **+** button, with a right click,
-  by dragging mp3 files onto the window, or from the command line. Select several tracks with
-  `Ctrl`/`Shift`+click and remove them with the **-** button.
+- Previous, play/pause, next, shuffle, repeat (off, the whole list, one track), and a time bar you
+  can click or drag to seek.
+- A playlist panel that slides open. It shows "Artist - Title" from the tags, and has a **search
+  box**, **sorting** (by artist, title or album) and **drag and drop** to reorder.
+- Add files or **a whole folder** (with its subfolders) from the **+** button, with a right click,
+  by dragging files or folders onto the window, or from the command line. It remembers the last
+  folder you used. Select several tracks with `Ctrl`/`Shift`+click and remove them with **-**.
 - Remembers your last session (playlist, track, position, shuffle) and starts paused,
   ready to resume.
 - Smooth transitions for play/pause, cover changes, the playlist and the buttons.
@@ -82,12 +85,16 @@ otherwise the bundled `miniaudio` decoder is used.
 | Previous / next | the buttons, `P` / `N`, or the media keys |
 | Seek | click or drag the time bar; `Left` / `Right` jump 5 s |
 | Track info / spectrum | click the top pill |
-| Playlist | the list button (inside it, **+** adds tracks and **-** removes the selected one) |
-| Open files | **+**, `Ctrl+O`, right click > Open files, drag and drop, or command line |
+| Playlist | the list button (inside it: search box, sort, **-** and **+**) |
+| Search the list | `Ctrl+F`, type; `Enter` plays the first result, `Esc` clears the search |
+| Sort the list | the sort button in the playlist: by artist, title, album, or the order added |
+| Reorder tracks | drag them in the playlist (not while a search is active) |
+| Repeat | the button at the left of the controls, or `R`: off > whole list > one track |
+| Open files or a folder | **+**, `Ctrl+O` (files), `Ctrl+Shift+O` (folder), right click, drag and drop, or command line |
 | Select several tracks | `Ctrl`+click or `Shift`+click in the list |
 | Remove the selected tracks | the **-** button or `Delete` (the files are not deleted) |
 | Move the window | drag any empty area |
-| Quit | `Esc`, or right click > Close |
+| Quit | `Esc` (when no search is active), or right click > Close |
 
 ## Troubleshooting
 
