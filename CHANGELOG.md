@@ -19,6 +19,9 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
   folder onto the window, or from the command line. Tracks already in the list are not added again,
   and the last folder used is remembered.
 - A short message in the pill when tracks are added.
+- **Windows build:** a `simpleplay-<version>-windows-x64.zip` is built and attached to every release
+  automatically (GitHub Actions), after checking that the decoder and the window work. It comes with
+  a Windows icon and `packaging/build-windows.bat` for building it by hand.
 
 ### Changed
 - The playlist shows **"Artist - Title" from the tags** instead of the file name, so a library

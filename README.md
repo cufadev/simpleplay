@@ -56,6 +56,18 @@ It does not add itself to your applications menu. Use
 [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher), or copy
 `packaging/simpleplay.desktop` and the icon by hand.
 
+### Windows
+
+Download `simpleplay-<version>-windows-x64.zip` from the [Releases](../../releases) page, unzip it
+and run `simpleplay.exe`. There is nothing to install. The file is not signed, so Windows
+SmartScreen shows "Windows protected your PC": click **More info** > **Run anyway**. The media
+keys are not available on Windows.
+
+It is built automatically from this repository for every release (GitHub Actions), and the build
+checks that the audio decoder works and that the window starts. It is new and has had little use
+on real Windows machines, so it may have rough edges. To build it yourself, run
+`packaging\build-windows.bat` on a Windows machine.
+
 ## Run from source
 
 Python 3.10 to 3.13. On Linux and macOS:
