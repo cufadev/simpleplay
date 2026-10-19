@@ -20,6 +20,18 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+# Si falta alguna dependencia, un mensaje claro en lugar de un error de Python en crudo (el ejecutable ya las trae).
+if not getattr(sys, "frozen", False):
+    import importlib.util
+    faltan = [m for m in ("PySide6", "numpy", "mutagen", "miniaudio") if importlib.util.find_spec(m) is None]
+    if faltan:
+        es = (os.environ.get("LANGUAGE") or os.environ.get("LC_ALL") or os.environ.get("LANG") or "").lower().startswith("es")
+        pip = f"  {sys.executable} -m pip install -r {Path(__file__).resolve().parent / 'requirements.txt'}"
+        sys.exit(("simpleplay necesita módulos de Python que no están instalados: " + ", ".join(faltan) + ".\n"
+                  "Instalalos con:\n" + pip + "\n(o usá el entorno del proyecto: .venv/bin/python simpleplay.py)") if es else
+                 ("simpleplay needs Python modules that are not installed: " + ", ".join(faltan) + ".\n"
+                  "Install them with:\n" + pip + "\n(or use the project's environment: .venv/bin/python simpleplay.py)"))
+
 import numpy as np
 import miniaudio
 
