@@ -60,6 +60,13 @@ VERSION = "1.3"
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
 NARANJA = "#ff4e01"
+# Sombra alrededor de la tarjeta y de la barra: la ventana no tiene marco y el escritorio no le pone ninguna.
+# SIMPLEPLAY_SOMBRA=0 la apaga. Se dibuja en un margen transparente de la ventana (SOMBRA_MARGEN px por lado).
+SOMBRA = os.environ.get("SIMPLEPLAY_SOMBRA", "1") != "0"
+SOMBRA_BLUR = 16     # cuántos px se extiende, difuminándose
+SOMBRA_DY = 5        # cuánto baja (la luz viene de arriba)
+SOMBRA_ALPHA = 95    # intensidad (0-255) en el borde de la tarjeta
+SOMBRA_MARGEN = (SOMBRA_BLUR + SOMBRA_DY + 2) if SOMBRA else 0
 
 ESTILO_DIALOGO = """
 QMessageBox, QDialog { background: #1e1e22; }
@@ -1043,6 +1050,26 @@ class Card(QWidget):
 
 
 
+def dibujar_sombra(p, rect, radio, factor=1.0):
+    """Sombra suave bajo un rectángulo redondeado: capas cada vez más grandes y tenues (sin desenfoque, es barato
+    y se redibuja en cada cuadro de la transición). `factor` (0-1) la atenúa, p. ej. mientras algo aparece."""
+    if not SOMBRA or factor <= 0:
+        return
+    capas = 14
+    p.save()
+    p.setPen(Qt.NoPen)
+    for i in range(capas, 0, -1):
+        f = i / capas
+        e = SOMBRA_BLUR * f
+        alfa = round(SOMBRA_ALPHA * (1 - f) ** 2 / 3.2 * factor)
+        if alfa <= 0:
+            continue
+        p.setBrush(QColor(0, 0, 0, alfa))
+        p.drawRoundedRect(QRectF(rect.x() - e, rect.y() - e + SOMBRA_DY, rect.width() + 2 * e, rect.height() + 2 * e),
+                          radio + e, radio + e)
+    p.restore()
+
+
 class Transicion(QWidget):
     """Capa que lleva la ventana de un modo al otro (tarjeta <-> barra compacta).
 
@@ -1074,17 +1101,18 @@ class Transicion(QWidget):
         self.update()
 
     def paintEvent(self, e):
-        t = self.t
-        w = self.tam1.width() + (self.tam2.width() - self.tam1.width()) * t
-        h = self.tam1.height() + (self.tam2.height() - self.tam1.height()) * t
+        t, m = self.t, SOMBRA_MARGEN       # las capturas incluyen el margen de la sombra; la forma va adentro
+        w = self.tam1.width() + (self.tam2.width() - self.tam1.width()) * t - 2 * m
+        h = self.tam1.height() + (self.tam2.height() - self.tam1.height()) * t - 2 * m
         r = self.radio1 + (self.radio2 - self.radio1) * t
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         forma = QPainterPath()
-        forma.addRoundedRect(QRectF(0, 0, w, h), r, r)
+        forma.addRoundedRect(QRectF(m, m, w, h), r, r)
+        dibujar_sombra(p, QRectF(m, m, w, h), r)
         p.setClipPath(forma)
-        p.fillRect(QRectF(0, 0, w, h), self.BASE)
+        p.fillRect(QRectF(m, m, w, h), self.BASE)
         # primero se va el modo viejo y después aparece el nuevo, con la base oscura entre ambos: si se mezclaran a la
         # vez se verían los dos textos superpuestos (el título está en un lugar distinto en cada modo)
         p.setOpacity(1.0 - self._suave(t / 0.5))
@@ -1951,7 +1979,7 @@ class Player(QWidget):
 
         root = QVBoxLayout(self)
         root.setSizeConstraint(QLayout.SetFixedSize)  # la ventana crece al mostrar la lista
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(SOMBRA_MARGEN, SOMBRA_MARGEN, SOMBRA_MARGEN, SOMBRA_MARGEN)  # lugar para la sombra
         root.setSpacing(0)
         root.addWidget(self.card, 0, Qt.AlignHCenter)
         root.addWidget(self.mini, 0, Qt.AlignHCenter)
@@ -2759,6 +2787,28 @@ class Player(QWidget):
         self.t_resta.setText("-" + fmt(self.duracion - pos))
         if pos > 2.0:
             self._fallos = 0   # un tema sonó de verdad: se acaba la racha de fallos
+
+    def _formas(self):
+        """(rectángulo, radio, opacidad) de cada pieza visible que proyecta sombra: la tarjeta o la barra, y el
+        panel de la lista (solo la parte ya desplegada, con la opacidad de su animación)."""
+        formas = []
+        for w, radio in ((self.card, 30), (self.mini, 28)):
+            if w.isVisible():
+                formas.append((QRectF(w.geometry()), radio, 1.0))
+        if self.caja.isVisible():
+            a = self.panel.mapTo(self, QPoint(0, 0))
+            r = QRectF(a.x(), a.y(), self.panel.width(), self.panel.height()).intersected(QRectF(self.caja.geometry()))
+            if r.height() > 4:
+                formas.append((r, 18, self.ef_caja.opacity()))
+        return formas
+
+    def paintEvent(self, e):
+        if not SOMBRA:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        for rect, radio, opacidad in self._formas():
+            dibujar_sombra(p, rect, radio, opacidad)
 
     def mousePressEvent(self, e):
         # sin barra de título: se mueve arrastrando cualquier zona vacía

@@ -27,6 +27,7 @@ import simpleplay as S
 CORPUS = Path(__file__).parent / "corpus"
 A, B = str(CORPUS / "tono_44k.mp3"), str(CORPUS / "mono_44k.mp3")     # 10 s cada uno
 APP = QApplication.instance() or QApplication([])
+M = S.SOMBRA_MARGEN   # margen transparente de la ventana donde se dibuja la sombra
 
 
 def espera(seg, cond=None):
@@ -307,12 +308,12 @@ class TestTransicion(Base):
         self.assertTrue(espera(2.0, lambda: self.w._trans is None))
         self.assertTrue(self.w.mini.isVisible())
         self.assertFalse(self.w.card.isVisible())
-        self.assertEqual((self.w.width(), self.w.height()), (380, 56))
+        self.assertEqual((self.w.width(), self.w.height()), (380 + 2 * M, 56 + 2 * M))
         self.w.poner_compacto(False)
         self.assertTrue(espera(2.0, lambda: self.w._trans is None))
         self.assertTrue(self.w.card.isVisible())
         self.assertFalse(self.w.mini.isVisible())
-        self.assertEqual((self.w.width(), self.w.height()), (320, 320))
+        self.assertEqual((self.w.width(), self.w.height()), (320 + 2 * M, 320 + 2 * M))
 
     def test_la_musica_no_se_corta_durante_la_transicion(self):
         self.cargar(A)
@@ -331,7 +332,7 @@ class TestTransicion(Base):
         espera(0.3)
         self.w.poner_compacto(True)
         espera(0.15)
-        self.assertEqual((self.w.width(), self.w.height()), (380, 320))   # el mayor de los dos tamaños
+        self.assertEqual((self.w.width(), self.w.height()), (380 + 2 * M, 320 + 2 * M))   # el mayor de los dos tamaños
         self.assertFalse(self.w.grab().isNull())                           # y dibuja sin errores
         espera(1.0)
 
@@ -339,7 +340,7 @@ class TestTransicion(Base):
         self.cargar(A)
         self.w.poner_compacto(True, animar=False)
         self.assertIsNone(self.w._trans)
-        self.assertEqual((self.w.width(), self.w.height()), (380, 56))
+        self.assertEqual((self.w.width(), self.w.height()), (380 + 2 * M, 56 + 2 * M))
 
     def test_apretar_muchas_veces_seguidas(self):
         self.cargar(A)
@@ -350,12 +351,12 @@ class TestTransicion(Base):
             espera(0.03 * (i % 4))
         self.assertTrue(espera(2.5, lambda: self.w._trans is None))
         self.assertTrue(self.w.compacto)
-        self.assertEqual((self.w.width(), self.w.height()), (380, 56))
+        self.assertEqual((self.w.width(), self.w.height()), (380 + 2 * M, 56 + 2 * M))
         self.assertTrue(self.w.mini.isVisible())
         self.assertFalse(self.w.card.isVisible())
         self.w.poner_compacto(False)
         self.assertTrue(espera(2.5, lambda: self.w._trans is None))
-        self.assertEqual((self.w.width(), self.w.height()), (320, 320))
+        self.assertEqual((self.w.width(), self.w.height()), (320 + 2 * M, 320 + 2 * M))
         self.assertTrue(self.w.motor.reproduciendo)
 
     def test_con_la_lista_abierta(self):
@@ -365,11 +366,44 @@ class TestTransicion(Base):
         self.assertGreater(self.w.height(), 320)
         self.w.poner_compacto(True)
         self.assertTrue(espera(2.0, lambda: self.w._trans is None))
-        self.assertEqual((self.w.width(), self.w.height()), (380, 56))
+        self.assertEqual((self.w.width(), self.w.height()), (380 + 2 * M, 56 + 2 * M))
         self.assertFalse(self.w.caja.isVisible())
         self.w.poner_compacto(False)
         self.assertTrue(espera(2.0, lambda: self.w._trans is None))
-        self.assertEqual((self.w.width(), self.w.height()), (320, 320))   # la lista queda cerrada
+        self.assertEqual((self.w.width(), self.w.height()), (320 + 2 * M, 320 + 2 * M))   # la lista queda cerrada
+
+
+class TestSombra(Base):
+    def test_el_margen_tiene_sombra_y_las_esquinas_lejanas_no(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        espera(0.3)
+        img = self.w.grab().toImage()
+        w, h = img.width(), img.height()
+        self.assertEqual((w, h), (320 + 2 * M, 320 + 2 * M))
+        abajo, arriba = img.pixelColor(w // 2, h - M + 4).alpha(), img.pixelColor(w // 2, M - 4).alpha()   # a 4 px del borde
+        self.assertGreater(abajo, 20)                                      # debajo de la tarjeta: sombra
+        self.assertGreater(abajo, arriba)                                  # y más fuerte abajo que arriba (cae hacia abajo)
+        self.assertEqual(img.pixelColor(0, 0).alpha(), 0)                  # la esquina de la ventana, nada
+        self.assertEqual(img.pixelColor(w // 2, h // 2).alpha(), 255)      # la tarjeta es opaca
+
+    def test_las_formas_que_proyectan_sombra(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        espera(0.3)
+        self.assertEqual([r for _, r, _ in self.w._formas()], [30])        # la tarjeta
+        self.w.alternar_lista(True)
+        espera(0.6)
+        self.assertEqual([r for _, r, _ in self.w._formas()], [30, 18])    # y el panel de la lista
+        self.w.poner_compacto(True, animar=False)
+        self.assertEqual([r for _, r, _ in self.w._formas()], [28])        # o solo la barra
+
+    def test_apagada_no_hay_margen(self):
+        import subprocess
+        out = subprocess.run([sys.executable, "-c",
+                              "import os,sys; os.environ['SIMPLEPLAY_SOMBRA']='0'; sys.path.insert(0, %r); import simpleplay as S; print(S.SOMBRA, S.SOMBRA_MARGEN)" % str(RAIZ)],
+                             capture_output=True, text=True, env={**os.environ, "QT_QPA_PLATFORM": "offscreen"}).stdout.split()[-2:]
+        self.assertEqual(out, ["False", "0"])
 
 
 class TestLista(Base):
