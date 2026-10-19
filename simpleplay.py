@@ -22,6 +22,7 @@ import urllib.request
 from pathlib import Path
 
 import numpy as np
+import miniaudio
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")  # sin el cartel de bienvenida
 import pygame
@@ -1258,6 +1259,381 @@ if HAY_DBUS:
                 self.bus.unregisterService(self.nombre)
                 self.activo = False
 
+
+# --- motor de audio -----------------------------------------------------------------------------
+# Reproduce con miniaudio (float32 estéreo a 44,1 kHz): la posición, la pausa, el salto, el fin de pista
+# y las muestras para el espectro salen todos del mismo callback, así que no hay desfases entre ellos.
+FS = 44100          # frecuencia fija del dispositivo: miniaudio convierte los archivos que usen otra
+FADE = 220          # frames (5 ms) de los fundidos de pausa y de salto, para que no haya clicks
+LECTURA = 8192      # tope de frames por send() (el generador de miniaudio reserva 16384)
+PREVIOS = 4         # frames mp3 que se decodifican de más antes de un salto (llenan la reserva de bits)
+
+_BR1 = (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0)
+_BR2 = (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0)
+_FREC = {3: (44100, 48000, 32000), 2: (22050, 24000, 16000), 0: (11025, 12000, 8000)}
+
+
+def _cabecera_mp3(b, i):
+    """(largo del frame, muestras por frame, frecuencia) del frame mp3 (capa III) que empieza en b[i], o None."""
+    if i + 4 > len(b) or b[i] != 0xFF or (b[i + 1] & 0xE0) != 0xE0:
+        return None
+    ver, capa = (b[i + 1] >> 3) & 3, (b[i + 1] >> 1) & 3
+    if ver == 1 or capa != 1:
+        return None
+    br_i, fr_i, pad = b[i + 2] >> 4, (b[i + 2] >> 2) & 3, (b[i + 2] >> 1) & 1
+    if br_i in (0, 15) or fr_i == 3:
+        return None
+    fr = _FREC[ver][fr_i]
+    if ver == 3:
+        return 144 * _BR1[br_i] * 1000 // fr + pad, 1152, fr
+    return 72 * _BR2[br_i] * 1000 // fr + pad, 576, fr
+
+
+def indexar_mp3(b):
+    """Recorre los frames de un mp3 (bytes o mmap) -> (offsets de los frames de audio, muestras por frame,
+    frecuencia, retardo en muestras que recorta el decodificador).
+
+    Sirve para saltar a cualquier punto sin decodificar desde el principio (miniaudio lo hace linealmente: más
+    de un segundo en un mix de una hora). El frame Xing/Info no tiene audio y no se cuenta; si trae la etiqueta
+    LAME, de ahí sale el retardo del encoder (+529 del decodificador), que es lo que recorta el gapless.
+    """
+    i, n = 0, len(b)
+    if b[:3] == b"ID3":
+        i = 10 + ((b[6] << 21) | (b[7] << 14) | (b[8] << 7) | b[9])
+    offs, spf, fr, retardo = [], 1152, 44100, 0
+    while i < n - 4:
+        h = _cabecera_mp3(b, i)
+        if h is None:                      # perdió el hilo (basura o etiqueta): busca el próximo sincronismo
+            j = b.find(b"\xff", i + 1)
+            if j < 0:
+                break
+            i = j
+            continue
+        largo, spf, fr = h
+        if not offs and retardo == 0 and spf == 1152:
+            mono = (b[i + 3] >> 6) == 3
+            x = i + (21 if mono else 36)   # dónde empieza "Xing"/"Info" en un frame MPEG-1
+            if b[x:x + 4] in (b"Xing", b"Info"):
+                lame = x + 120             # extensión LAME: 9 bytes de versión y, 21 bytes después, el retardo
+                if b[lame:lame + 3] in (b"LAM", b"Lav") and lame + 24 < n:
+                    ret = (b[lame + 21] << 4) | (b[lame + 22] >> 4)
+                    retardo = (ret if 0 < ret < 2000 else 576) + 529
+                else:
+                    retardo = -1           # hay frame Xing pero sin etiqueta LAME: no se recorta nada
+                i += largo
+                continue
+        offs.append(i)
+        i += largo
+    return offs, spf, fr, max(retardo, 0)
+
+
+class FuenteMp3(miniaudio.StreamableSource):
+    """Lee un mp3 desde un frame dado (y hasta otro, si se pide): para el decodificador, ese frame es el
+    principio del archivo."""
+
+    def __init__(self, datos, desde, hasta=None):
+        self.d, self.base, self.p = datos, desde, desde
+        self.fin = len(datos) if hasta is None else hasta
+
+    def read(self, n):
+        r = self.d[self.p:min(self.p + n, self.fin)]
+        self.p += len(r)
+        return r
+
+    def seek(self, offset, origin):
+        if origin == miniaudio.SeekOrigin.START:
+            self.p = self.base + offset
+        elif origin == miniaudio.SeekOrigin.CURRENT:
+            self.p += offset
+        return True
+
+
+def _leer(gen, n):
+    """Hasta n frames estéreo float32 del generador de miniaudio (menos si se acabó). Array (m, 2)."""
+    trozos, falta = [], n
+    while falta > 0:
+        try:
+            a = gen.send(min(falta, LECTURA))
+        except StopIteration:
+            break
+        x = np.frombuffer(a, dtype=np.float32).reshape(-1, 2)
+        if len(x) == 0:
+            break
+        trozos.append(x)
+        falta -= len(x)
+        if len(x) < min(falta + len(x), LECTURA):   # trozo corto: fin del archivo
+            break
+    return np.concatenate(trozos) if trozos else np.zeros((0, 2), np.float32)
+
+
+class Motor(QObject):
+    """Motor de audio: un dispositivo siempre abierto y un callback que decide, bloque a bloque, qué suena.
+
+    - Posición = frames entregados menos la latencia del dispositivo (se interpola entre callbacks).
+    - Pausa y reanudar: fundido de 5 ms, el dispositivo sigue andando (entrega silencio).
+    - Saltar y cambiar de tema: fundido cruzado de 5 ms entre el audio viejo y el nuevo.
+    - Fin de pista: la señal `fin_de_pista` se emite una sola vez (es segura entre hilos).
+    - `muestras(n)`: las últimas n muestras (mono) que están sonando, para el espectro.
+    """
+    fin_de_pista = Signal()
+    error_dispositivo = Signal(str)
+    ANILLO = 32768
+
+    def __init__(self, buffer_ms=120, latencia_ms=None, backend=None, parent=None):
+        super().__init__(parent)
+        self.buffer_ms = buffer_ms
+        # cuánto tarda en oírse lo que se entrega (aproximado: sin medir con la placa real)
+        self.lat = round((buffer_ms / 2 if latencia_ms is None else latencia_ms) * FS / 1000)
+        self.backends = [backend] if backend is not None else None
+        self.espia = None             # para las pruebas: recibe cada bloque que se manda al dispositivo
+        self._lock = threading.Lock()
+        self._dev = None
+        self._pend = None             # (fuente nueva o None, frame de inicio) a aplicar en el próximo callback
+        self._fuente = None
+        self._quiere = False          # True = sonando; False = en pausa
+        self._gan = 0.0               # ganancia actual (rampa hacia 0 o 1)
+        self.volumen = 1.0
+        self._terminada = False
+        self.duracion = 0.0
+        self.ruta = None
+        self._idx = None              # (ruta, offsets, muestras por frame, frecuencia, retardo, mmap)
+        self._mm = None
+        self._total = 0               # frames de audio entregados desde siempre (reloj del motor)
+        self._tot0, self._pos0 = 0, 0  # a qué `total` corresponde la posición `_pos0` (frames de la pista)
+        self._t_cb, self._tot_cb = None, 0
+        self._anillo = np.zeros(self.ANILLO, np.float32)
+
+    # --- estado ---
+    @property
+    def activo(self):
+        return self._fuente is not None or self._pend is not None
+
+    @property
+    def reproduciendo(self):
+        return self._quiere and self.activo and not self._terminada
+
+    def posicion(self):
+        """Segundos de la pista que están sonando ahora."""
+        if self._pend is not None:
+            return self._pend[1] / FS
+        if self._fuente is None:
+            return self.duracion if self._terminada else 0.0
+        ph = self._total
+        if self._quiere and self._t_cb is not None:
+            ph = min(self._total, self._tot_cb + (time.perf_counter() - self._t_cb) * FS - self.lat)
+        return min(max(self._pos0 + (ph - self._tot0), 0) / FS, self.duracion or 1e9)
+
+    # --- control ---
+    def cargar(self, ruta, inicio=0.0, reproducir=True):
+        """Abre un tema (para sonar desde `inicio` segundos). Reemplaza al que suene con un fundido cruzado."""
+        self._abrir_dispositivo()
+        self.ruta = ruta
+        self._terminada = False
+        self.duracion = self._duracion(ruta)
+        self._idx = None
+        if ruta.lower().endswith(".mp3"):
+            threading.Thread(target=self._indexar, args=(ruta,), daemon=True).start()
+        self._quiere = reproducir
+        self._poner(self._fuente_en(ruta, round(inicio * FS)), round(inicio * FS))
+
+    def saltar(self, seg):
+        """Salta a `seg` segundos del tema abierto."""
+        if not self.ruta:
+            return
+        seg = min(max(seg, 0.0), max(self.duracion - 0.05, 0.0))
+        self._terminada = False
+        self._poner(self._fuente_en(self.ruta, round(seg * FS)), round(seg * FS))
+
+    def pausar(self):
+        self._quiere = False
+
+    def reanudar(self):
+        if self.activo and not self._terminada:
+            self._quiere = True
+
+    def parar(self):
+        self._quiere = False
+        self.ruta = None
+        self._terminada = False
+        self._poner(None, 0)
+
+    def cerrar(self):
+        """Detiene el dispositivo (al cerrar la aplicación)."""
+        if self._dev is not None:
+            self._dev.stop()
+            self._dev.close()
+            self._dev = None
+
+    def muestras(self, n):
+        """Las últimas n muestras (mono, float32) que están sonando; ceros si todavía no hay tantas."""
+        fin = int(self._total if not self._quiere or self._t_cb is None else
+                  min(self._total, self._tot_cb + (time.perf_counter() - self._t_cb) * FS - self.lat))
+        ini = fin - n
+        if ini < 0 or fin > self._total or n > self.ANILLO or self._total - ini > self.ANILLO:
+            return np.zeros(n, np.float32)
+        i = ini % self.ANILLO
+        if i + n <= self.ANILLO:
+            return self._anillo[i:i + n].copy()
+        return np.concatenate([self._anillo[i:], self._anillo[:i + n - self.ANILLO]])
+
+    # --- por dentro ---
+    def _abrir_dispositivo(self):
+        if self._dev is not None:
+            return
+        try:
+            self._dev = miniaudio.PlaybackDevice(
+                output_format=miniaudio.SampleFormat.FLOAT32, nchannels=2, sample_rate=FS,
+                buffersize_msec=self.buffer_ms, backends=self.backends, app_name="simpleplay")
+            g = self._callback()
+            next(g)
+            self._dev.start(g)
+        except Exception as e:  # sin placa de sonido, o la ocupa otro programa
+            self._dev = None
+            self.error_dispositivo.emit(str(e))
+
+    @staticmethod
+    def _duracion(ruta):
+        try:
+            if ruta.lower().endswith(".mp3"):
+                return float(MP3(ruta).info.length)
+            return float(miniaudio.get_file_info(ruta).duration)
+        except Exception:
+            return 0.0
+
+    def _indexar(self, ruta):
+        try:
+            import mmap
+            with open(ruta, "rb") as f:
+                mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            offs, spf, fr, ret = indexar_mp3(mm)
+            if self.ruta == ruta and offs:
+                self._idx = (ruta, offs, spf, fr, ret, mm)
+        except Exception:
+            pass
+
+    def _fuente_en(self, ruta, frame):
+        """Generador listo para send() que empieza en `frame` (a 44,1 kHz). Con el índice de frames el salto
+        es instantáneo; sin él (otro formato, o el índice aún no está) se usa el salto lineal de miniaudio."""
+        F32 = miniaudio.SampleFormat.FLOAT32
+        idx = self._idx if self._idx and self._idx[0] == ruta else None
+        if idx and frame > 0:
+            _, offs, spf, fr, ret, mm = idx
+            pos = frame * fr / FS                                  # posición en frames del archivo
+            kf = min(int((pos + ret) // spf), len(offs) - 1)
+            k0 = max(kf - PREVIOS, 0)                              # unos frames antes: llenan la reserva de bits
+            if k0 > 0:
+                # Al arrancar a mitad de archivo el decodificador no entrega los primeros frames (les falta la
+                # reserva de bits de los anteriores): 0, 1 o 2 según el contenido. Se mide decodificando solo
+                # esos frames, y recién ahí se sabe a qué punto de la pista corresponde su primera muestra.
+                n = kf - k0
+                corte = offs[kf] if kf < len(offs) else len(mm)
+                sonda = miniaudio.stream_any(FuenteMp3(mm, offs[k0], corte), source_format=miniaudio.FileFormat.MP3,
+                                             output_format=F32, nchannels=2, sample_rate=fr, frames_to_read=1024)
+                perdidos = n - round(len(_leer(sonda, n * spf + spf)) / spf)
+                ini = (k0 + max(perdidos, 0)) * spf - ret            # posición (frames del archivo) de su 1.ª muestra
+                if ini <= pos:
+                    g = miniaudio.stream_any(FuenteMp3(mm, offs[k0]), source_format=miniaudio.FileFormat.MP3,
+                                             output_format=F32, nchannels=2, sample_rate=FS, frames_to_read=1024)
+                    _leer(g, round((pos - ini) * FS / fr))          # descarta hasta el punto pedido
+                    return g
+        return miniaudio.stream_file(ruta, output_format=F32, nchannels=2, sample_rate=FS,
+                                     frames_to_read=1024, seek_frame=frame)
+
+    def _poner(self, fuente, frame):
+        with self._lock:
+            self._pend = (fuente, frame)
+
+    def _callback(self):
+        req = yield b""
+        while True:
+            try:
+                out = self._bloque(req)
+            except Exception as e:  # un error acá cortaría el audio para siempre: se traga y se avisa
+                out = np.zeros((req, 2), np.float32)
+                log(f"motor: {e!r}")
+            req = yield out
+
+    def _rampa(self, n, objetivo):
+        """Ganancia de cada uno de n frames: de la actual al objetivo en FADE frames."""
+        g = self._gan + (objetivo - self._gan) * np.minimum(np.arange(1, n + 1) / FADE, 1.0)
+        self._gan = float(g[-1])
+        return g.astype(np.float32)
+
+    def _bloque(self, req):
+        """Arma los `req` frames que pide el dispositivo (corre en el hilo de audio)."""
+        self._t_cb, self._tot_cb = time.perf_counter(), self._total
+        out = np.zeros((req, 2), np.float32)
+        with self._lock:
+            pend, self._pend = self._pend, None
+        hecho = 0
+        if pend is not None:                       # cambio de tema o salto
+            nueva, frame = pend
+            cola = None
+            if self._fuente is not None and self._gan >= 0.999 and self._quiere:
+                cola = _leer(self._fuente, FADE)    # lo que quedaba del audio viejo: se funde hacia afuera
+            self._fuente, self._pos0, self._tot0 = nueva, frame, self._total
+            if cola is not None:
+                cabeza = _leer(nueva, FADE) if nueva is not None else np.zeros((0, 2), np.float32)
+                r = np.arange(FADE, dtype=np.float32)[:, None] / FADE
+                mezcla = np.zeros((FADE, 2), np.float32)
+                mezcla[:len(cola)] += cola * (1 - r[:len(cola)])
+                mezcla[:len(cabeza)] += cabeza * r[:len(cabeza)]
+                hecho = max(len(cola), len(cabeza))
+                out[:hecho] = mezcla[:hecho]
+                if nueva is None:
+                    self._gan = 0.0
+                elif len(cabeza) < FADE:
+                    self._fin_de_archivo()
+            elif nueva is None:
+                self._gan = 0.0
+            else:                                   # arranque desde silencio (o salto en pausa): entra con fundido
+                self._gan = 0.0
+        if self._fuente is not None and hecho < req:
+            objetivo = 1.0 if self._quiere else 0.0
+            quedan = req - hecho
+            if objetivo == 0.0:                     # pausando: solo hace falta el fundido de salida
+                quedan = min(quedan, int(round(self._gan * FADE)))
+            if quedan > 0:
+                x = _leer(self._fuente, quedan)
+                if len(x):
+                    x = x * self._rampa(len(x), objetivo)[:, None]
+                    out[hecho:hecho + len(x)] = x
+                    hecho += len(x)
+                if len(x) < quedan:
+                    self._fin_de_archivo()
+        if hecho:
+            self._escribir_anillo(out[:hecho])
+            self._total += hecho
+        if self.espia is not None:
+            self.espia(out.copy())
+        return out * self.volumen if self.volumen != 1.0 else out
+
+    def _escribir_anillo(self, x):
+        mono = x.mean(axis=1)
+        if len(mono) > self.ANILLO:
+            mono = mono[-self.ANILLO:]
+            ini = self._total + (len(x) - self.ANILLO)
+        else:
+            ini = self._total
+        i, n = ini % self.ANILLO, len(mono)
+        if i + n <= self.ANILLO:
+            self._anillo[i:i + n] = mono
+        else:
+            k = self.ANILLO - i
+            self._anillo[i:] = mono[:k]
+            self._anillo[:n - k] = mono[k:]
+
+    def _fin_de_archivo(self):
+        if self._terminada:
+            return
+        self._fuente = None
+        self._terminada = True
+        self._quiere = False
+        self._gan = 0.0
+        self.fin_de_pista.emit()
+
+
+# ------------------------------------------------------------------------------------------------
 
 class Player(QWidget):
     def __init__(self):
