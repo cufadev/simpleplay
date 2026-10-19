@@ -26,7 +26,13 @@ No streaming, no accounts, no ads.
   folder you used. Select several tracks with `Ctrl`/`Shift`+click and remove them with **-**.
 - Remembers your last session (playlist, track, position, shuffle) and starts paused,
   ready to resume.
-- Smooth transitions for play/pause, cover changes, the playlist and the buttons.
+- Smooth transitions for play/pause, cover changes, the playlist and the buttons, and an animated morph
+  between the card and the compact bar. A soft shadow lifts the window off the desktop
+  (`SIMPLEPLAY_SOMBRA=0` turns it off).
+- Plays through its own audio engine ([miniaudio](https://miniaud.io/)): exact position, no clicks when
+  pausing or seeking, instant seeking even inside hour-long mixes, and the spectrum follows exactly what
+  you hear. If the sound device disappears (a USB or Bluetooth speaker unplugged, waking from suspend) it
+  reopens by itself and the track goes on where it was. Tracks that cannot be played are skipped.
 - Media keys and desktop controls (MPRIS): play/pause, next and previous from your keyboard
   and from the KDE and GNOME media widgets.
 - Volume is left to the system mixer.
@@ -37,8 +43,8 @@ No streaming, no accounts, no ads.
 Get the AppImage from the [Releases](../../releases) page, then make it executable and run it:
 
 ```
-chmod +x simpleplay-1.3-x86_64.AppImage
-./simpleplay-1.3-x86_64.AppImage
+chmod +x simpleplay-1.4-x86_64.AppImage
+./simpleplay-1.4-x86_64.AppImage
 ```
 
 On GNOME you can also right click the file, open **Properties > Permissions** and enable
@@ -50,7 +56,7 @@ Requirements:
   Fedora 36+, Linux Mint 21+, Arch and similar).
 - `libGL` and `libEGL` (every desktop install has them).
 - FUSE 2 to run AppImages directly (`libfuse2t64` on recent Ubuntu). Without it, run
-  `./simpleplay-1.3-x86_64.AppImage --appimage-extract-and-run`.
+  `./simpleplay-1.4-x86_64.AppImage --appimage-extract-and-run`.
 
 It does not add itself to your applications menu. Use
 [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher), or copy
@@ -86,8 +92,8 @@ py -3.13 -m venv .venv
 .venv\Scripts\python simpleplay.py
 ```
 
-`ffmpeg` is optional: if installed, the spectrum bars seek faster inside very long files;
-otherwise the bundled `miniaudio` decoder is used.
+Nothing else is needed: decoding and playback are both done by `miniaudio`, which talks to PulseAudio,
+PipeWire or ALSA on Linux (WASAPI on Windows). There is no `ffmpeg` or SDL dependency.
 
 ## Controls
 
@@ -112,11 +118,11 @@ otherwise the bundled `miniaudio` decoder is used.
 
 ## Troubleshooting
 
-The spectrum bars stay flat, or something else looks wrong? Check how the audio is decoded
-without opening the window:
+No sound, or the spectrum bars stay flat? Check the decoding and the sound device without opening
+the window:
 
 ```
-./simpleplay-1.3-x86_64.AppImage --diagnose some-song.mp3
+./simpleplay-1.4-x86_64.AppImage --diagnose some-song.mp3
 ```
 
 (or `python simpleplay.py --diagnose some-song.mp3` from source). To see what the player is
@@ -153,11 +159,16 @@ machine that builds it.
 
 ## Project files
 
-- `simpleplay.py`: the application (PySide6 + pygame.mixer).
+- `simpleplay.py`: the application (PySide6 + miniaudio).
 - `icon/`: app icon as SVG and PNG.
 - `packaging/`: AppImage build scripts and desktop entry.
 - `legacy/`: the first, minimal Tkinter version.
 - [CHANGELOG.md](CHANGELOG.md) and [ROADMAP.md](ROADMAP.md).
+
+## Support
+
+simpleplay is free and always will be. If it is useful to you, you can
+[buy me a beer](https://buymeacoffee.com/cufadev). It is entirely optional.
 
 ## License
 
@@ -166,4 +177,4 @@ simpleplay is free software, released under the
 
 Copyright (C) 2026 Facundo González <facundonic.gonzalez@gmail.com>
 
-It uses PySide6, pygame, mutagen, numpy and miniaudio, each under its own license.
+It uses PySide6, mutagen, numpy and miniaudio, each under its own license.

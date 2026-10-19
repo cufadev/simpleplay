@@ -307,6 +307,16 @@ class TestRobustez(Base):
         espera(0.5)
         self.assertTrue(self.m.reproduciendo)                           # el audio no se cortó por eso
 
+    def test_nunca_cae_al_dispositivo_nulo_sin_pedirlo(self):
+        """Sin placa de sonido tiene que avisar, no reproducir en silencio: el dispositivo nulo no figura en la lista."""
+        m = S.Motor()
+        try:
+            self.assertNotIn(miniaudio.Backend.NULL, m.backends)
+            self.assertTrue(m.backends)
+        finally:
+            m.cerrar()
+        self.assertEqual(S.Motor(backend=miniaudio.Backend.NULL).backends, [miniaudio.Backend.NULL])   # salvo que se pida
+
     def test_dispositivo_caido_se_reabre_y_el_tema_sigue(self):
         m = S.Motor(buffer_ms=120, backend=miniaudio.Backend.NULL, vigilancia_s=0.2, umbral_s=0.7)
         bloques = []

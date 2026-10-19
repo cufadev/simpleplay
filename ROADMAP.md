@@ -38,7 +38,7 @@ looked up by text.
 
 ## Windows and macOS versions
 
-The libraries used (PySide6, pygame, numpy, mutagen, miniaudio) all run on both systems, so
+The libraries used (PySide6, numpy, mutagen, miniaudio) all run on both systems, so
 this is mostly packaging and a few small code changes.
 
 Status: `requirements.txt` is ready and checked to have Windows wheels; a first run on a real Windows
@@ -51,8 +51,8 @@ machine is pending, and the macOS handler for opened files is not written yet.
   `QFileOpenEvent`.
 - Check the frameless, translucent window and dragging it on both systems; Qt supports
   them, but they have only been tried on Linux so far.
-- `ffmpeg` is not installed on those systems; the bundled `miniaudio` decoder already
-  covers the spectrum bars there.
+- Audio on Windows goes through WASAPI (via `miniaudio`) and on macOS through Core Audio; neither has been
+  tried on a real machine yet. There is no `ffmpeg` dependency anywhere.
 
 ### Packaging
 - PyInstaller can produce a Windows build (portable zip, or an installer with Inno Setup)

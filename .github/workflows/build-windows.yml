@@ -41,6 +41,8 @@ jobs:
 
       - name: Smoke test - the audio decoder works inside the build
         shell: pwsh
+        env:
+          SIMPLEPLAY_AUDIO: "null"   # the runner has no sound card: use the simulated device
         run: |
           $p = Start-Process -FilePath "dist\simpleplay\simpleplay.exe" -ArgumentList "--diagnose","tests\silencio.mp3" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "--diagnose failed with exit code $($p.ExitCode)" }
@@ -49,7 +51,7 @@ jobs:
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
-          SDL_AUDIODRIVER: dummy
+          SIMPLEPLAY_AUDIO: "null"
         run: |
           $p = Start-Process -FilePath "dist\simpleplay\simpleplay.exe" -ArgumentList "tests\silencio.mp3" -PassThru
           Start-Sleep -Seconds 10

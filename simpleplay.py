@@ -37,7 +37,7 @@ import miniaudio
 
 from mutagen.id3 import ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TDRC, APIC
 from mutagen.mp3 import MP3
-from PySide6.QtCore import (Qt, QTimer, QRectF, QPointF, QSize, Signal, QLocale, QUrl, QObject,
+from PySide6.QtCore import (Qt, QTimer, QCoreApplication, QRectF, QPointF, QSize, Signal, QLocale, QUrl, QObject,
                             ClassInfo, Property, Slot, QMetaType,
                             QStandardPaths, QVariantAnimation, QEasingCurve, QPoint, QItemSelectionModel)
 from PySide6.QtGui import (QShortcut, QKeySequence, QIcon, QFont, QFontMetrics, QPainter, QColor, QPixmap, QImage, QLinearGradient,
@@ -55,7 +55,7 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.3"
+VERSION = "1.4"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
@@ -1307,6 +1307,19 @@ _BR2 = (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0)
 _FREC = {3: (44100, 48000, 32000), 2: (22050, 24000, 16000), 0: (11025, 12000, 8000)}
 
 
+def _sistemas_de_sonido():
+    """Los sistemas de sonido reales de cada plataforma, en orden de preferencia. Sin lista, miniaudio termina
+    cayendo a un dispositivo nulo que no suena: la barra avanzaría sin que se oiga nada y sin ningún aviso."""
+    B = miniaudio.Backend
+    if sys.platform == "win32":
+        orden = (B.WASAPI, B.DSOUND, B.WINMM)
+    elif sys.platform == "darwin":
+        orden = (B.COREAUDIO,)
+    else:
+        orden = (B.PULSEAUDIO, B.ALSA, B.JACK, B.OSS, B.SNDIO, B.AUDIO4)  # PipeWire se ofrece como PulseAudio
+    return list(orden)
+
+
 def _cabecera_mp3(b, i):
     """(largo del frame, muestras por frame, frecuencia) del frame mp3 (capa III) que empieza en b[i], o None."""
     if i + 4 > len(b) or b[i] != 0xFF or (b[i + 1] & 0xE0) != 0xE0:
@@ -1422,7 +1435,7 @@ class Motor(QObject):
         self.reintento = reintento_s    # cada cuánto se reintenta abrir una placa que no estaba
         # cuánto tarda en oírse lo que se entrega (aproximado: sin medir con la placa real)
         self.lat = round((buffer_ms / 2 if latencia_ms is None else latencia_ms) * FS / 1000)
-        self.backends = [backend] if backend is not None else None
+        self.backends = [backend] if backend is not None else _sistemas_de_sonido()
         self.espia = None             # para las pruebas: recibe cada bloque que se manda al dispositivo
         self._lock = threading.Lock()
         self._dev = None
@@ -1446,7 +1459,8 @@ class Motor(QObject):
         self._sin_aviso = True        # solo se avisa del primer fallo de una serie
         self._vigia = QTimer(self)
         self._vigia.timeout.connect(self._vigilar)
-        self._vigia.start(round(vigilancia_s * 1000))
+        if QCoreApplication.instance():   # sin aplicación (p. ej. en --diagnose) no hay bucle de eventos que lo mueva
+            self._vigia.start(round(vigilancia_s * 1000))
 
     # --- estado ---
     @property

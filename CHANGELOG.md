@@ -3,6 +3,38 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
+## [1.4] - 2026-10-19
+
+### Changed
+- **New audio engine.** Playback no longer goes through pygame and SDL: simpleplay plays through
+  [miniaudio](https://miniaud.io/) directly. The position is exact (it was a rough estimate after a seek),
+  pausing and seeking fade over 5 ms so there are no clicks, and the end of a track is signalled by the
+  engine instead of being polled every 200 ms.
+- **The spectrum reads what is playing.** The bars analyze the same audio that goes to the speakers, so they
+  follow the music to the sample and the file is decoded once instead of twice. The level the bars are
+  measured against now follows the last ten seconds, so a quiet passage still uses the whole range.
+- **Seeking inside long files is instant.** A jump into an hour-long mix used to take over a second with
+  the decoder alone; the player now indexes the mp3 frames and goes straight to the right one (0.2 ms).
+- Lighter download: SDL and pygame are no longer bundled. `ffmpeg` is not used any more.
+
+### Added
+- **Animated transition** between the card and the compact bar: the window morphs from one shape to the
+  other (380 ms). Pressing the button or `M` again halfway completes the previous one instantly.
+- **Soft shadow** around the card, the compact bar and the playlist panel, so the frameless window does not
+  look glued to light desktops. `SIMPLEPLAY_SOMBRA=0` turns it off.
+- **It recovers from a lost sound device.** If a USB or Bluetooth speaker is unplugged, or the computer
+  wakes from suspend, the device is reopened by itself and the track continues where it was. With no sound
+  card at all it retries every few seconds and warns once.
+- **Tracks that cannot be played are skipped** (missing, empty, corrupted or without audio), with a notice in
+  the pill. If none of the tracks in the list can be played, the player stops instead of looping forever.
+- MPRIS: the KDE and GNOME media widgets update immediately after a seek (the `Seeked` signal).
+- `--diagnose` also tests the sound device. Running from source with a missing Python module now prints
+  which one and the command to install it.
+- Support link (`.github/FUNDING.yml` and a short section in the README).
+
+### Removed
+- The `pygame` and `ffmpeg` dependencies.
+
 ## [1.3] - 2026-10-18
 
 ### Added
