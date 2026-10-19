@@ -1,7 +1,11 @@
 # simpleplay
 
-A small, clean mp3 player for Linux, for people who just want to play their own music.
+A small, clean mp3 player for Linux and Windows, for people who just want to play their own music.
 No streaming, no accounts, no ads.
+
+<p align="center">
+  <img src="docs/demo.gif" alt="simpleplay playing a track: the card with the cover art, the spectrum bars, the compact bar and the playlist" width="320">
+</p>
 
 <p align="center">
   <img src="docs/screenshots/player.png" alt="Player card with cover art" width="250">
@@ -9,7 +13,7 @@ No streaming, no accounts, no ads.
   <img src="docs/screenshots/playlist.png" alt="Playlist panel" width="250">
 </p>
 
-<sub>Screenshots use a generated demo track and cover art.</sub>
+<sub>Screenshots show "Tu Cuerpo" by Luciano D'Andrea.</sub>
 
 ## Features
 
