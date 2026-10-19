@@ -3,6 +3,8 @@
 A small, clean mp3 player for Linux and Windows, for people who just want to play their own music.
 No streaming, no accounts, no ads.
 
+**Website:** https://cufadev.github.io/simpleplay/
+
 <p align="center">
   <img src="docs/demo.gif" alt="simpleplay playing a track: the card with the cover art, the spectrum bars, the compact bar and the playlist" width="320">
 </p>
