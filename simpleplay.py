@@ -45,7 +45,7 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.2"
+VERSION = "1.3"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
@@ -114,6 +114,7 @@ QSlider::handle:horizontal { background: white; width: 9px; height: 9px; margin:
 QLabel { color: white; background: transparent; }
 QFrame#pill { background: rgba(0,0,0,95); border-radius: 18px; }
 QFrame#panel { background: rgba(22,22,24,235); border-radius: 18px; }
+QFrame#mini { background: rgba(22,22,24,235); border-radius: 28px; }
 QListWidget { background: transparent; color: white; border: none; padding: 0; outline: 0; }
 QListWidget::item { padding: 6px 8px; border-radius: 8px; }
 QListWidget::item:selected { background: rgba(255,78,1,190); color: white; }
@@ -870,6 +871,15 @@ class IconButton(QAbstractButton):
             for fx in (-0.4, 0.0, 0.4):  # rayitas entre las cerdas
                 p.drawLine(QPointF(u * fx * 0.55, u * 0.42), QPointF(u * fx * 1.05, u * 1.28))
             p.restore()
+        elif k in ("compact", "expand"):
+            pen = QPen(w, 1.7)
+            pen.setJoinStyle(Qt.RoundJoin)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            if k == "compact":  # una píldora baja
+                p.drawRoundedRect(QRectF(x - s * 1.25, y - s * 0.55, s * 2.5, s * 1.1), s * 0.55, s * 0.55)
+            else:               # la tarjeta
+                p.drawRoundedRect(QRectF(x - s * 0.95, y - s * 0.95, s * 1.9, s * 1.9), s * 0.45, s * 0.45)
         elif k == "minus":
             p.drawRoundedRect(QRectF(x - s, y - s * 0.14, 2 * s, s * 0.28), 1, 1)
         elif k == "plus":
@@ -1298,7 +1308,7 @@ class Player(QWidget):
         textos.addStretch()
         self.thumb.hide()
         self.artista.hide()
-        pill = ClickFrame()
+        pill = self.pill = ClickFrame()
         pill.setCursor(Qt.PointingHandCursor)
         pill.setObjectName("pill")
         pill.setFixedHeight(36)
@@ -1342,9 +1352,12 @@ class Player(QWidget):
                                       "Look up and fill in the track info (for the selected tracks)"))
         self.btn_escoba.clicked.connect(self.limpiar_etiquetas)
 
-        top = QHBoxLayout()
+        self.btn_compacto = IconButton("compact", 28)
+        self.btn_compacto.setToolTip(tr("Modo compacto (M)", "Compact mode (M)"))
+        top = self.top = QHBoxLayout()
         top.setSpacing(8)
         top.addWidget(pill, 1)
+        top.addWidget(self.btn_compacto, 0, Qt.AlignVCenter)
         top.addWidget(self.btn_lista)
 
         self.t_actual = QLabel("0:00")
@@ -1449,16 +1462,40 @@ class Player(QWidget):
         self.despliegue.valueChanged.connect(self._desplegar)
         self.despliegue.finished.connect(self._fin_despliegue)
 
+        # modo compacto: la misma píldora de arriba pasa a esta barra, con los controles al lado
+        self.mini = QFrame()
+        self.mini.setObjectName("mini")
+        self.mini.setFixedSize(380, 56)
+        self.mini_prev = IconButton("prev", 30)
+        self.mini_play = IconButton("play", 36)
+        self.mini_next = IconButton("next", 30)
+        self.mini_volver = IconButton("expand", 28)
+        self.mini_volver.setToolTip(tr("Volver a la tarjeta (M)", "Back to the card (M)"))
+        ml = self.mini_lay = QHBoxLayout(self.mini)
+        ml.setContentsMargins(10, 10, 10, 10)
+        ml.setSpacing(6)
+        for b in (self.mini_prev, self.mini_play, self.mini_next, self.mini_volver):
+            ml.addWidget(b, 0, Qt.AlignVCenter)
+        self.mini.hide()
+        self.compacto = False
+        self._fade = None
+
         root = QVBoxLayout(self)
         root.setSizeConstraint(QLayout.SetFixedSize)  # la ventana crece al mostrar la lista
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self.card, 0, Qt.AlignHCenter)
+        root.addWidget(self.mini, 0, Qt.AlignHCenter)
         root.addWidget(self.caja)
 
         self.btn_play.clicked.connect(self.play_pausa)
         self.btn_prev.clicked.connect(self.anterior)
         self.btn_next.clicked.connect(self.siguiente)
+        self.mini_play.clicked.connect(self.play_pausa)
+        self.mini_prev.clicked.connect(self.anterior)
+        self.mini_next.clicked.connect(self.siguiente)
+        self.btn_compacto.clicked.connect(lambda: self.poner_compacto(True))
+        self.mini_volver.clicked.connect(lambda: self.poner_compacto(False))
         self.btn_lista.toggled.connect(self.alternar_lista)
         self.lista.itemDoubleClicked.connect(lambda it: self.reproducir(self.lista.row(it)))
 
@@ -1480,7 +1517,8 @@ class Player(QWidget):
                               (QKeySequence(QKeySequence.Open), self.abrir),
                               (QKeySequence("Ctrl+Shift+O"), self.abrir_carpeta),
                               (QKeySequence(QKeySequence.Find), self.enfocar_buscador),
-                              (QKeySequence(Qt.Key_R), self.alternar_repetir)):
+                              (QKeySequence(Qt.Key_R), self.alternar_repetir),
+                              (QKeySequence(Qt.Key_M), lambda: self.poner_compacto(not self.compacto))):
             QShortcut(tecla, self).activated.connect(accion)
 
         if HAY_DBUS and not os.environ.get("SIMPLEPLAY_NO_MPRIS"):
@@ -1875,7 +1913,8 @@ class Player(QWidget):
             i, pos = max(self.lista.currentRow(), 0), 0.0
         datos = {"pistas": self.pistas, "indice": i, "pos": round(pos, 1),
                  "shuffle": self.btn_shuffle.isChecked(), "repetir": self.repetir,
-                 "carpeta": self.carpeta_musica, "orden_original": self.orden_original}
+                 "carpeta": self.carpeta_musica, "orden_original": self.orden_original,
+                 "compacto": self.compacto}
         try:
             ESTADO.parent.mkdir(parents=True, exist_ok=True)
             tmp = ESTADO.with_suffix(".tmp")
@@ -1893,6 +1932,7 @@ class Player(QWidget):
         self.btn_shuffle.setChecked(bool(d.get("shuffle")))
         self.poner_repetir(d.get("repetir", "off"))
         self.carpeta_musica = d.get("carpeta", "")
+        self.poner_compacto(bool(d.get("compacto")), animar=False)
         if not con_pistas:
             return
         pistas = [a for a in d.get("pistas", []) if Path(a).exists()]
@@ -2022,6 +2062,48 @@ class Player(QWidget):
         else:
             self.caja.setMaximumHeight(16777215)  # sin tope una vez abierta
 
+    def poner_compacto(self, si, animar=True):
+        """Pasa entre la tarjeta y la píldora con los controles. La música no se corta."""
+        if si == self.compacto:
+            return
+        self.compacto = si
+        if si:  # la lista se cierra de golpe: en la píldora no hay lugar para ella
+            self.despliegue.stop()
+            self.lista_abierta = False
+            self.mezcla_lista = 0.0
+            self.caja.setMaximumHeight(0)
+            self.caja.hide()
+            self.btn_lista.blockSignals(True)
+            self.btn_lista.setChecked(False)
+            self.btn_lista.blockSignals(False)
+            self.top.removeWidget(self.pill)
+            self.mini_lay.insertWidget(0, self.pill, 1)
+        else:
+            self.mini_lay.removeWidget(self.pill)
+            self.top.insertWidget(0, self.pill, 1)
+        self.pill.show()
+        self.card.setVisible(not si)
+        self.mini.setVisible(si)
+        self.btn_compacto.setVisible(not si)
+        self.adjustSize()
+        if animar:
+            self._entrada(self.mini if si else self.card)
+        self.guardar_estado()
+
+    def _entrada(self, w):
+        """Aparece con un fundido corto (el efecto se saca al terminar: no cuesta nada después)."""
+        ef = QGraphicsOpacityEffect(w)
+        w.setGraphicsEffect(ef)
+        a = QVariantAnimation(self)
+        a.setDuration(220)
+        a.setStartValue(0.0)
+        a.setEndValue(1.0)
+        a.setEasingCurve(QEasingCurve.OutCubic)
+        a.valueChanged.connect(ef.setOpacity)
+        a.finished.connect(lambda: w.setGraphicsEffect(None))
+        self._fade = a
+        a.start()
+
     def alternar_barras(self):
         self.modo_barras = not self.modo_barras
         if self.modo_barras:
@@ -2066,7 +2148,9 @@ class Player(QWidget):
         return [float(x) for x in np.clip((db - (self.ref_suave - RANGO_DB)) / RANGO_DB, 0.0, 1.0)]
 
     def icono_play(self):
-        self.btn_play.set_kind("pause" if (self.actual >= 0 and not self.pausado) else "play")
+        kind = "pause" if (self.actual >= 0 and not self.pausado) else "play"
+        self.btn_play.set_kind(kind)
+        self.mini_play.set_kind(kind)
         self.mpris_cambio("PlaybackStatus", "CanSeek")
 
     def play_pausa(self):
@@ -2192,6 +2276,8 @@ class Player(QWidget):
         menu.addSeparator()
         menu.addAction(tr("Abrir archivos…", "Open files…"), self.abrir)
         menu.addAction(tr("Abrir carpeta…", "Open folder…"), self.abrir_carpeta)
+        menu.addAction(tr("Modo normal", "Normal mode") if self.compacto else tr("Modo compacto", "Compact mode"),
+                       lambda: self.poner_compacto(not self.compacto))
         menu.addAction(tr("Cerrar", "Close"), self.close)
         menu.exec(e.globalPos())
 

@@ -3,6 +3,15 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
+## [1.3] - 2026-10-18
+
+### Added
+- **Compact mode:** the same pill with a small cover and the scrolling title, plus previous, play
+  and next buttons and a button to go back to the card. The window goes from 320x320 to a 380x56
+  bar. Toggle it with the new button next to the playlist one, the `M` key, or the right-click
+  menu. The music keeps playing when you switch, the playlist closes when going compact, and the
+  mode is remembered between sessions.
+
 ## [1.2] - 2026-10-18
 
 ### Added

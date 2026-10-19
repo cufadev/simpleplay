@@ -37,8 +37,8 @@ No streaming, no accounts, no ads.
 Get the AppImage from the [Releases](../../releases) page, then make it executable and run it:
 
 ```
-chmod +x simpleplay-1.1-x86_64.AppImage
-./simpleplay-1.1-x86_64.AppImage
+chmod +x simpleplay-1.3-x86_64.AppImage
+./simpleplay-1.3-x86_64.AppImage
 ```
 
 On GNOME you can also right click the file, open **Properties > Permissions** and enable
@@ -50,7 +50,7 @@ Requirements:
   Fedora 36+, Linux Mint 21+, Arch and similar).
 - `libGL` and `libEGL` (every desktop install has them).
 - FUSE 2 to run AppImages directly (`libfuse2t64` on recent Ubuntu). Without it, run
-  `./simpleplay-1.1-x86_64.AppImage --appimage-extract-and-run`.
+  `./simpleplay-1.3-x86_64.AppImage --appimage-extract-and-run`.
 
 It does not add itself to your applications menu. Use
 [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher), or copy
@@ -97,6 +97,8 @@ otherwise the bundled `miniaudio` decoder is used.
 | Previous / next | the buttons, `P` / `N`, or the media keys |
 | Seek | click or drag the time bar; `Left` / `Right` jump 5 s |
 | Track info / spectrum | click the top pill |
+| Compact mode | the button next to the list one, `M`, or right click; the same to go back |
+| Compact mode | the button next to the list one, `M`, or right click; the same to go back |
 | Playlist | the list button (inside it: search box, sort, **-** and **+**) |
 | Search the list | `Ctrl+F`, type; `Enter` plays the first result, `Esc` clears the search |
 | Sort the list | the sort button in the playlist: by artist, title, album, or the order added |
@@ -114,7 +116,7 @@ The spectrum bars stay flat, or something else looks wrong? Check how the audio 
 without opening the window:
 
 ```
-./simpleplay-1.1-x86_64.AppImage --diagnose some-song.mp3
+./simpleplay-1.3-x86_64.AppImage --diagnose some-song.mp3
 ```
 
 (or `python simpleplay.py --diagnose some-song.mp3` from source). To see what the player is
