@@ -1042,6 +1042,62 @@ class Card(QWidget):
         p.fillRect(self.rect(), arriba)
 
 
+
+class Transicion(QWidget):
+    """Capa que lleva la ventana de un modo al otro (tarjeta <-> barra compacta).
+
+    Dibuja la captura del modo viejo y, encima, la del nuevo (que va apareciendo) dentro de un rectángulo redondeado
+    que cambia de tamaño y de forma. Mientras dura, los widgets reales están ocultos y la ventana mide lo mismo todo el
+    tiempo (el mayor de los dos tamaños): redimensionar la ventana en cada cuadro es lo que suele entrecortar estas
+    animaciones.
+    """
+    BASE = QColor(22, 22, 24)  # lo que se ve en las zonas que ninguna de las dos capturas cubre todavía
+
+    def __init__(self, parent, viejo, nuevo, tam1, tam2, radio1, radio2, ms=380):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.viejo, self.nuevo, self.tam1, self.tam2 = viejo, nuevo, tam1, tam2
+        self.radio1, self.radio2 = radio1, radio2
+        self.t = 0.0
+        self.anim = QVariantAnimation(self)
+        self.anim.setDuration(ms)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self.anim.valueChanged.connect(self._avanzar)
+        self.setGeometry(parent.rect())
+        self.show()
+        self.anim.start()
+
+    def _avanzar(self, v):
+        self.t = float(v)
+        self.update()
+
+    def paintEvent(self, e):
+        t = self.t
+        w = self.tam1.width() + (self.tam2.width() - self.tam1.width()) * t
+        h = self.tam1.height() + (self.tam2.height() - self.tam1.height()) * t
+        r = self.radio1 + (self.radio2 - self.radio1) * t
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        forma = QPainterPath()
+        forma.addRoundedRect(QRectF(0, 0, w, h), r, r)
+        p.setClipPath(forma)
+        p.fillRect(QRectF(0, 0, w, h), self.BASE)
+        # primero se va el modo viejo y después aparece el nuevo, con la base oscura entre ambos: si se mezclaran a la
+        # vez se verían los dos textos superpuestos (el título está en un lugar distinto en cada modo)
+        p.setOpacity(1.0 - self._suave(t / 0.5))
+        p.drawPixmap(0, 0, self.viejo)
+        p.setOpacity(self._suave((t - 0.45) / 0.55))
+        p.drawPixmap(0, 0, self.nuevo)
+
+    @staticmethod
+    def _suave(x):
+        x = min(max(x, 0.0), 1.0)
+        return x * x * (3 - 2 * x)
+
+
 if HAY_DBUS:
     # MPRIS es el estándar con el que el escritorio (KDE, GNOME...) manda las teclas multimedia
     # y muestra el reproductor en su panel. Las propiedades y métodos salen de los adaptadores.
@@ -1891,6 +1947,7 @@ class Player(QWidget):
         self.mini.hide()
         self.compacto = False
         self._fade = None
+        self._trans = None   # la transición en curso entre la tarjeta y la barra compacta
 
         root = QVBoxLayout(self)
         root.setSizeConstraint(QLayout.SetFixedSize)  # la ventana crece al mostrar la lista
@@ -2455,6 +2512,9 @@ class Player(QWidget):
         """Pasa entre la tarjeta y la píldora con los controles. La música no se corta."""
         if si == self.compacto:
             return
+        self._fin_transicion()                       # si había una a medias, se completa al instante
+        viejo = self.grab() if animar and self.isVisible() else None
+        tam1 = self.size()
         self.compacto = si
         if si:  # la lista se cierra de golpe: en la píldora no hay lugar para ella
             self.despliegue.stop()
@@ -2475,9 +2535,39 @@ class Player(QWidget):
         self.mini.setVisible(si)
         self.btn_compacto.setVisible(not si)
         self.adjustSize()
-        if animar:
-            self._entrada(self.mini if si else self.card)
+        if viejo is not None:
+            self._transicion(viejo, tam1)
         self.guardar_estado()
+
+    def _transicion(self, viejo, tam1):
+        """Anima el paso de la captura `viejo` (de tamaño tam1) al estado en que quedó la ventana."""
+        self.layout().activate()
+        tam2 = self.size()
+        nuevo = self.grab()
+        self._visibles = [(w, w.isVisible()) for w in (self.card, self.mini, self.caja)]
+        for w, _ in self._visibles:
+            w.hide()
+        self.layout().setSizeConstraint(QLayout.SetNoConstraint)
+        self.setFixedSize(max(tam1.width(), tam2.width()), max(tam1.height(), tam2.height()))
+        radio_tarjeta, radio_barra = 30, 28
+        r1, r2 = (radio_tarjeta, radio_barra) if self.compacto else (radio_barra, radio_tarjeta)
+        self._trans = Transicion(self, viejo, nuevo, tam1, tam2, r1, r2)
+        self._trans.anim.finished.connect(self._fin_transicion)
+
+    def _fin_transicion(self):
+        t = self._trans
+        if t is None:
+            return
+        self._trans = None
+        t.anim.stop()
+        t.hide()
+        t.deleteLater()
+        for w, visible in self._visibles:
+            w.setVisible(visible)
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16777215, 16777215)
+        self.layout().setSizeConstraint(QLayout.SetFixedSize)
+        self.adjustSize()
 
     def _entrada(self, w):
         """Aparece con un fundido corto (el efecto se saca al terminar: no cuesta nada después)."""

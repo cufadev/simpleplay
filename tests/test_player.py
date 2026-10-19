@@ -295,6 +295,83 @@ class TestUsoRapido(Base):
         self.assertTrue(self.w.motor.reproduciendo)
 
 
+class TestTransicion(Base):
+    """El paso entre la tarjeta y la barra compacta se anima y siempre termina bien."""
+
+    def test_ida_y_vuelta_terminan_en_el_tamano_justo(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        espera(0.4)
+        self.w.poner_compacto(True)
+        self.assertIsNotNone(self.w._trans)                     # hay una animación en curso
+        self.assertTrue(espera(2.0, lambda: self.w._trans is None))
+        self.assertTrue(self.w.mini.isVisible())
+        self.assertFalse(self.w.card.isVisible())
+        self.assertEqual((self.w.width(), self.w.height()), (380, 56))
+        self.w.poner_compacto(False)
+        self.assertTrue(espera(2.0, lambda: self.w._trans is None))
+        self.assertTrue(self.w.card.isVisible())
+        self.assertFalse(self.w.mini.isVisible())
+        self.assertEqual((self.w.width(), self.w.height()), (320, 320))
+
+    def test_la_musica_no_se_corta_durante_la_transicion(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        espera(0.6)
+        p0 = self.w.posicion()
+        self.w.poner_compacto(True)
+        espera(0.2)                                             # a mitad de la animación
+        self.assertTrue(self.w.motor.reproduciendo)
+        espera(0.8)
+        self.assertGreater(self.w.posicion(), p0 + 0.5)
+
+    def test_a_mitad_de_camino_la_ventana_mide_lo_mismo_y_se_puede_dibujar(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        espera(0.3)
+        self.w.poner_compacto(True)
+        espera(0.15)
+        self.assertEqual((self.w.width(), self.w.height()), (380, 320))   # el mayor de los dos tamaños
+        self.assertFalse(self.w.grab().isNull())                           # y dibuja sin errores
+        espera(1.0)
+
+    def test_sin_animar_no_hay_capa(self):
+        self.cargar(A)
+        self.w.poner_compacto(True, animar=False)
+        self.assertIsNone(self.w._trans)
+        self.assertEqual((self.w.width(), self.w.height()), (380, 56))
+
+    def test_apretar_muchas_veces_seguidas(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        espera(0.3)
+        for i in range(11):                                     # termina en compacto (11 cambios: impar)
+            self.w.poner_compacto(not self.w.compacto)
+            espera(0.03 * (i % 4))
+        self.assertTrue(espera(2.5, lambda: self.w._trans is None))
+        self.assertTrue(self.w.compacto)
+        self.assertEqual((self.w.width(), self.w.height()), (380, 56))
+        self.assertTrue(self.w.mini.isVisible())
+        self.assertFalse(self.w.card.isVisible())
+        self.w.poner_compacto(False)
+        self.assertTrue(espera(2.5, lambda: self.w._trans is None))
+        self.assertEqual((self.w.width(), self.w.height()), (320, 320))
+        self.assertTrue(self.w.motor.reproduciendo)
+
+    def test_con_la_lista_abierta(self):
+        self.cargar(A, B)
+        self.w.alternar_lista(True)
+        espera(0.6)
+        self.assertGreater(self.w.height(), 320)
+        self.w.poner_compacto(True)
+        self.assertTrue(espera(2.0, lambda: self.w._trans is None))
+        self.assertEqual((self.w.width(), self.w.height()), (380, 56))
+        self.assertFalse(self.w.caja.isVisible())
+        self.w.poner_compacto(False)
+        self.assertTrue(espera(2.0, lambda: self.w._trans is None))
+        self.assertEqual((self.w.width(), self.w.height()), (320, 320))   # la lista queda cerrada
+
+
 class TestLista(Base):
     def test_quitar_el_que_suena_pasa_al_vecino(self):
         self.cargar(A, B)
