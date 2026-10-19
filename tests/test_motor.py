@@ -507,5 +507,28 @@ class TestCadena(unittest.TestCase):
         self.assertAlmostEqual(S.leer_replaygain(ruta), -6.5 + (S.OBJETIVO_LUFS + 18.0), delta=0.01)
 
 
+class TestCandidatosEscoba(unittest.TestCase):
+    """Cómo se separan artista y título del nombre del archivo antes de buscarlos en MusicBrainz."""
+
+    def test_el_numero_de_lista_no_es_el_artista(self):
+        for nombre in ("391 - Boom Boom Kid - I Do.mp3", "391. Boom Boom Kid - I Do.mp3", "07) Boom Boom Kid - I Do.mp3"):
+            c = S.candidatos("/x/" + nombre, None, None)
+            self.assertEqual(c[0], ("Boom Boom Kid", "I Do"), nombre)
+            self.assertNotIn("391", [a for a, _ in c] + [t for _, t in c])
+
+    def test_bandas_que_empiezan_con_numero_siguen_andando(self):
+        self.assertEqual(S.candidatos("/x/3 Doors Down - Kryptonite (Official Video) [xPU8OAjjS4k].mp3", None, None)[0],
+                         ("3 Doors Down", "Kryptonite"))
+        # "311 - Amber": sin el número queda solo "Amber" (sin artista), así que se prueba también la banda 311
+        self.assertIn(("311", "Amber"), S.candidatos("/x/311 - Amber.mp3", None, None))
+
+    def test_con_etiquetas_y_numero_en_el_nombre_usa_el_artista_de_la_etiqueta(self):
+        self.assertIn(("Los Redondos", "Morena"), S.candidatos("/x/185 - Morena.mp3", None, "Los Redondos"))
+
+    def test_nombre_limpio_sigue_igual(self):
+        self.assertEqual(S.candidatos("/x/Ram Jam - Black Betty (Official Video) [I_2D8Eo15wE].mp3", None, None)[0],
+                         ("Ram Jam", "Black Betty"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

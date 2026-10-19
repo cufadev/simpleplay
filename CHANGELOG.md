@@ -17,6 +17,9 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
 - Both settings are remembered between sessions.
 
 ### Fixed
+- **Look-up on MusicBrainz now understands list numbers.** A file called `391 - Artist - Title.mp3` (what
+  a downloaded playlist leaves behind) was searched with `391` as the artist and never found. The number is
+  now ignored, and bands that start with a number (`3 Doors Down`, `311`) still work.
 - The tests no longer overwrite the real configuration folder (they use a temporary home).
 
 ## [1.4] - 2026-10-19

@@ -312,19 +312,26 @@ def sin_feat(titulo):
     return t.strip()
 
 
+_INDICE = re.compile(r"^\s*\d{1,4}\s*[-–.)]\s+")   # "391 - ", "12. ", "07) ": el número de orden de una lista descargada
+
+
 def candidatos(ruta, titulo_tag, artista_tag):
     """Posibles (artista, título) del tema, de lo más a lo menos probable, con etiquetas y nombre de archivo."""
     nombre, tit, art = limpiar_nombre(Path(ruta).stem), limpiar_nombre(titulo_tag), limpiar_nombre(artista_tag)
+    # "391 - Boom Boom Kid - I Do": el 391 es la posición en una lista, no el artista. Se prueba sin él; solo si
+    # lo que queda no trae artista ("311 - Amber") se vuelve al nombre completo, por si 311 es la banda.
+    sin_n = _INDICE.sub("", nombre)
+    bases = [tit, sin_n] + ([nombre] if sin_n != nombre and " - " not in sin_n else [])
     out, invertidos = [], []
-    for base in (tit, nombre):
+    for base in bases:
         if " - " in base:
             a, t = (limpiar_nombre(x) for x in base.split(" - ", 1))  # cada parte por separado
             out.append((a, t))
             invertidos.append((t, a))  # por si el archivo dice "Título - Artista"
     if art and tit:
         out.append((art, tit))
-    if art and nombre and " - " not in nombre:
-        out.append((art, nombre))
+    if art and nombre and " - " not in sin_n:
+        out.append((art, sin_n))
     vistos, res = set(), []
     for a, t in out + invertidos:
         if "|" in a + t or len(a) > 60 or len(t) > 90:
