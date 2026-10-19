@@ -2,7 +2,7 @@
 
     python tests/generar_corpus.py
 
-- tono_44k.mp3, tono_48k.mp3, mono_44k.mp3: senoides de 10 s en cada formato; vbr_4min.mp3: un barrido VBR de 4 min.
+- tono_44k.mp3, tono_48k.mp3, mono_44k.mp3: senoides de 10 s en cada formato; vbr_4min.mp3: un barrido VBR de 4 min; tono_bajo.mp3: la misma senoide a -34 dBFS.
 - largo_60min.mp3: un barrido (chirp) de 60 min cuya frecuencia vale 200 + t Hz en el segundo t, así
   la frecuencia dominante de cualquier tramo dice en qué segundo está (sirve para probar saltos).
 - gapless_a.mp3 / gapless_b.mp3: una senoide continua de 20 s cortada en dos mitades exactas de 10 s
@@ -27,6 +27,7 @@ def lavfi(expr, dur, rate, canales, salida, extra=("-b:a", "128k")):
 
 lavfi("0.5*sin(2*PI*440*t)", 10, 44100, 2, "tono_44k.mp3")
 lavfi("0.5*sin(2*PI*440*t)", 10, 48000, 2, "tono_48k.mp3")
+lavfi("0.02*sin(2*PI*440*t)", 10, 44100, 2, "tono_bajo.mp3")   # muy suave (-34 dBFS)
 lavfi("0.5*sin(2*PI*440*t)", 10, 44100, 1, "mono_44k.mp3")
 lavfi("0.5*sin(2*PI*(200*t+0.5*t*t))", 3600, 44100, 2, "largo_60min.mp3")
 lavfi("0.4*sin(2*PI*(300*t+8*t*t))", 240, 44100, 2, "vbr_4min.mp3", extra=("-q:a", "2"))  # VBR

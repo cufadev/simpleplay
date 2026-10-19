@@ -19,6 +19,7 @@ os.environ.update(QT_QPA_PLATFORM="offscreen", SIMPLEPLAY_AUDIO="null", SIMPLEPL
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ))
 
+import numpy as np
 from PySide6.QtWidgets import QApplication
 
 import simpleplay as S
@@ -111,6 +112,54 @@ class TestReproduccion(Base):
         v = self.w.espectro(S.BANDAS)
         self.assertEqual(len(v), S.BANDAS)
         self.assertTrue(all(0.0 <= x <= 1.0 for x in v))
+
+
+class TestEspectro(Base):
+    """Las barras leen lo que suena desde el motor."""
+
+    def test_la_barra_de_los_440_hz_es_la_mas_alta(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        espera(1.5)
+        for _ in range(40):                                   # unos segundos de análisis, como las barras reales
+            v = self.w.espectro(S.BANDAS)
+        k = int(np.searchsorted(S._BORDES, 440) - 1)
+        # 440 Hz está en el borde entre dos bandas: la ventana desparrama energía a la vecina y la compensación de
+        # agudos le suma casi 1 dB, así que la barra más alta puede ser cualquiera de las dos (siempre fue así)
+        self.assertIn(int(np.argmax(v)), (k, k + 1))
+        self.assertGreater(max(v), 0.9)
+        self.assertLess(sorted(v)[-4], 0.6)                   # y el resto de las barras queda abajo
+
+    def test_pausa_deja_las_barras_en_cero(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        espera(1.0)
+        self.w.play_pausa()
+        self.assertEqual(self.w.espectro(S.BANDAS), [0.0] * S.BANDAS)
+
+    def test_un_tema_suave_usa_todo_el_rango(self):
+        self.cargar(str(CORPUS / "tono_bajo.mp3"))
+        self.w.reproducir(0)
+        espera(1.5)
+        for _ in range(40):
+            v = self.w.espectro(S.BANDAS)
+        self.assertGreater(max(v), 0.9)                       # 34 dB más bajo, y la barra igual llega arriba
+
+    def test_sin_audio_barras_planas(self):
+        self.assertEqual(self.w.espectro(S.BANDAS), [0.0] * S.BANDAS)   # nada cargado
+        self.cargar(A)
+        self.w.reproducir(0)
+        self.assertEqual(self.w.espectro(S.BANDAS), [0.0] * S.BANDAS)   # recién empieza: todavía no hay audio
+
+    def test_diagnose(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            codigo = S.diagnosticar(A)
+        self.assertEqual(codigo, 0, out.getvalue())
+        self.assertIn("decodificación:", out.getvalue())
+        self.assertIn("dispositivo de audio: abre y avanza", out.getvalue())
 
 
 class TestFinDePista(Base):

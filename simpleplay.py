@@ -1,6 +1,7 @@
 # simpleplay - a small, clean mp3 player
 # Copyright (C) 2026 Facundo González <facundonic.gonzalez@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
+import collections
 import difflib
 import hashlib
 import json
@@ -10,7 +11,6 @@ import random
 import re
 import shutil
 import ssl
-import subprocess
 import sys
 import threading
 import time
@@ -182,85 +182,18 @@ def log(*partes):
 
 
 # --- análisis de audio para el espectro ---
-SR = 22050       # muestreo del análisis (basta para ver hasta ~10 kHz)
-VENTANA = 1024   # ≈ 46 ms
-TRAMO = 40       # segundos que se decodifican por pedido
+VENTANA = 2048   # muestras por análisis: 46 ms a 44,1 kHz, casillas de 21,5 Hz
 BANDAS = 24
-RANGO_DB = 36    # cuántos dB bajo el nivel de referencia del tema separan una barra vacía de una llena
+RANGO_DB = 36    # cuántos dB bajo el nivel de referencia reciente separan una barra vacía de una llena
+HISTORIA = 300   # cuántos análisis recientes (~10 s a 30 por segundo) fijan ese nivel de referencia
 _BORDES = np.geomspace(50, 10000, BANDAS + 1)
 _HANN = np.hanning(VENTANA)
 
 
-def entorno_del_sistema():
-    """Entorno para lanzar programas del sistema (ffmpeg) desde dentro del AppImage.
-
-    PyInstaller apunta LD_LIBRARY_PATH a las librerías del paquete, y esas rompen a los programas
-    del sistema (ffmpeg devolvía 0 s de audio). Se les devuelve el valor original.
-    """
-    env = dict(os.environ)
-    if getattr(sys, "frozen", False):
-        original = env.pop("LD_LIBRARY_PATH_ORIG", None)
-        env.pop("LD_LIBRARY_PATH", None)
-        if original is not None:
-            env["LD_LIBRARY_PATH"] = original
-    return env
-
-
-def tramo_ffmpeg(ruta, inicio):
-    out = subprocess.run(
-        ["ffmpeg", "-v", "quiet", "-ss", f"{inicio:.2f}", "-i", ruta,
-         "-t", str(TRAMO), "-vn", "-f", "s16le", "-ac", "1", "-ar", str(SR), "-"],
-        capture_output=True, timeout=20, env=entorno_del_sistema(),
-        **({"creationflags": 0x08000000} if os.name == "nt" else {})).stdout  # sin ventana de consola en Windows
-    return np.frombuffer(out[:len(out) // 2 * 2], np.int16)
-
-
-def tramo_miniaudio(ruta, inicio):
-    # decodificador incluido en el paquete: no depende de nada instalado en el sistema
-    # (seek_frame cuenta en cuadros de la frecuencia de salida)
-    import miniaudio
-    gen = miniaudio.stream_file(
-        ruta, output_format=miniaudio.SampleFormat.SIGNED16, nchannels=1,
-        sample_rate=SR, frames_to_read=SR, seek_frame=int(inicio * SR))
-    bloques, n = [], 0
-    for b in gen:
-        bloques.append(np.frombuffer(b, np.int16))
-        n += len(bloques[-1])
-        if n >= TRAMO * SR:
-            break
-    return np.concatenate(bloques) if bloques else np.zeros(0, np.int16)
-
-
-def tramo(ruta, inicio):
-    """Decodifica ~TRAMO s desde `inicio` -> (muestras, método).
-
-    Usa ffmpeg si está (salta más rápido dentro de archivos enormes) y, si no está o falla
-    o devuelve audio vacío, el decodificador miniaudio incluido. Si ninguno sirve, levanta
-    un error que explica qué pasó con cada uno.
-    """
-    errores = []
-    if shutil.which("ffmpeg"):
-        try:
-            m = tramo_ffmpeg(ruta, inicio)
-            if len(m) > VENTANA:
-                return m, "ffmpeg"
-            errores.append("ffmpeg devolvió audio vacío")
-        except Exception as e:
-            errores.append(f"ffmpeg: {e!r}")
-    try:
-        m = tramo_miniaudio(ruta, inicio)
-        if len(m) > VENTANA:
-            return m, "miniaudio"
-        errores.append("miniaudio devolvió audio vacío")
-    except Exception as e:
-        errores.append(f"miniaudio: {e!r}")
-    raise RuntimeError("; ".join(errores))
-
-
 def bandas_db(v):
-    """Nivel en dB de cada banda (escala log) para una ventana de VENTANA muestras."""
-    mag = np.abs(np.fft.rfft(v / 32768.0 * _HANN)) / (VENTANA / 4)  # senoidal a fondo ≈ 1.0
-    res = SR / VENTANA
+    """Nivel en dB de cada banda (escala log) para VENTANA muestras mono float32 (±1) a FS Hz."""
+    mag = np.abs(np.fft.rfft(v * _HANN)) / (VENTANA / 4)  # senoidal a fondo ≈ 1.0
+    res = FS / VENTANA
     out = np.empty(BANDAS)
     for k in range(BANDAS):
         a, b = _BORDES[k], _BORDES[k + 1]
@@ -271,46 +204,54 @@ def bandas_db(v):
     return out
 
 
-def nivel_referencia(m):
-    """Nivel (dB) de los momentos fuertes de un tramo.
-
-    Las barras se miden contra este nivel, así un tema suave usa todo el rango igual que uno
-    fuerte, en vez de quedar casi planas.
-    """
-    picos = [bandas_db(m[i:i + VENTANA]).max() for i in range(0, len(m) - VENTANA, SR // 4)]
-    return float(np.percentile(picos, 90)) if picos else -20.0
-
-
 def diagnosticar(ruta):
-    """`simpleplay.py --diagnose archivo.mp3`: prueba la decodificación del espectro sin abrir la ventana."""
+    """`simpleplay.py --diagnose archivo.mp3`: prueba la decodificación y el audio sin abrir la ventana.
+
+    El espectro sale del mismo audio que suena, así que si el archivo se decodifica y el dispositivo abre,
+    las barras funcionan.
+    """
     print(f"simpleplay {VERSION} - Python {sys.version.split()[0]}")
     print("archivo:", ruta)
-    print("ffmpeg:", shutil.which("ffmpeg") or "no está instalado (se usa miniaudio)")
-    mejor = None
+    try:
+        info = miniaudio.get_file_info(ruta)
+        print(f"formato: {info.file_format.name}, {info.sample_rate} Hz, {info.nchannels} canales, {info.duration:.1f} s")
+    except Exception as e:
+        print(f"formato: ERROR {e!r}")
     try:  # un tema corto no tiene un segundo 5: se arranca más cerca del principio
         inicio = min(5.0, max(0.0, MP3(ruta).info.length - 3))
     except Exception:
         inicio = 0.0
-    for nombre, fn in (("ffmpeg", tramo_ffmpeg), ("miniaudio", tramo_miniaudio)):
-        if nombre == "ffmpeg" and not shutil.which("ffmpeg"):
-            continue
-        t0 = time.time()
-        try:
-            m = fn(ruta, inicio)
-            rms = float(np.sqrt(np.mean(m.astype(float) ** 2))) if len(m) else 0.0
-            print(f"{nombre}: {len(m) / SR:.1f} s de audio en {time.time() - t0:.2f} s, nivel RMS {rms:.0f}")
-            if len(m) > VENTANA and mejor is None:
-                mejor = m
-        except Exception as e:
-            print(f"{nombre}: ERROR {e!r}")
-    if mejor is None:
-        print("resultado: NO se pudo decodificar; las barras del espectro quedarían planas")
+    t0 = time.time()
+    try:
+        g = miniaudio.stream_file(ruta, output_format=miniaudio.SampleFormat.FLOAT32, nchannels=2, sample_rate=FS,
+                                  frames_to_read=1024, seek_frame=round(inicio * FS))
+        x = _leer(g, FS * 3).mean(axis=1)
+        rms = float(np.sqrt(np.mean(x ** 2))) if len(x) else 0.0
+        print(f"decodificación: {len(x) / FS:.1f} s de audio desde el segundo {inicio:.0f} en {time.time() - t0:.2f} s, "
+              f"nivel RMS {rms:.4f}")
+    except Exception as e:
+        x = np.zeros(0, np.float32)
+        print(f"decodificación: ERROR {e!r}")
+    if len(x) < VENTANA:
+        print("resultado: NO se pudo decodificar; no habría audio ni espectro")
         return 1
-    ref = nivel_referencia(mejor)
-    db = bandas_db(mejor[min(SR, len(mejor) - VENTANA):][:VENTANA])
-    vals = np.clip((db - (ref - RANGO_DB)) / RANGO_DB, 0, 1)
-    print("espectro de ejemplo:", "".join(" ▁▂▃▄▅▆▇█"[int(round(v * 8))] for v in vals), f"(referencia {ref:.1f} dB)")
-    print("resultado: el espectro debería funcionar")
+    db = bandas_db(x[:VENTANA])
+    vals = np.clip((db - (db.max() - RANGO_DB)) / RANGO_DB, 0, 1)
+    print("espectro de ejemplo:", "".join(" ▁▂▃▄▅▆▇█"[int(round(v * 8))] for v in vals), f"(máximo {db.max():.1f} dB)")
+    errores = []
+    m = Motor(backend=miniaudio.Backend.NULL if os.environ.get("SIMPLEPLAY_AUDIO") == "null" else None)
+    m.error_dispositivo.connect(errores.append)
+    m.volumen = 0.0  # solo se prueba que abre y avanza: no suena
+    m.cargar(ruta, inicio)
+    time.sleep(0.8)
+    avance = m.posicion() - inicio
+    m.cerrar()
+    if errores:
+        print(f"dispositivo de audio: ERROR {errores[0]}")
+        print("resultado: el archivo se decodifica pero NO se pudo abrir el audio")
+        return 1
+    print(f"dispositivo de audio: abre y avanza ({avance:.2f} s en 0,8 s)")
+    print("resultado: el audio y el espectro deberían funcionar")
     try:  # la escoba necesita llegar a MusicBrainz por HTTPS
         if not ESCOBA:
             return 0
@@ -1625,12 +1566,9 @@ class Player(QWidget):
         self.actual = -1
         self.pausado = False
         self.duracion = 0.0
-        # espectro: se decodifica solo un tramo alrededor de la posición
-        self.token = 0
-        self.chunk = None  # (token, inicio_seg, muestras mono int16, nivel de referencia dB)
-        self.pidiendo = False
-        self.fallo_hasta = 0.0  # tras un fallo de decodificación, no reintentar hasta este instante
-        self.ref_suave = None   # nivel de referencia que usan las barras, suavizado entre tramos
+        # espectro: lee del motor las muestras que están sonando; el nivel de referencia sale de los picos recientes
+        self.picos = collections.deque(maxlen=HISTORIA)
+        self.ref_suave = None   # nivel de referencia que usan las barras, suavizado
         self.pendiente = None  # (índice, segundo) de la sesión restaurada, aún sin sonar
         self.vaciada = False   # el usuario quitó todos los temas (hay que guardar la lista vacía)
         self.meta = {"titulo": "", "artista": "", "arte": ""}
@@ -2218,8 +2156,8 @@ class Player(QWidget):
         self.pausado = False
         self.pendiente = None
         self.duracion = 0.0
-        self.chunk = None
-        self.token += 1
+        self.picos.clear()
+        self.ref_suave = None
         self.vaciada = True
         self.orden_original = []
         self.meta = {"titulo": "", "artista": "", "arte": ""}
@@ -2341,37 +2279,12 @@ class Player(QWidget):
         except Exception:
             self.duracion = 0.0
         self.motor.cargar(self.pistas[i])
-        self.token += 1
-        self.chunk = None
+        self.picos.clear()
         self.ref_suave = None
-        self.fallo_hasta = 0.0
-        self.pedir_tramo(0.0)
         self.lista.setCurrentRow(i)
         self.mostrar_meta(i)
         self.icono_play()
         self.guardar_estado()
-
-    def pedir_tramo(self, inicio):
-        if self.pidiendo or time.monotonic() < self.fallo_hasta:
-            return
-        self.pidiendo = True
-        threading.Thread(target=self._decodificar,
-                         args=(self.pistas[self.actual], self.token, max(inicio, 0.0)),
-                         daemon=True).start()
-
-    def _decodificar(self, ruta, token, inicio):
-        try:
-            m, metodo = tramo(ruta, inicio)
-            ref = nivel_referencia(m)
-            log(f"tramo de {len(m) / SR:.0f} s desde {inicio:.0f} s con {metodo}, referencia {ref:.1f} dB")
-            if token == self.token:
-                self.chunk = (token, inicio, m, ref)
-            self.fallo_hasta = 0.0
-        except Exception as e:
-            log("no se pudo decodificar el tramo:", e)
-            self.fallo_hasta = time.monotonic() + 3  # no martillar: reintentar en unos segundos
-        finally:
-            self.pidiendo = False
 
     def _medir_panel(self):
         """Alto del panel de la lista según lo que realmente necesita su contenido (buscador, lista, botones).
@@ -2470,28 +2383,22 @@ class Player(QWidget):
             self.barras.activar(False)
 
     def espectro(self, n):
-        """BANDAS valores 0..1 con la energía por banda en este instante (escala log, autoajustada)."""
+        """BANDAS valores 0..1 con la energía por banda en este instante (escala log, autoajustada).
+
+        Lee del motor las últimas VENTANA muestras que están sonando, así las barras van al compás del audio.
+        El nivel de referencia es un percentil de los picos de los últimos ~10 s: un tema suave usa todo el rango
+        igual que uno fuerte, y sigue los cambios de volumen dentro del tema.
+        """
         if self.actual < 0 or self.pausado:
             return [0.0] * n
-        pos = self.posicion()
-        v = None
-        if self.chunk and self.chunk[0] == self.token:
-            _, ini, m, ref = self.chunk
-            i = int((pos - ini) * SR)
-            if 0 <= i and i + VENTANA <= len(m):
-                v = m[i:i + VENTANA]
-            fin = ini + len(m) / SR
-            if fin - pos < 8 and fin < self.duracion - 1:
-                self.pedir_tramo(pos)  # se acerca el final del tramo: pedir el siguiente a tiempo
-        if v is None:
-            if pos < self.duracion - 1:
-                self.pedir_tramo(pos)  # pista nueva o salto: el tramo actual no cubre pos
-            if self.pidiendo:  # llega en un instante: leve movimiento en vez de barras planas
-                t = time.monotonic() * 3
-                return [0.12 + 0.08 * math.sin(t + k * 0.7) for k in range(n)]
-            return [0.0] * n   # sin datos (p. ej. falló la decodificación): barras planas, no un engaño
-        self.ref_suave = ref if self.ref_suave is None else self.ref_suave + (ref - self.ref_suave) * 0.08
+        v = self.motor.muestras(VENTANA)
         db = bandas_db(v)
+        pico = float(db.max())
+        if pico < -70:  # silencio digital (o todavía sin audio): barras planas y sin ensuciar el nivel de referencia
+            return [0.0] * n
+        self.picos.append(pico)
+        ref = float(np.percentile(self.picos, 90))
+        self.ref_suave = ref if self.ref_suave is None else self.ref_suave + (ref - self.ref_suave) * 0.08
         return [float(x) for x in np.clip((db - (self.ref_suave - RANGO_DB)) / RANGO_DB, 0.0, 1.0)]
 
     def icono_play(self):
