@@ -63,10 +63,10 @@ NARANJA = "#ff4e01"
 # Sombra alrededor de la tarjeta y de la barra: la ventana no tiene marco y el escritorio no le pone ninguna.
 # SIMPLEPLAY_SOMBRA=0 la apaga. Se dibuja en un margen transparente de la ventana (SOMBRA_MARGEN px por lado).
 SOMBRA = os.environ.get("SIMPLEPLAY_SOMBRA", "1") != "0"
-SOMBRA_BLUR = 16     # cuántos px se extiende, difuminándose
+SOMBRA_BLUR = 8      # desvío del difuminado gaussiano, en px (más alto = más difusa)
 SOMBRA_DY = 5        # cuánto baja (la luz viene de arriba)
-SOMBRA_ALPHA = 95    # intensidad (0-255) en el borde de la tarjeta
-SOMBRA_MARGEN = (SOMBRA_BLUR + SOMBRA_DY + 2) if SOMBRA else 0
+SOMBRA_ALPHA = 0.40  # opacidad de la forma antes de difuminarla (0-1); en el borde queda la mitad
+SOMBRA_MARGEN = (round(2.5 * SOMBRA_BLUR) + SOMBRA_DY + 1) if SOMBRA else 0
 
 ESTILO_DIALOGO = """
 QMessageBox, QDialog { background: #1e1e22; }
@@ -1050,23 +1050,46 @@ class Card(QWidget):
 
 
 
+_sombras = {}   # (ancho, alto, radio) -> imagen de la sombra ya difuminada
+
+
+def _crear_sombra(w, h, radio):
+    """Sombra gaussiana de un rectángulo redondeado de w x h, en una imagen con SOMBRA_MARGEN px de aire por lado.
+    Se calcula a media resolución (el difuminado lo disimula) con una FFT: es lo que hace falta para que quede suave
+    y sin escalones, y se guarda para no repetirlo."""
+    m, k = SOMBRA_MARGEN, 2
+    W, H = (w + 2 * m + k - 1) // k, (h + 2 * m + k - 1) // k
+    forma = QImage(W, H, QImage.Format_Grayscale8)
+    forma.fill(0)
+    p = QPainter(forma)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(255, 255, 255))
+    p.drawRoundedRect(QRectF(m / k, (m + SOMBRA_DY) / k, w / k, h / k), radio / k, radio / k)
+    p.end()
+    a = np.frombuffer(forma.constBits(), np.uint8).reshape(H, forma.bytesPerLine())[:, :W].astype(np.float32) / 255
+    sigma = SOMBRA_BLUR / k
+    fy, fx = np.fft.fftfreq(H)[:, None], np.fft.rfftfreq(W)[None, :]
+    b = np.fft.irfft2(np.fft.rfft2(a) * np.exp(-2 * (np.pi * sigma) ** 2 * (fx ** 2 + fy ** 2)), s=(H, W))
+    alfa = np.clip(b * SOMBRA_ALPHA * 255, 0, 255).astype(np.uint32)
+    return QImage((alfa << 24).tobytes(), W, H, W * 4, QImage.Format_ARGB32_Premultiplied).copy()  # negro con alfa
+
+
 def dibujar_sombra(p, rect, radio, factor=1.0):
-    """Sombra suave bajo un rectángulo redondeado: capas cada vez más grandes y tenues (sin desenfoque, es barato
-    y se redibuja en cada cuadro de la transición). `factor` (0-1) la atenúa, p. ej. mientras algo aparece."""
+    """Sombra suave bajo un rectángulo redondeado. `factor` (0-1) la atenúa, p. ej. mientras algo aparece."""
     if not SOMBRA or factor <= 0:
         return
-    capas = 14
+    clave = (round(rect.width()), round(rect.height()), round(radio))
+    img = _sombras.get(clave)
+    if img is None:
+        if len(_sombras) >= 24:
+            _sombras.pop(next(iter(_sombras)))
+        img = _sombras[clave] = _crear_sombra(*clave)
+    m = SOMBRA_MARGEN
     p.save()
-    p.setPen(Qt.NoPen)
-    for i in range(capas, 0, -1):
-        f = i / capas
-        e = SOMBRA_BLUR * f
-        alfa = round(SOMBRA_ALPHA * (1 - f) ** 2 / 3.2 * factor)
-        if alfa <= 0:
-            continue
-        p.setBrush(QColor(0, 0, 0, alfa))
-        p.drawRoundedRect(QRectF(rect.x() - e, rect.y() - e + SOMBRA_DY, rect.width() + 2 * e, rect.height() + 2 * e),
-                          radio + e, radio + e)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
+    p.setOpacity(factor)
+    p.drawImage(QRectF(rect.x() - m, rect.y() - m, img.width() * 2, img.height() * 2), img)
     p.restore()
 
 
