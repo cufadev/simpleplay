@@ -3,6 +3,22 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
+## [1.4.1] - 2026-10-19
+
+### Added
+- **Volume normalizer.** Every track is brought to the same loudness, so a quiet recording is not
+  drowned by a loud one. If the file carries ReplayGain tags they are used; if not, the loudness is
+  measured once in the background (K-weighted, like EBU R128) and remembered. Very long files
+  (mixes, sets) are left as they are. The gain never goes past what would clip.
+- **Equalizer with presets** (right click > **Sound**): Flat, Lively (the default, a gentle lift of
+  bass and treble), More bass, Vocals, Bright and Warm. 10 bands with a linear-phase filter, so it
+  changes the tone without smearing it. Flat leaves the audio untouched, bit for bit.
+- **Soft limiter** at the end of the chain: boosting bass or volume bends the peaks instead of clipping.
+- Both settings are remembered between sessions.
+
+### Fixed
+- The tests no longer overwrite the real configuration folder (they use a temporary home).
+
 ## [1.4] - 2026-10-19
 
 ### Changed

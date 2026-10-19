@@ -41,7 +41,10 @@ No streaming, no accounts, no ads.
   reopens by itself and the track goes on where it was. Tracks that cannot be played are skipped.
 - Media keys and desktop controls (MPRIS): play/pause, next and previous from your keyboard
   and from the KDE and GNOME media widgets.
-- Volume is left to the system mixer.
+- **Sound:** a volume normalizer (uses ReplayGain tags, or measures each track once) so tracks play at
+  the same loudness, and an equalizer with presets (Flat, Lively, More bass, Vocals, Bright, Warm) behind a
+  soft limiter. Right click > **Sound**. Flat leaves the audio untouched.
+- The overall volume is left to the system mixer.
 - The interface is in English or Spanish, following your system language.
 
 ## Download

@@ -68,5 +68,14 @@ machine is pending, and the macOS handler for opened files is not written yet.
   not that it works.
 - Whether to sign the builds or just document the warnings.
 
+## A better shuffle
+Today `siguiente()` picks `random.choice` among every track except the current one, with no memory,
+so it can bring back a track heard a minute ago and, in a long list, some tracks come up much more
+than others. Idea: shuffle the whole list once (Fisher-Yates) and walk through it, so every track
+plays once before any repeats, and reshuffle when it ends (making sure the first of the new round
+is not the last of the old one). `anterior` should walk back through that same order, and the
+order should be kept when the playlist changes (a track added or removed) and in the saved session.
+Maybe weigh by artist so two tracks of the same artist rarely play back to back.
+
 ## Ruled out
 - Recognizing songs inside a long mix.

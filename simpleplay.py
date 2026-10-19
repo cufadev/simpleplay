@@ -55,7 +55,7 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.4"
+VERSION = "1.4.1"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
@@ -1413,6 +1413,196 @@ def _leer(gen, n):
     return np.concatenate(trozos) if trozos else np.zeros((0, 2), np.float32)
 
 
+# ------------------------------------------------------------------------------------------------
+# Sonido: normalización de volumen, ecualizador y limitador. Corre al final del motor, antes del dispositivo.
+
+BANDAS_HZ = (31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
+# Ganancia en dB de cada banda. "plano" no toca nada (el audio pasa tal cual); el resto son retoques suaves.
+PRESETS = {
+    "plano":     (0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+    "vivo":      (4, 3.5, 2, 0, -0.5, 0, 0.5, 2, 3.5, 3),
+    "graves":    (6, 5, 3.5, 1.5, 0, 0, 0, 0, 0, 0),
+    "voces":     (-2, -1.5, -1, 0, 1, 2.5, 3, 1.5, 0, -1),
+    "brillante": (-1, -0.5, 0, 0, 0, 0.5, 2, 3.5, 4.5, 4),
+    "calido":    (3, 2.5, 2, 1, 0, -0.5, -1, -2, -2.5, -3),
+}
+PRESET_INICIAL = "vivo"
+OBJETIVO_LUFS = -16.0        # sonoridad a la que se lleva cada tema
+GANANCIA_MAX_DB, GANANCIA_MIN_DB = 9.0, -12.0
+LIMITE_SUAVE = 0.85          # por encima de esto el limitador empieza a comprimir (nunca pasa de 1.0)
+LARGO_SIN_MEDIR = 15 * 60    # los temas más largos (mezclas, sets) no se miden: ya son una sola pieza
+TAPS = 2047                  # largo del filtro del ecualizador (fase lineal; retraso de 1023 muestras = 23 ms)
+
+
+def _taps_ecualizador(gan_db):
+    """Filtro FIR de fase lineal que aplica las 10 ganancias (dB), interpoladas en escala logarítmica."""
+    m = 4096
+    f = np.fft.rfftfreq(m, 1 / FS)
+    f[0] = 1.0
+    curva = np.interp(np.log10(f), np.log10(BANDAS_HZ), gan_db)
+    h0 = np.fft.irfft(10 ** (curva / 20), n=m)               # respuesta de fase cero
+    medio = (TAPS - 1) // 2
+    h = np.concatenate([h0[-medio:], h0[:medio + 1]]) * np.hanning(TAPS)
+    return h.astype(np.float32)
+
+
+class Cadena:
+    """Ganancia por tema (normalización) + ecualizador + limitador suave, sobre bloques estéreo float32.
+
+    Sin ecualizador ni ganancia, `activa` es False y el audio no se toca. Los cambios (otro preset, otra
+    ganancia) se hacen con fundido dentro del bloque para que no haya clicks.
+    """
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._h = None                    # filtro actual (None = sin ecualizar, sin retraso)
+        self._pend = None                 # ("eq", taps o None, preamp lineal) a aplicar en el próximo bloque
+        self._pre = 1.0                   # reducción por lo que sube el ecualizador (evita saturar)
+        self._gan_obj = 1.0               # ganancia de la pista (normalización), lineal
+        self._gan_act = 1.0
+        self._pre_act = 1.0
+        self._hist = np.zeros((TAPS - 1, 2), np.float32)
+        self._cache_h = {}
+
+    @property
+    def activa(self):
+        return self._h is not None or self._pend is not None or self._gan_obj != 1.0 or self._gan_act != 1.0
+
+    def poner_ganancia(self, db):
+        self._gan_obj = 10 ** (max(GANANCIA_MIN_DB, min(GANANCIA_MAX_DB, db)) / 20)
+
+    def poner_eq(self, gan_db):
+        """gan_db: 10 valores en dB (BANDAS_HZ), o None / todo ceros para dejarlo plano."""
+        plano = gan_db is None or not any(gan_db)
+        with self._lock:
+            if plano and self._h is None and self._pend is None:
+                return
+            if plano:
+                delta = np.zeros(TAPS, np.float32)
+                delta[(TAPS - 1) // 2] = 1.0      # el mismo retraso que los otros filtros: el cambio no salta
+                self._pend = ("eq", delta, 1.0)
+            else:
+                subida = max(0.0, max(gan_db))
+                self._pend = ("eq", _taps_ecualizador(gan_db), 10 ** (-0.5 * subida / 20))
+
+    def _filtrar(self, ext, h):
+        n = len(ext) - (TAPS - 1)
+        L = 1 << (len(ext) - 1).bit_length()
+        clave = (id(h), L)
+        H = self._cache_h.get(clave)
+        if H is None:
+            if len(self._cache_h) > 8:
+                self._cache_h.clear()
+            H = self._cache_h[clave] = (np.fft.rfft(h, L), h)       # se guarda h: mantiene vivo su id
+        y = np.fft.irfft(np.fft.rfft(ext, L, axis=0) * H[0][:, None], L, axis=0)
+        return y[TAPS - 1:TAPS - 1 + n].astype(np.float32)
+
+    def procesar(self, x):
+        n = len(x)
+        with self._lock:
+            pend, self._pend = self._pend, None
+        ext = np.concatenate([self._hist, x])
+        self._hist = ext[-(TAPS - 1):].copy()
+        pre_obj = self._pre
+        if pend is not None:
+            _, h_nuevo, pre_obj = pend
+            self._pre = pre_obj
+            r = np.minimum(np.arange(1, n + 1) / 2205.0, 1.0).astype(np.float32)[:, None]   # fundido de 50 ms
+            nuevo = self._filtrar(ext, h_nuevo)
+            viejo = self._filtrar(ext, self._h) if self._h is not None else x     # sin filtro previo: se funde desde el audio tal cual, sin saltos
+            y = viejo * (1 - r) + nuevo * r
+            self._h = h_nuevo
+        elif self._h is not None:
+            y = self._filtrar(ext, self._h)
+        else:
+            y = x
+        g0, g1 = self._gan_act * self._pre_act, self._gan_obj * pre_obj
+        if g0 != 1.0 or g1 != 1.0:
+            y = y * np.linspace(g0, g1, n, dtype=np.float32)[:, None]
+        self._gan_act, self._pre_act = self._gan_obj, pre_obj
+        # limitador suave: lo que pasa del umbral se curva hacia 1.0 en vez de recortarse
+        a = np.abs(y)
+        if a.max(initial=0.0) > LIMITE_SUAVE:
+            exceso = a > LIMITE_SUAVE
+            T, K = LIMITE_SUAVE, 1 - LIMITE_SUAVE
+            y = y.copy()
+            y[exceso] = np.sign(y[exceso]) * (T + K * np.tanh((a[exceso] - T) / K))
+        return y.astype(np.float32, copy=False)
+
+
+def _sonoridad(bloques):
+    """Sonoridad integrada (LUFS aproximados, ponderación K de BS.1770 con puerta) de varios trozos estéreo
+    de 44,1 kHz. Devuelve (lufs, pico de muestra) o None si todo es silencio."""
+    medias, pico = [], 0.0
+    for x in bloques:
+        if len(x) < FS // 2:
+            continue
+        pico = max(pico, float(np.abs(x).max()))
+        f = np.fft.rfftfreq(len(x), 1 / FS)
+        w = 10 ** (4.0 / 20 * (f ** 2 / (f ** 2 + 1681.0 ** 2))) * (f ** 2 / (f ** 2 + 38.0 ** 2))   # estante + pasaaltos
+        y = np.fft.irfft(np.fft.rfft(x, axis=0) * w[:, None], len(x), axis=0)
+        n = int(0.4 * FS)
+        for i in range(0, len(y) - n + 1, n):
+            medias.append(float(np.mean(y[i:i + n] ** 2, axis=0).sum()))   # canales L+R con peso 1
+    if not medias:
+        return None
+    m = np.array(medias)
+    m = m[m > 10 ** ((-70 + 0.691) / 10)]                                 # puerta absoluta: -70 LUFS
+    if not len(m):
+        return None
+    m = m[m > m.mean() * 10 ** (-10 / 10)]                                # puerta relativa: -10 dB
+    if not len(m):
+        return None
+    return -0.691 + 10 * math.log10(m.mean()), pico
+
+
+def medir_tema(ruta, duracion):
+    """(lufs, pico) de un archivo, leyendo trozos repartidos (o todo si es corto). None si no se pudo medir.
+    Pensado para correr en un hilo aparte."""
+    F32 = miniaudio.SampleFormat.FLOAT32
+    trozos = []
+    try:
+        if duracion <= 60:
+            g = miniaudio.stream_file(ruta, output_format=F32, nchannels=2, sample_rate=FS, frames_to_read=4096)
+            trozos.append(_leer(g, int(duracion * FS) + FS))
+        else:
+            for fr in (0.1, 0.3, 0.5, 0.7, 0.9):
+                ini = max(0, int((duracion * fr - 2) * FS))
+                g = miniaudio.stream_file(ruta, output_format=F32, nchannels=2, sample_rate=FS, frames_to_read=4096,
+                                          seek_frame=ini)
+                trozos.append(_leer(g, 4 * FS))
+                time.sleep(0)       # deja respirar al hilo de audio
+        return _sonoridad(trozos)
+    except Exception as e:
+        log("medir sonoridad falló:", ruta, e)
+        return None
+
+
+def ganancia_para(lufs, pico):
+    """dB que hay que aplicar a un tema de esa sonoridad para llevarlo al objetivo, sin pasarse del pico."""
+    g = OBJETIVO_LUFS - lufs
+    if pico > 0:
+        g = min(g, 20 * math.log10(1.25 / pico))       # el limitador absorbe hasta un pequeño exceso
+    return max(GANANCIA_MIN_DB, min(GANANCIA_MAX_DB, g))
+
+
+def leer_replaygain(ruta):
+    """Ganancia de pista (dB) que traen las etiquetas del archivo (ReplayGain), llevada a nuestro objetivo; o None."""
+    try:
+        import mutagen
+        t = mutagen.File(ruta)
+        if t is None or not t.tags:
+            return None
+        for k, v in t.tags.items():
+            if "replaygain_track_gain" in str(k).lower():
+                texto = str(getattr(v, "text", [v])[0] if hasattr(v, "text") else (v[0] if isinstance(v, list) else v))
+                m = re.search(r"[-+]?\d+(?:[.,]\d+)?", texto)
+                if m:
+                    return float(m.group().replace(",", ".")) + (OBJETIVO_LUFS + 18.0)   # ReplayGain apunta a -18 LUFS
+    except Exception:
+        pass
+    return None
+
+
 class Motor(QObject):
     """Motor de audio: un dispositivo siempre abierto y un callback que decide, bloque a bloque, qué suena.
 
@@ -1444,6 +1634,7 @@ class Motor(QObject):
         self._quiere = False          # True = sonando; False = en pausa
         self._gan = 0.0               # ganancia actual (rampa hacia 0 o 1)
         self.volumen = 1.0
+        self.cadena = Cadena()        # normalización + ecualizador + limitador
         self._terminada = False
         self.duracion = 0.0
         self.ruta = None
@@ -1754,6 +1945,8 @@ class Motor(QObject):
                     self._ent_fuente += len(x)
                 if len(x) < quedan:
                     self._fin_de_archivo()
+        if self.cadena.activa:
+            out = self.cadena.procesar(out)
         if hecho:
             self._escribir_anillo(out[:hecho])
             self._total += hecho
@@ -1802,6 +1995,10 @@ class Player(QWidget):
         self.motor.error_dispositivo.connect(self._motor_error)
         self.motor.error_archivo.connect(self._motor_error_archivo)
         self._fallos = 0   # temas seguidos que no se pudieron reproducir (para no dar vueltas sin fin)
+        self.normalizar = True
+        self.preset = PRESET_INICIAL
+        self._sonoridades = None   # caché de sonoridad por archivo (se lee del disco la primera vez que se usa)
+        self._aplicar_eq()
         self.setWindowTitle("simpleplay")
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -2423,6 +2620,86 @@ class Player(QWidget):
         self.t_resta.setText("-0:00")
         self.icono_play()
 
+    # --- sonido ---
+    def _aplicar_eq(self):
+        self.motor.cadena.poner_eq(PRESETS.get(self.preset, PRESETS["plano"]))
+
+    def poner_preset(self, nombre):
+        self.preset = nombre if nombre in PRESETS else "plano"
+        self._aplicar_eq()
+        self.guardar_estado()
+
+    def poner_normalizar(self, si):
+        self.normalizar = bool(si)
+        if self.actual >= 0 and self.actual < len(self.pistas):
+            self._sonoridad_del_tema(self.pistas[self.actual])
+        else:
+            self.motor.cadena.poner_ganancia(0.0)
+        self.guardar_estado()
+
+    def _cache_sonoridad(self):
+        if self._sonoridades is None:
+            try:
+                self._sonoridades = json.loads((ESTADO.parent / "sonoridad.json").read_text())
+            except (OSError, ValueError):
+                self._sonoridades = {}
+        return self._sonoridades
+
+    def _sonoridad_del_tema(self, ruta):
+        """Fija la ganancia del tema: ReplayGain de las etiquetas, o la sonoridad medida (y guardada en una caché)."""
+        cadena = self.motor.cadena
+        if not self.normalizar:
+            cadena.poner_ganancia(0.0)
+            return
+        rg = leer_replaygain(ruta)
+        if rg is not None:
+            cadena.poner_ganancia(rg)
+            return
+        try:
+            st = os.stat(ruta)
+            clave = f"{ruta}|{st.st_size}|{st.st_mtime_ns}"
+        except OSError:
+            return
+        cache = self._cache_sonoridad()
+        if clave in cache:
+            v = cache[clave]
+            cadena.poner_ganancia(ganancia_para(v["lufs"], v["pico"]) if v else 0.0)
+            return
+        cadena.poner_ganancia(0.0)          # hasta tener la medida, el tema suena como viene
+        dur = self.duracion
+        if dur <= 0 or dur > LARGO_SIN_MEDIR:
+            return
+
+        def medir():
+            r = medir_tema(ruta, dur)
+            cache[clave] = {"lufs": r[0], "pico": r[1]} if r else None
+            try:
+                ESTADO.parent.mkdir(parents=True, exist_ok=True)
+                tmp = (ESTADO.parent / "sonoridad.json").with_suffix(".tmp")
+                tmp.write_text(json.dumps(cache))
+                os.replace(tmp, ESTADO.parent / "sonoridad.json")
+            except OSError:
+                pass
+            if r and self.normalizar and self.motor.ruta == ruta:
+                self.motor.cadena.poner_ganancia(ganancia_para(*r))
+        threading.Thread(target=medir, daemon=True).start()
+
+    def _menu_sonido(self, menu, anidado=True):
+        sub = menu.addMenu(tr("Sonido", "Sound")) if anidado else menu
+        a = sub.addAction(tr("Normalizar el volumen", "Normalize volume"))
+        a.setCheckable(True)
+        a.setChecked(self.normalizar)
+        a.toggled.connect(self.poner_normalizar)
+        sub.addSeparator()
+        nombres = {"plano": ("Plano (sin ecualizar)", "Flat (no EQ)"), "vivo": ("Vivo", "Lively"),
+                   "graves": ("Más graves", "More bass"), "voces": ("Voces", "Vocals"),
+                   "brillante": ("Brillante", "Bright"), "calido": ("Cálido", "Warm")}
+        for clave, (es, en) in nombres.items():
+            b = sub.addAction(tr(es, en))
+            b.setCheckable(True)
+            b.setChecked(self.preset == clave)
+            b.triggered.connect(lambda _=False, c=clave: self.poner_preset(c))
+
     def _preparar(self, i, pos):
         """Deja el tema i listo para dar play: en pausa, en la posición pos y sin sonar."""
         try:
@@ -2452,7 +2729,7 @@ class Player(QWidget):
         datos = {"pistas": self.pistas, "indice": i, "pos": round(pos, 1),
                  "shuffle": self.btn_shuffle.isChecked(), "repetir": self.repetir,
                  "carpeta": self.carpeta_musica, "orden_original": self.orden_original,
-                 "compacto": self.compacto}
+                 "compacto": self.compacto, "normalizar": self.normalizar, "preset": self.preset}
         try:
             ESTADO.parent.mkdir(parents=True, exist_ok=True)
             tmp = ESTADO.with_suffix(".tmp")
@@ -2468,6 +2745,9 @@ class Player(QWidget):
         except (OSError, ValueError):
             return
         self.btn_shuffle.setChecked(bool(d.get("shuffle")))
+        self.normalizar = bool(d.get("normalizar", True))
+        self.preset = d.get("preset", PRESET_INICIAL) if d.get("preset", PRESET_INICIAL) in PRESETS else PRESET_INICIAL
+        self._aplicar_eq()
         self.poner_repetir(d.get("repetir", "off"))
         self.carpeta_musica = d.get("carpeta", "")
         self.poner_compacto(bool(d.get("compacto")), animar=False)
@@ -2530,6 +2810,7 @@ class Player(QWidget):
         except Exception:
             self.duracion = 0.0
         self.motor.cargar(self.pistas[i])
+        self._sonoridad_del_tema(self.pistas[i])
         self.picos.clear()
         self.ref_suave = None
         self.lista.setCurrentRow(i)
@@ -2867,6 +3148,7 @@ class Player(QWidget):
         menu.addAction(tr("Abrir carpeta…", "Open folder…"), self.abrir_carpeta)
         menu.addAction(tr("Modo normal", "Normal mode") if self.compacto else tr("Modo compacto", "Compact mode"),
                        lambda: self.poner_compacto(not self.compacto))
+        self._menu_sonido(menu)
         menu.addAction(tr("Cerrar", "Close"), self.close)
         menu.exec(e.globalPos())
 

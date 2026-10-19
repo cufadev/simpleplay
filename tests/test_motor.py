@@ -404,5 +404,108 @@ class TestArchivosReales(Base):
         self.assertLessEqual(peor, 64, "el salto por índice se desvía del salto exacto de miniaudio (más de 1,5 ms)")
 
 
+class TestCadena(unittest.TestCase):
+    """Normalización, ecualizador y limitador (S.Cadena y las funciones de medición)."""
+
+    @staticmethod
+    def tono(f, a, seg=2.0):
+        t = np.arange(int(S.FS * seg)) / S.FS
+        x = (a * np.sin(2 * np.pi * f * t)).astype(np.float32)
+        return np.stack([x, x], 1)
+
+    @staticmethod
+    def pasar(c, x, bloque=4410):
+        return np.concatenate([c.procesar(x[i:i + bloque]) for i in range(0, len(x), bloque)])
+
+    @staticmethod
+    def db(y):
+        y = y[S.FS // 2:]
+        return 20 * np.log10(float(np.sqrt(np.mean(y ** 2))) + 1e-12)
+
+    def respuesta(self, preset, f):
+        c = S.Cadena()
+        c.poner_eq(S.PRESETS[preset])
+        x = self.tono(f, 0.1)
+        return self.db(self.pasar(c, x)) - self.db(x)
+
+    def test_plano_no_toca_el_audio(self):
+        c = S.Cadena()
+        self.assertFalse(c.activa)
+        c.poner_eq(S.PRESETS["plano"])
+        self.assertFalse(c.activa)
+        x = self.tono(1000, 0.1)
+        self.assertTrue(np.array_equal(self.pasar(c, x), x))
+
+    def test_el_ecualizador_aplica_las_ganancias_del_preset(self):
+        # "graves": +6 dB en 31 Hz y +5 en 62 Hz, y todo baja 0,5 de lo que sube (preamp) para no saturar
+        sube = max(S.PRESETS["graves"])
+        pre = -0.5 * sube
+        for f, esperado in ((62, 5.0 + pre), (125, 3.5 + pre), (1000, 0.0 + pre), (8000, 0.0 + pre)):
+            self.assertAlmostEqual(self.respuesta("graves", f), esperado, delta=0.6, msg=f"{f} Hz")
+
+    def test_los_agudos_del_preset_brillante_suben(self):
+        self.assertGreater(self.respuesta("brillante", 8000), self.respuesta("brillante", 250) + 4.0)
+
+    def test_ganancia_de_pista(self):
+        c = S.Cadena()
+        c.poner_ganancia(6.0)
+        x = self.tono(1000, 0.1)
+        self.assertAlmostEqual(self.db(self.pasar(c, x)) - self.db(x), 6.0, delta=0.1)
+
+    def test_el_limitador_nunca_pasa_de_uno(self):
+        c = S.Cadena()
+        c.poner_ganancia(9.0)
+        y = self.pasar(c, self.tono(1000, 0.9))
+        self.assertLessEqual(float(np.abs(y).max()), 1.0)
+        self.assertGreater(float(np.abs(y).max()), 0.9)       # y sí sube: comprime, no aplasta
+
+    def test_cambiar_de_preset_en_marcha_no_hace_clicks(self):
+        c = S.Cadena()
+        x = self.tono(440, 0.3, 3.0)
+        salida = []
+        for i in range(0, len(x), 4410):
+            if i == 4410 * 10:
+                c.poner_eq(S.PRESETS["vivo"])
+            if i == 4410 * 20:
+                c.poner_eq(S.PRESETS["graves"])
+            if i == 4410 * 30:
+                c.poner_eq(S.PRESETS["plano"])
+            salida.append(c.procesar(x[i:i + 4410]))
+        y = np.concatenate(salida)
+        natural = 2 * np.pi * 440 / S.FS * 0.3                 # el salto más grande entre dos muestras de la señal
+        self.assertLess(float(np.abs(np.diff(y[:, 0])).max()), natural * 1.5)
+
+    def test_la_sonoridad_distingue_un_tema_fuerte_de_uno_suave(self):
+        import tempfile, wave
+        d = tempfile.mkdtemp()
+
+        def wav(nombre, a):
+            p = os.path.join(d, nombre)
+            x = (self.tono(1000, a, 10.0) * 32767).astype("<i2")
+            with wave.open(p, "wb") as w:
+                w.setnchannels(2); w.setsampwidth(2); w.setframerate(S.FS)
+                w.writeframes(x.tobytes())
+            return p
+        suave, fuerte = S.medir_tema(wav("s.wav", 0.05), 10), S.medir_tema(wav("f.wav", 0.2), 10)
+        self.assertAlmostEqual(fuerte[0] - suave[0], 12.04, delta=0.3)       # 4 veces la amplitud = 12 dB
+        # y con la ganancia que se les calcula, los dos terminan en la misma sonoridad
+        self.assertAlmostEqual(fuerte[0] + S.ganancia_para(*fuerte), S.OBJETIVO_LUFS, delta=0.3)
+        self.assertLessEqual(S.ganancia_para(*suave), S.GANANCIA_MAX_DB)
+
+    def test_el_silencio_no_se_mide(self):
+        self.assertIsNone(S._sonoridad([np.zeros((S.FS * 2, 2), np.float32)]))
+
+    def test_replaygain_de_las_etiquetas(self):
+        import shutil, tempfile
+        from mutagen.id3 import ID3, TXXX
+        ruta = os.path.join(tempfile.mkdtemp(), "rg.mp3")
+        shutil.copy(CORPUS / "tono_44k.mp3", ruta)
+        self.assertIsNone(S.leer_replaygain(ruta))
+        t = ID3(ruta)
+        t.add(TXXX(encoding=3, desc="REPLAYGAIN_TRACK_GAIN", text="-6.50 dB"))
+        t.save(ruta)
+        self.assertAlmostEqual(S.leer_replaygain(ruta), -6.5 + (S.OBJETIVO_LUFS + 18.0), delta=0.01)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

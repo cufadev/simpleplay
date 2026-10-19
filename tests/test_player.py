@@ -14,8 +14,10 @@ import unittest
 from pathlib import Path
 
 CONFIG = tempfile.mkdtemp()
+HOME_REAL = os.environ.get("HOME", "")   # los subprocesos lo necesitan: de él sale el sitio de paquetes del usuario
 os.environ.update(QT_QPA_PLATFORM="offscreen", SIMPLEPLAY_AUDIO="null", SIMPLEPLAY_NO_MPRIS="1",
-                  XDG_CONFIG_HOME=CONFIG, XDG_DATA_HOME=CONFIG, LANGUAGE="es")
+                  XDG_CONFIG_HOME=CONFIG, XDG_DATA_HOME=CONFIG, LANGUAGE="es",
+                  HOME=CONFIG)   # la app guarda su estado en Path.home()/.config: sin esto los tests pisarían el real
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ))
 
@@ -42,7 +44,7 @@ def espera(seg, cond=None):
 
 class Base(unittest.TestCase):
     def setUp(self):
-        for f in Path(CONFIG).rglob("estado.json"):
+        for f in list(Path(CONFIG).rglob("estado.json")) + list(Path(CONFIG).rglob("sonoridad.json")):
             f.unlink()
         self.w = S.Player()
         self.w.show()
@@ -402,7 +404,7 @@ class TestSombra(Base):
         import subprocess
         out = subprocess.run([sys.executable, "-c",
                               "import os,sys; os.environ['SIMPLEPLAY_SOMBRA']='0'; sys.path.insert(0, %r); import simpleplay as S; print(S.SOMBRA, S.SOMBRA_MARGEN)" % str(RAIZ)],
-                             capture_output=True, text=True, env={**os.environ, "QT_QPA_PLATFORM": "offscreen"}).stdout.split()[-2:]
+                             capture_output=True, text=True, env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "HOME": HOME_REAL}).stdout.split()[-2:]
         self.assertEqual(out, ["False", "0"])
 
 
@@ -467,6 +469,46 @@ class TestSesion(Base):
         espera(0.5)
         self.w.close()
         self.assertIsNone(self.w.motor._dev)
+
+
+class TestSonido(Base):
+    def test_el_tema_se_normaliza_con_su_sonoridad_medida(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        espera(4.0, lambda: self.w._cache_sonoridad())           # el hilo de medición guarda la medida
+        cache = self.w._cache_sonoridad()
+        self.assertEqual(len(cache), 1)
+        v = next(iter(cache.values()))
+        esperado = 10 ** (S.ganancia_para(v["lufs"], v["pico"]) / 20)
+        espera(1.0, lambda: abs(self.w.motor.cadena._gan_obj - esperado) < 1e-6)
+        self.assertAlmostEqual(self.w.motor.cadena._gan_obj, esperado, places=5)
+
+    def test_sin_normalizar_la_ganancia_queda_en_cero(self):
+        self.cargar(A)
+        self.w.poner_normalizar(False)
+        self.w.reproducir(0)
+        espera(1.0)
+        self.assertEqual(self.w.motor.cadena._gan_obj, 1.0)
+        self.assertEqual(len(self.w._cache_sonoridad()), 0)       # ni siquiera se mide
+
+    def test_el_preset_y_la_normalizacion_se_recuerdan(self):
+        self.w.poner_preset("voces")
+        self.w.poner_normalizar(False)
+        self.cargar(A)
+        self.w.guardar_estado()
+        self.w.close()
+        self.w.motor.cerrar()
+        w2 = S.Player()
+        w2.show()
+        self.w = w2
+        w2.restaurar()
+        self.assertEqual(w2.preset, "voces")
+        self.assertFalse(w2.normalizar)
+        self.assertTrue(w2.motor.cadena.activa)                   # el preset ya está aplicado al motor
+
+    def test_un_preset_desconocido_cae_en_plano(self):
+        self.w.poner_preset("no-existe")
+        self.assertEqual(self.w.preset, "plano")
 
 
 if __name__ == "__main__":
