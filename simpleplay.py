@@ -1,7 +1,6 @@
 # simpleplay - a small, clean mp3 player
 # Copyright (C) 2026 Facundo González <facundonic.gonzalez@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
-import contextlib
 import difflib
 import hashlib
 import json
@@ -24,8 +23,6 @@ from pathlib import Path
 import numpy as np
 import miniaudio
 
-os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")  # sin el cartel de bienvenida
-import pygame
 from mutagen.id3 import ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TDRC, APIC
 from mutagen.mp3 import MP3
 from PySide6.QtCore import (Qt, QTimer, QRectF, QPointF, QSize, Signal, QLocale, QUrl, QObject,
@@ -61,37 +58,6 @@ QPushButton:hover { background: rgba(255,255,255,75); }
 QPushButton:default { background: #ff4e01; }
 QTextEdit { background: #141416; color: #ddd; border: none; border-radius: 8px; }
 """
-@contextlib.contextmanager
-def sin_stderr():
-    """Silencia stderr a nivel de descriptor mientras dura el bloque.
-
-    libmpg123 (dentro de SDL_mixer) imprime "No comment text / valid description?" por cada
-    etiqueta ID3 de comentario mal formada, algo común en mp3 bajados con yt-dlp. Es solo una
-    advertencia, pero sale por C, así que hay que redirigir el descriptor 2.
-
-    Si no hay stderr (un .exe sin consola en Windows, pythonw), no hay nada que silenciar y se sigue.
-    """
-    try:
-        sys.stderr.flush()
-        guardado = os.dup(2)
-    except (OSError, AttributeError, ValueError):
-        yield
-        return
-    try:
-        nulo = os.open(os.devnull, os.O_WRONLY)
-    except OSError:
-        os.close(guardado)
-        yield
-        return
-    try:
-        os.dup2(nulo, 2)
-        yield
-    finally:
-        os.dup2(guardado, 2)
-        os.close(guardado)
-        os.close(nulo)
-
-
 def recurso(ruta):
     """Ruta a un archivo incluido con la app (también dentro del paquete PyInstaller)."""
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
@@ -1406,11 +1372,17 @@ class Motor(QObject):
     # --- estado ---
     @property
     def activo(self):
-        return self._fuente is not None or self._pend is not None
+        # una orden pendiente de parar (fuente None) ya cuenta como inactivo, aunque el callback no la aplicó aún
+        return self._fuente is not None or (self._pend is not None and self._pend[0] is not None)
 
     @property
     def reproduciendo(self):
         return self._quiere and self.activo and not self._terminada
+
+    @property
+    def terminada(self):
+        """True si el tema abierto llegó a su fin (y nadie abrió otro ni saltó desde entonces)."""
+        return self._terminada
 
     def posicion(self):
         """Segundos de la pista que están sonando ahora."""
@@ -1638,7 +1610,11 @@ class Motor(QObject):
 class Player(QWidget):
     def __init__(self):
         super().__init__()
-        pygame.mixer.init()
+        # SIMPLEPLAY_AUDIO=null: dispositivo de audio simulado (para las pruebas, sin placa de sonido)
+        nulo = os.environ.get("SIMPLEPLAY_AUDIO") == "null"
+        self.motor = Motor(backend=miniaudio.Backend.NULL if nulo else None, parent=self)
+        self.motor.fin_de_pista.connect(self._motor_fin)
+        self.motor.error_dispositivo.connect(self._motor_error)
         self.setWindowTitle("simpleplay")
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -1649,7 +1625,6 @@ class Player(QWidget):
         self.actual = -1
         self.pausado = False
         self.duracion = 0.0
-        self.offset = 0.0  # segundo desde el que arrancó (por seek)
         # espectro: se decodifica solo un tramo alrededor de la posición
         self.token = 0
         self.chunk = None  # (token, inicio_seg, muestras mono int16, nivel de referencia dB)
@@ -1774,8 +1749,6 @@ class Player(QWidget):
         cl.addWidget(self.linea)
         cl.addSpacing(6)
         cl.addLayout(botones)
-
-        pygame.mixer.music.set_volume(1.0)  # el volumen se maneja desde el sistema
 
         self.lista = QListWidget()
         self.lista.setFixedHeight(168)  # unas 5 filas
@@ -2126,7 +2099,7 @@ class Player(QWidget):
             if sonaba:
                 self.reproducir(nuevo)
             else:
-                pygame.mixer.music.stop()
+                self.motor.parar()
                 self.actual = -1
                 self.pausado = False
                 self.lista.setCurrentRow(nuevo)
@@ -2240,7 +2213,7 @@ class Player(QWidget):
 
     def vaciar(self):
         """La lista quedó sin temas: vuelve al estado inicial."""
-        pygame.mixer.music.stop()
+        self.motor.parar()
         self.actual = -1
         self.pausado = False
         self.pendiente = None
@@ -2329,6 +2302,7 @@ class Player(QWidget):
 
     def closeEvent(self, e):
         self.guardar_estado()
+        self.motor.cerrar()
         if self.mpris:
             self.mpris.cerrar()
         super().closeEvent(e)
@@ -2362,14 +2336,11 @@ class Player(QWidget):
         self.actual = i
         self.pausado = False
         self.pendiente = None
-        self.offset = 0.0
         try:
             self.duracion = MP3(self.pistas[i]).info.length
         except Exception:
             self.duracion = 0.0
-        with sin_stderr():
-            pygame.mixer.music.load(self.pistas[i])
-            pygame.mixer.music.play()
+        self.motor.cargar(self.pistas[i])
         self.token += 1
         self.chunk = None
         self.ref_suave = None
@@ -2539,14 +2510,14 @@ class Player(QWidget):
                 self.saltar(min(pend[1] / self.duracion, 0.999))
             return
         if self.pausado:
-            pygame.mixer.music.unpause()
+            self.motor.reanudar()
         else:
-            pygame.mixer.music.pause()
+            self.motor.pausar()
         self.pausado = not self.pausado
         self.icono_play()
 
     def parar(self):
-        pygame.mixer.music.stop()
+        self.motor.parar()
         self.actual = -1
         self.pausado = False
         self.icono_play()
@@ -2571,6 +2542,18 @@ class Player(QWidget):
         """No repetir -> toda la lista -> un tema -> no repetir."""
         self.poner_repetir({"off": "all", "all": "one", "one": "off"}[self.repetir])
         self.guardar_estado()
+
+    @Slot()
+    def _motor_fin(self):
+        """El motor avisa (desde el hilo de audio, por la cola de Qt) que el tema se acabó. Se ignora si ya
+        no corresponde: el usuario cambió de tema o saltó entre el aviso y este momento."""
+        if self.actual >= 0 and not self.pausado and self.motor.terminada:
+            self.fin_de_pista()
+
+    @Slot(str)
+    def _motor_error(self, mensaje):
+        log("audio:", mensaje)
+        self._aviso(tr("No se pudo abrir el audio", "Could not open the audio device"), 5000)
 
     def fin_de_pista(self):
         """El tema terminó solo: con 'repetir un tema' vuelve a empezar; si no, sigue con el próximo."""
@@ -2603,16 +2586,12 @@ class Player(QWidget):
             self.reproducir(self.actual - 1)
 
     def posicion(self):
-        return self.offset + max(pygame.mixer.music.get_pos(), 0) / 1000
+        return self.motor.posicion()
 
     def saltar(self, frac):
         if self.actual < 0 or self.duracion <= 0:
             return
-        self.offset = frac * self.duracion
-        with sin_stderr():
-            pygame.mixer.music.play(start=self.offset)
-        if self.pausado:
-            pygame.mixer.music.pause()
+        self.motor.saltar(frac * self.duracion)  # si está en pausa, sigue en pausa
 
     def saltar_rel(self, delta):
         """Salta delta segundos (negativo = hacia atrás) dentro del tema actual."""
@@ -2631,8 +2610,6 @@ class Player(QWidget):
                 self.linea.setValue(round(pos / self.duracion * 1000))
         self.t_actual.setText(fmt(pos))
         self.t_resta.setText("-" + fmt(self.duracion - pos))
-        if not self.pausado and not pygame.mixer.music.get_busy():
-            self.fin_de_pista()
 
     def mousePressEvent(self, e):
         # sin barra de título: se mueve arrastrando cualquier zona vacía
