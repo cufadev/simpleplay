@@ -212,6 +212,89 @@ class TestFinDePista(Base):
         self.assertEqual(self.w.actual, 0)
 
 
+class TestArchivosRotos(Base):
+    """Un tema que no se puede reproducir se saltea, y si no hay ninguno bueno la lista se detiene."""
+
+    def meter(self, *rutas):
+        """Agrega rutas a la lista aunque no existan (el diálogo solo deja elegir archivos que existen)."""
+        for r in rutas:
+            self.w.pistas.append(r)
+            self.w.orden_original.append(r)
+            self.w.datos[r] = S.datos_lista(r)
+            self.w.lista.addItem(os.path.basename(r))
+
+    def test_saltea_el_roto_y_toca_el_siguiente(self):
+        self.meter(str(CORPUS / "basura.mp3"), A)
+        self.w.reproducir(0)
+        self.assertTrue(espera(4.0, lambda: self.w.actual == 1), "no pasó al tema bueno")
+        espera(0.6)
+        self.assertTrue(self.w.motor.reproduciendo)
+        self.assertEqual(self.w.motor.ruta, A)
+
+    def test_roto_en_el_medio_de_la_lista(self):
+        self.meter(A, str(CORPUS / "vacio.mp3"), B)
+        self.w.reproducir(0)
+        espera(0.4)
+        self.w.saltar(0.96)
+        self.assertTrue(espera(6.0, lambda: self.w.actual == 2), "no llegó al tercer tema")
+        espera(0.5)
+        self.assertTrue(self.w.motor.reproduciendo)
+
+    def test_etiqueta_sin_audio_tambien_se_saltea(self):
+        self.meter(str(CORPUS / "solo_etiqueta.mp3"), A)
+        self.w.reproducir(0)
+        self.assertTrue(espera(5.0, lambda: self.w.actual == 1))
+
+    def test_si_fallan_todos_se_detiene_sin_dar_vueltas(self):
+        self.meter(str(CORPUS / "basura.mp3"), str(CORPUS / "vacio.mp3"), "/no/existe.mp3")
+        self.w.poner_repetir("all")                        # con "repetir la lista" el bucle sería infinito
+        self.w.reproducir(0)
+        self.assertTrue(espera(8.0, lambda: self.w.actual == -1), "siguió dando vueltas")
+        espera(1.0)
+        self.assertEqual(self.w.actual, -1)
+        self.assertFalse(self.w.motor.activo)
+        self.assertEqual(self.w._fallos, 0)
+
+    def test_tema_borrado_despues_de_agregarlo(self):
+        import shutil
+        import tempfile
+        ruta = os.path.join(tempfile.mkdtemp(), "borrado.mp3")
+        shutil.copy(A, ruta)
+        self.cargar(ruta, B)
+        os.remove(ruta)
+        self.w.reproducir(0)
+        self.assertTrue(espera(4.0, lambda: self.w.actual == 1))
+        self.assertEqual(self.w.motor.ruta, B)
+
+
+class TestUsoRapido(Base):
+    def test_cambiar_de_tema_a_toda_velocidad(self):
+        self.cargar(A, B, str(CORPUS / "tono_48k.mp3"), str(CORPUS / "tono_bajo.mp3"))   # distintos: no se repiten
+        self.assertEqual(len(self.w.pistas), 4)
+        self.w.poner_repetir("all")
+        self.w.reproducir(0)
+        for _ in range(30):
+            self.w.siguiente()
+            APP.processEvents()
+        espera(1.0)
+        self.assertEqual(self.w.actual, 30 % 4)
+        self.assertTrue(self.w.motor.reproduciendo)
+        self.assertEqual(self.w.motor.ruta, self.w.pistas[self.w.actual])
+
+    def test_saltos_y_pausas_en_rafaga(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        for i in range(40):
+            self.w.saltar((i % 9) / 10)
+            if i % 7 == 0:
+                self.w.play_pausa()
+            APP.processEvents()
+        if self.w.pausado:
+            self.w.play_pausa()
+        espera(0.8)
+        self.assertTrue(self.w.motor.reproduciendo)
+
+
 class TestLista(Base):
     def test_quitar_el_que_suena_pasa_al_vecino(self):
         self.cargar(A, B)

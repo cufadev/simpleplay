@@ -2,7 +2,8 @@
 
     python tests/generar_corpus.py
 
-- tono_44k.mp3, tono_48k.mp3, mono_44k.mp3: senoides de 10 s en cada formato; vbr_4min.mp3: un barrido VBR de 4 min; tono_bajo.mp3: la misma senoide a -34 dBFS.
+- tono_44k.mp3, tono_48k.mp3, mono_44k.mp3: senoides de 10 s en cada formato; vbr_4min.mp3: un barrido VBR de 4 min; tono_bajo.mp3: la misma senoide a -34 dBFS;
+  roto_truncado/basura/vacio/solo_etiqueta.mp3: archivos que no se pueden reproducir.
 - largo_60min.mp3: un barrido (chirp) de 60 min cuya frecuencia vale 200 + t Hz en el segundo t, así
   la frecuencia dominante de cualquier tramo dice en qué segundo está (sirve para probar saltos).
 - gapless_a.mp3 / gapless_b.mp3: una senoide continua de 20 s cortada en dos mitades exactas de 10 s
@@ -39,4 +40,11 @@ ffmpeg("-i", str(wav), "-af", "atrim=end_sample=441000", "-codec:a", "libmp3lame
        str(DESTINO / "gapless_a.mp3"))
 ffmpeg("-i", str(wav), "-af", "atrim=start_sample=441000,asetpts=PTS-STARTPTS", "-codec:a", "libmp3lame",
        "-b:a", "128k", str(DESTINO / "gapless_b.mp3"))
+# archivos que no se pueden (o no se deben) reproducir: el reproductor tiene que seguir de largo
+import random
+mp3 = (DESTINO / "tono_44k.mp3").read_bytes()
+(DESTINO / "roto_truncado.mp3").write_bytes(mp3[:len(mp3) * 4 // 10])           # cortado a la mitad de un frame
+(DESTINO / "basura.mp3").write_bytes(random.Random(1).randbytes(5000))            # no es audio
+(DESTINO / "vacio.mp3").write_bytes(b"")                                          # 0 bytes
+(DESTINO / "solo_etiqueta.mp3").write_bytes(b"ID3\x03\x00\x00\x00\x00\x00\x10" + bytes(16))  # etiqueta sin audio
 print("corpus listo en", DESTINO)

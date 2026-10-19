@@ -1064,6 +1064,8 @@ if HAY_DBUS:
         def _poner_shuffle(self, v):
             self.p.btn_shuffle.setChecked(bool(v))
 
+        Seeked = Signal("qlonglong")  # posición en microsegundos, tras un salto
+
         PlaybackStatus = Property(str, lambda s: s.p.mpris_estado())
         Metadata = Property("QVariantMap", lambda s: s.p.mpris_metadata())
         Position = Property("qlonglong", lambda s: s.p.mpris_posicion())
@@ -1159,6 +1161,12 @@ if HAY_DBUS:
             m = QDBusMessage.createSignal(self.RUTA, "org.freedesktop.DBus.Properties", "PropertiesChanged")
             m.setArguments(["org.mpris.MediaPlayer2.Player", cambios, vacio])
             self.bus.send(m)
+
+        def seeked(self, pos_us):
+            """Avisa que la posición cambió de golpe (un salto): los paneles del escritorio la releen al instante."""
+            if not self.activo:
+                return
+            self.rep.Seeked.emit(int(pos_us))
 
         def cerrar(self):
             if self.activo:
@@ -1283,12 +1291,16 @@ class Motor(QObject):
     - `muestras(n)`: las últimas n muestras (mono) que están sonando, para el espectro.
     """
     fin_de_pista = Signal()
-    error_dispositivo = Signal(str)
+    error_dispositivo = Signal(str)   # no se pudo abrir el audio (sin placa, ocupada por otro programa...)
+    error_archivo = Signal(str, str)  # (ruta, motivo): el tema no se puede reproducir
     ANILLO = 32768
 
-    def __init__(self, buffer_ms=120, latencia_ms=None, backend=None, parent=None):
+    def __init__(self, buffer_ms=120, latencia_ms=None, backend=None, parent=None, vigilancia_s=1.0, umbral_s=None, reintento_s=3.0):
         super().__init__(parent)
         self.buffer_ms = buffer_ms
+        # si el dispositivo deja de pedir audio durante tanto tiempo, se lo da por caído y se lo vuelve a abrir
+        self.umbral = max(1.5, 8 * buffer_ms / 1000) if umbral_s is None else umbral_s
+        self.reintento = reintento_s    # cada cuánto se reintenta abrir una placa que no estaba
         # cuánto tarda en oírse lo que se entrega (aproximado: sin medir con la placa real)
         self.lat = round((buffer_ms / 2 if latencia_ms is None else latencia_ms) * FS / 1000)
         self.backends = [backend] if backend is not None else None
@@ -1309,6 +1321,13 @@ class Motor(QObject):
         self._tot0, self._pos0 = 0, 0  # a qué `total` corresponde la posición `_pos0` (frames de la pista)
         self._t_cb, self._tot_cb = None, 0
         self._anillo = np.zeros(self.ANILLO, np.float32)
+        self._ent_fuente = 0          # frames que se leyeron de la fuente actual (0 al terminar = no tiene audio)
+        self._t_abierto = self._t_intento = 0.0
+        self._caido = False           # lo marca el aviso de miniaudio (que no siempre llega: por eso el vigilante)
+        self._sin_aviso = True        # solo se avisa del primer fallo de una serie
+        self._vigia = QTimer(self)
+        self._vigia.timeout.connect(self._vigilar)
+        self._vigia.start(round(vigilancia_s * 1000))
 
     # --- estado ---
     @property
@@ -1338,29 +1357,49 @@ class Motor(QObject):
 
     # --- control ---
     def cargar(self, ruta, inicio=0.0, reproducir=True):
-        """Abre un tema (para sonar desde `inicio` segundos). Reemplaza al que suene con un fundido cruzado."""
+        """Abre un tema (para sonar desde `inicio` segundos). Reemplaza al que suene con un fundido cruzado.
+
+        Devuelve False (y emite `error_archivo`) si no se puede abrir: no existe, está roto o no es audio.
+        """
         self._abrir_dispositivo()
+        try:
+            fuente = self._fuente_en(ruta, round(inicio * FS))
+        except Exception as e:
+            self._quiere, self.ruta, self._terminada = False, None, False
+            self._soltar_indice()
+            self._poner(None, 0)
+            self.error_archivo.emit(ruta, str(e) or type(e).__name__)
+            return False
         self.ruta = ruta
         self._terminada = False
         self.duracion = self._duracion(ruta)
-        self._idx = None
+        self._soltar_indice()
         if ruta.lower().endswith(".mp3"):
             threading.Thread(target=self._indexar, args=(ruta,), daemon=True).start()
         self._quiere = reproducir
-        self._poner(self._fuente_en(ruta, round(inicio * FS)), round(inicio * FS))
+        self._poner(fuente, round(inicio * FS))
+        return True
 
     def saltar(self, seg):
-        """Salta a `seg` segundos del tema abierto."""
+        """Salta a `seg` segundos del tema abierto. Devuelve False si no se pudo."""
         if not self.ruta:
-            return
+            return False
         seg = min(max(seg, 0.0), max(self.duracion - 0.05, 0.0))
+        try:
+            fuente = self._fuente_en(self.ruta, round(seg * FS))
+        except Exception as e:
+            self.error_archivo.emit(self.ruta, str(e) or type(e).__name__)
+            return False
         self._terminada = False
-        self._poner(self._fuente_en(self.ruta, round(seg * FS)), round(seg * FS))
+        self._poner(fuente, round(seg * FS))
+        return True
 
     def pausar(self):
         self._quiere = False
 
     def reanudar(self):
+        if self._dev is None:
+            self._abrir_dispositivo()   # tal vez la placa volvió
         if self.activo and not self._terminada:
             self._quiere = True
 
@@ -1368,14 +1407,20 @@ class Motor(QObject):
         self._quiere = False
         self.ruta = None
         self._terminada = False
+        self._soltar_indice()
         self._poner(None, 0)
 
     def cerrar(self):
-        """Detiene el dispositivo (al cerrar la aplicación)."""
+        """Detiene el dispositivo y libera lo abierto (al cerrar la aplicación)."""
+        self._vigia.stop()
+        self._soltar_indice(ya=True)
         if self._dev is not None:
-            self._dev.stop()
-            self._dev.close()
-            self._dev = None
+            dev, self._dev = self._dev, None
+            try:
+                dev.stop_callback = None
+                dev.close()
+            except Exception:
+                pass
 
     def muestras(self, n):
         """Las últimas n muestras (mono, float32) que están sonando; ceros si todavía no hay tantas."""
@@ -1393,16 +1438,61 @@ class Motor(QObject):
     def _abrir_dispositivo(self):
         if self._dev is not None:
             return
+        self._t_intento = time.perf_counter()
         try:
-            self._dev = miniaudio.PlaybackDevice(
+            dev = miniaudio.PlaybackDevice(
                 output_format=miniaudio.SampleFormat.FLOAT32, nchannels=2, sample_rate=FS,
                 buffersize_msec=self.buffer_ms, backends=self.backends, app_name="simpleplay")
             g = self._callback()
             next(g)
-            self._dev.start(g)
+            dev.stop_callback = self._marcar_caido
+            dev.start(g)
+            self._dev = dev
+            self._t_abierto = time.perf_counter()
+            self._caido = False
+            self._sin_aviso = True
         except Exception as e:  # sin placa de sonido, o la ocupa otro programa
             self._dev = None
-            self.error_dispositivo.emit(str(e))
+            if self._sin_aviso:
+                self._sin_aviso = False
+                self.error_dispositivo.emit(str(e))
+
+    def _marcar_caido(self):
+        self._caido = True
+
+    def _vigilar(self):
+        """Cada segundo: si el dispositivo se cayó (parlante USB o Bluetooth desconectado, el equipo despertó de
+        una suspensión...) se lo abre de nuevo y el tema sigue donde estaba, porque la fuente no se tocó."""
+        ahora = time.perf_counter()
+        if self._dev is None:
+            if self.activo and ahora - self._t_intento > self.reintento:
+                self._abrir_dispositivo()       # la placa no estaba: reintenta cada tanto
+            return
+        if self._caido or ahora - max(self._t_cb or 0.0, self._t_abierto) > self.umbral:
+            log("audio: el dispositivo dejó de pedir datos, se vuelve a abrir")
+            viejo, self._dev = self._dev, None
+            try:
+                viejo.stop_callback = None
+                viejo.close()
+            except Exception:
+                pass
+            self._abrir_dispositivo()
+
+    def _soltar_indice(self, ya=False):
+        """Suelta el índice del tema anterior y cierra su archivo mapeado (un segundo después: el audio puede estar
+        terminando de leer la cola del tema viejo durante el fundido)."""
+        viejo, self._idx = self._idx, None
+        if viejo is None:
+            return
+        cerrar = lambda mm=viejo[5]: self._cerrar_mm(mm)
+        cerrar() if ya else QTimer.singleShot(1000, cerrar)
+
+    @staticmethod
+    def _cerrar_mm(mm):
+        try:
+            mm.close()
+        except Exception:
+            pass
 
     @staticmethod
     def _duracion(ruta):
@@ -1421,6 +1511,8 @@ class Motor(QObject):
             offs, spf, fr, ret = indexar_mp3(mm)
             if self.ruta == ruta and offs:
                 self._idx = (ruta, offs, spf, fr, ret, mm)
+            else:
+                mm.close()
         except Exception:
             pass
 
@@ -1430,27 +1522,40 @@ class Motor(QObject):
         F32 = miniaudio.SampleFormat.FLOAT32
         idx = self._idx if self._idx and self._idx[0] == ruta else None
         if idx and frame > 0:
-            _, offs, spf, fr, ret, mm = idx
-            pos = frame * fr / FS                                  # posición en frames del archivo
-            kf = min(int((pos + ret) // spf), len(offs) - 1)
-            k0 = max(kf - PREVIOS, 0)                              # unos frames antes: llenan la reserva de bits
-            if k0 > 0:
-                # Al arrancar a mitad de archivo el decodificador no entrega los primeros frames (les falta la
-                # reserva de bits de los anteriores): 0, 1 o 2 según el contenido. Se mide decodificando solo
-                # esos frames, y recién ahí se sabe a qué punto de la pista corresponde su primera muestra.
-                n = kf - k0
-                corte = offs[kf] if kf < len(offs) else len(mm)
-                sonda = miniaudio.stream_any(FuenteMp3(mm, offs[k0], corte), source_format=miniaudio.FileFormat.MP3,
-                                             output_format=F32, nchannels=2, sample_rate=fr, frames_to_read=1024)
-                perdidos = n - round(len(_leer(sonda, n * spf + spf)) / spf)
-                ini = (k0 + max(perdidos, 0)) * spf - ret            # posición (frames del archivo) de su 1.ª muestra
-                if ini <= pos:
-                    g = miniaudio.stream_any(FuenteMp3(mm, offs[k0]), source_format=miniaudio.FileFormat.MP3,
-                                             output_format=F32, nchannels=2, sample_rate=FS, frames_to_read=1024)
-                    _leer(g, round((pos - ini) * FS / fr))          # descarta hasta el punto pedido
+            try:
+                g = self._fuente_indexada(idx, frame)
+                if g is not None:
                     return g
+            except Exception as e:
+                log("salto por índice falló, se usa el lineal:", e)
         return miniaudio.stream_file(ruta, output_format=F32, nchannels=2, sample_rate=FS,
                                      frames_to_read=1024, seek_frame=frame)
+
+    @staticmethod
+    def _fuente_indexada(idx, frame):
+        """El salto por índice (ver `_fuente_en`); None si no corresponde y hay que usar el salto lineal."""
+        F32 = miniaudio.SampleFormat.FLOAT32
+        _, offs, spf, fr, ret, mm = idx
+        pos = frame * fr / FS                                  # posición en frames del archivo
+        kf = min(int((pos + ret) // spf), len(offs) - 1)
+        k0 = max(kf - PREVIOS, 0)                              # unos frames antes: llenan la reserva de bits
+        if k0 == 0:
+            return None                                        # principio del archivo: el decodificador normal
+        # Al arrancar a mitad de archivo el decodificador no entrega los primeros frames (les falta la reserva de
+        # bits de los anteriores): 0, 1 o 2 según el contenido. Se mide decodificando solo esos frames, y recién
+        # ahí se sabe a qué punto de la pista corresponde su primera muestra.
+        n = kf - k0
+        corte = offs[kf] if kf < len(offs) else len(mm)
+        sonda = miniaudio.stream_any(FuenteMp3(mm, offs[k0], corte), source_format=miniaudio.FileFormat.MP3,
+                                     output_format=F32, nchannels=2, sample_rate=fr, frames_to_read=1024)
+        perdidos = n - round(len(_leer(sonda, n * spf + spf)) / spf)
+        ini = (k0 + max(perdidos, 0)) * spf - ret              # posición (frames del archivo) de su 1.ª muestra
+        if ini > pos:
+            return None
+        g = miniaudio.stream_any(FuenteMp3(mm, offs[k0]), source_format=miniaudio.FileFormat.MP3,
+                                 output_format=F32, nchannels=2, sample_rate=FS, frames_to_read=1024)
+        _leer(g, round((pos - ini) * FS / fr))                 # descarta hasta el punto pedido
+        return g
 
     def _poner(self, fuente, frame):
         with self._lock:
@@ -1484,9 +1589,10 @@ class Motor(QObject):
             cola = None
             if self._fuente is not None and self._gan >= 0.999 and self._quiere:
                 cola = _leer(self._fuente, FADE)    # lo que quedaba del audio viejo: se funde hacia afuera
-            self._fuente, self._pos0, self._tot0 = nueva, frame, self._total
+            self._fuente, self._pos0, self._tot0, self._ent_fuente = nueva, frame, self._total, 0
             if cola is not None:
                 cabeza = _leer(nueva, FADE) if nueva is not None else np.zeros((0, 2), np.float32)
+                self._ent_fuente = len(cabeza)
                 r = np.arange(FADE, dtype=np.float32)[:, None] / FADE
                 mezcla = np.zeros((FADE, 2), np.float32)
                 mezcla[:len(cola)] += cola * (1 - r[:len(cola)])
@@ -1512,6 +1618,7 @@ class Motor(QObject):
                     x = x * self._rampa(len(x), objetivo)[:, None]
                     out[hecho:hecho + len(x)] = x
                     hecho += len(x)
+                    self._ent_fuente += len(x)
                 if len(x) < quedan:
                     self._fin_de_archivo()
         if hecho:
@@ -1539,11 +1646,15 @@ class Motor(QObject):
     def _fin_de_archivo(self):
         if self._terminada:
             return
+        sin_audio = self._ent_fuente == 0
         self._fuente = None
         self._terminada = True
         self._quiere = False
         self._gan = 0.0
-        self.fin_de_pista.emit()
+        if sin_audio:   # se abrió pero no entregó ni un frame: etiqueta sin audio, archivo roto
+            self.error_archivo.emit(self.ruta or "", "el archivo no tiene audio")
+        else:
+            self.fin_de_pista.emit()
 
 
 # ------------------------------------------------------------------------------------------------
@@ -1556,6 +1667,8 @@ class Player(QWidget):
         self.motor = Motor(backend=miniaudio.Backend.NULL if nulo else None, parent=self)
         self.motor.fin_de_pista.connect(self._motor_fin)
         self.motor.error_dispositivo.connect(self._motor_error)
+        self.motor.error_archivo.connect(self._motor_error_archivo)
+        self._fallos = 0   # temas seguidos que no se pudieron reproducir (para no dar vueltas sin fin)
         self.setWindowTitle("simpleplay")
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -1815,6 +1928,10 @@ class Player(QWidget):
     def mpris_cambio(self, *claves):
         if self.mpris:
             self.mpris.actualizar(*claves)
+
+    def mpris_seeked(self):
+        if self.mpris:
+            self.mpris.seeked(self.mpris_posicion())
 
     def mpris_estado(self):
         if self.actual >= 0:
@@ -2462,6 +2579,26 @@ class Player(QWidget):
         log("audio:", mensaje)
         self._aviso(tr("No se pudo abrir el audio", "Could not open the audio device"), 5000)
 
+    @Slot(str, str)
+    def _motor_error_archivo(self, ruta, motivo):
+        """Un tema no se puede reproducir (no existe, está roto, no tiene audio): aviso y se pasa al siguiente.
+        Si fallan todos los de la lista, se detiene en lugar de dar vueltas."""
+        log("archivo:", ruta, motivo)
+        self._fallos += 1
+        if self._fallos >= max(len(self.pistas), 1):
+            self._fallos = 0
+            self.parar()
+            self._aviso(tr("Ningún tema se pudo reproducir", "None of the tracks could be played"), 5000)
+            return
+        nombre = Path(ruta).name if ruta else ""
+        self._aviso(tr(f"No se pudo reproducir {nombre}", f"Could not play {nombre}"), 3000)
+        i = self.actual
+        QTimer.singleShot(400, lambda: self._saltar_fallido(i))
+
+    def _saltar_fallido(self, i):
+        if self.actual == i and not self.motor.activo:   # nadie hizo otra cosa mientras tanto
+            self.siguiente()
+
     def fin_de_pista(self):
         """El tema terminó solo: con 'repetir un tema' vuelve a empezar; si no, sigue con el próximo."""
         if self.repetir == "one" and self.actual >= 0:
@@ -2498,7 +2635,8 @@ class Player(QWidget):
     def saltar(self, frac):
         if self.actual < 0 or self.duracion <= 0:
             return
-        self.motor.saltar(frac * self.duracion)  # si está en pausa, sigue en pausa
+        if self.motor.saltar(frac * self.duracion):  # si está en pausa, sigue en pausa
+            self.mpris_seeked()
 
     def saltar_rel(self, delta):
         """Salta delta segundos (negativo = hacia atrás) dentro del tema actual."""
@@ -2517,6 +2655,8 @@ class Player(QWidget):
                 self.linea.setValue(round(pos / self.duracion * 1000))
         self.t_actual.setText(fmt(pos))
         self.t_resta.setText("-" + fmt(self.duracion - pos))
+        if pos > 2.0:
+            self._fallos = 0   # un tema sonó de verdad: se acaba la racha de fallos
 
     def mousePressEvent(self, e):
         # sin barra de título: se mueve arrastrando cualquier zona vacía

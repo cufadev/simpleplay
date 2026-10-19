@@ -225,6 +225,149 @@ class TestParar(Base):
         self.assertGreater(float(np.abs(self.audio()[-4096:]).max()), 0.3)
 
 
+class TestRobustez(Base):
+    """Archivos que no se pueden abrir, dispositivo que se cae y recursos que no se pierden."""
+
+    def setUp(self):
+        super().setUp()
+        self.errores = []
+        self.m.error_archivo.connect(lambda ruta, msg: self.errores.append((os.path.basename(ruta), msg)))
+
+    def test_archivo_inexistente_no_rompe_nada(self):
+        self.assertFalse(self.m.cargar("/no/existe/nada.mp3"))
+        self.assertEqual(len(self.errores), 1)
+        self.assertFalse(self.m.activo)
+        self.assertTrue(self.m.cargar(str(CORPUS / "tono_44k.mp3")))   # y se puede seguir usando
+        espera(0.8)
+        self.assertTrue(self.m.reproduciendo)
+
+    def test_basura_y_vacio_se_rechazan(self):
+        for nombre in ("basura.mp3", "vacio.mp3"):
+            self.assertFalse(self.m.cargar(str(CORPUS / nombre)), nombre)
+        self.assertEqual([e[0] for e in self.errores], ["basura.mp3", "vacio.mp3"])
+        self.assertFalse(self.m.activo)
+
+    def test_etiqueta_sin_audio_avisa_y_no_termina_como_si_nada(self):
+        self.m.cargar(str(CORPUS / "solo_etiqueta.mp3"))
+        espera(1.5, lambda: self.errores)
+        self.assertEqual(len(self.errores), 1)
+        self.assertEqual(self.fines, [])                                # no es un fin de pista normal
+        self.assertFalse(self.m.reproduciendo)
+
+    def test_truncado_suena_hasta_donde_hay_y_termina_una_vez(self):
+        self.m.cargar(str(CORPUS / "roto_truncado.mp3"))
+        self.assertTrue(espera(8.0, lambda: self.fines))
+        espera(0.5)
+        self.assertEqual(len(self.fines), 1)
+        self.assertEqual(self.errores, [])
+
+    def test_un_archivo_malo_corta_el_que_suena_pero_no_el_motor(self):
+        self.m.cargar(str(CORPUS / "tono_44k.mp3"))
+        espera(0.8)
+        self.assertFalse(self.m.cargar(str(CORPUS / "basura.mp3")))
+        espera(0.5)
+        n = len(self.bloques)
+        espera(0.4)
+        self.assertLess(float(np.abs(self.audio(n)).max()), 1e-6)       # quedó en silencio
+        self.assertTrue(self.m.cargar(str(CORPUS / "tono_44k.mp3")))
+        espera(0.8)
+        self.assertTrue(self.m.reproduciendo)
+
+    def test_borrar_el_archivo_mientras_suena(self):
+        import shutil
+        import tempfile
+        carpeta = tempfile.mkdtemp()
+        ruta = os.path.join(carpeta, "efimero.mp3")
+        shutil.copy(CORPUS / "tono_44k.mp3", ruta)
+        self.m.cargar(ruta)
+        self.assertTrue(espera(3.0, lambda: self.m._idx is not None))
+        espera(0.3)
+        os.remove(ruta)
+        espera(0.4)
+        self.assertTrue(self.m.reproduciendo)                           # sigue: el archivo está abierto
+        self.assertTrue(self.m.saltar(5.0))                             # y con el índice mapeado hasta se puede saltar
+        espera(0.6)
+        self.assertAlmostEqual(self.m.posicion(), 5.5, delta=0.5)
+        self.assertEqual(self.errores, [])
+        self.assertFalse(self.m.cargar(ruta))                           # pero volver a abrirlo ya no se puede
+        self.assertEqual(len(self.errores), 1)
+
+    def test_borrar_el_archivo_sin_indice_hace_fallar_el_salto_sin_cortar_el_audio(self):
+        import shutil
+        import tempfile
+        carpeta = tempfile.mkdtemp()
+        ruta = os.path.join(carpeta, "efimero.mp3")
+        shutil.copy(CORPUS / "tono_44k.mp3", ruta)
+        self.m.cargar(ruta)
+        espera(0.3)
+        self.m._idx = None                                              # (otro formato, o el índice aún no estaba)
+        os.remove(ruta)
+        self.assertFalse(self.m.saltar(5.0))
+        self.assertEqual(len(self.errores), 1)
+        espera(0.5)
+        self.assertTrue(self.m.reproduciendo)                           # el audio no se cortó por eso
+
+    def test_dispositivo_caido_se_reabre_y_el_tema_sigue(self):
+        m = S.Motor(buffer_ms=120, backend=miniaudio.Backend.NULL, vigilancia_s=0.2, umbral_s=0.7)
+        bloques = []
+        m.espia = bloques.append
+        try:
+            m.cargar(str(CORPUS / "tono_44k.mp3"))
+            espera(1.0)
+            antes = m.posicion()
+            m._dev.stop()                                               # el dispositivo muere sin avisar
+            espera(0.5)
+            n = len(bloques)
+            self.assertTrue(espera(4.0, lambda: len(bloques) > n + 3), "el audio no volvió")
+            espera(0.5)
+            self.assertTrue(m.reproduciendo)
+            self.assertGreater(m.posicion(), antes)                    # sigue donde estaba, no desde cero
+            self.assertLess(m.posicion(), antes + 4.0)
+            self.assertGreater(float(np.abs(bloques[-1]).max()), 0.1)
+        finally:
+            m.cerrar()
+
+    def test_placa_ausente_avisa_una_vez_y_reintenta(self):
+        reales = S.miniaudio.PlaybackDevice
+        intentos = []
+
+        class Falsa(reales):
+            def __init__(self, *a, **k):
+                intentos.append(1)
+                if len(intentos) <= 3:
+                    self.running, self._device, self.callback_generator, self.stop_callback = False, None, None, None
+                    raise miniaudio.MiniaudioError("no hay placa")
+                super().__init__(*a, **k)
+
+        S.miniaudio.PlaybackDevice = Falsa
+        m = S.Motor(buffer_ms=120, backend=miniaudio.Backend.NULL, vigilancia_s=0.1, reintento_s=0.3)
+        avisos = []
+        m.error_dispositivo.connect(avisos.append)
+        try:
+            m.cargar(str(CORPUS / "tono_44k.mp3"))
+            self.assertEqual(len(avisos), 1)
+            self.assertTrue(espera(5.0, lambda: m._dev is not None), "nunca reabrió")
+            espera(1.0)
+            self.assertEqual(len(avisos), 1)                            # no se repite el aviso en cada intento
+            self.assertTrue(m.reproduciendo)
+        finally:
+            S.miniaudio.PlaybackDevice = reales
+            m.cerrar()
+
+    @unittest.skipUnless(os.path.isdir("/proc/self/fd"), "solo en Linux")
+    def test_no_se_pierden_archivos_abiertos(self):
+        ruta = str(CORPUS / "tono_44k.mp3")
+        self.m.cargar(ruta)
+        espera(0.5)
+        base = len(os.listdir("/proc/self/fd"))
+        for i in range(60):
+            self.m.cargar(ruta)
+            self.m.saltar(1.0 + (i % 7))
+            espera(0.01)
+        espera(2.5)                                                     # los archivos mapeados se cierran al segundo
+        self.assertLessEqual(len(os.listdir("/proc/self/fd")) - base, 6)
+
+
 @unittest.skipUnless(glob.glob(os.path.expanduser("~/Música/*.mp3")), "no hay mp3 reales en ~/Música")
 class TestArchivosReales(Base):
     """El salto por índice contra el salto exacto (lento) de miniaudio, con mp3 de verdad. Solo lectura."""
