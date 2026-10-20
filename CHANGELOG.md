@@ -5,9 +5,20 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-10-20
+
 ### Fixed
+- **Shuffle no longer repeats tracks.** It used to pick any track at random each time, so with a long list some came
+  up again and again before others played even once. Now every track plays once per round, and a new round starts
+  only when all of them have played (the last track of a round never opens the next one). It keeps working if you add,
+  remove, sort or drag tracks in the middle of a round, and the round is saved with the session. **Previous** in
+  shuffle now goes back to the track that played before, not to the one above it in the list.
 - **Imported ParametricEQ profiles with a decimal comma** (`Gain 2,2 dB`, as Equalizer APO writes them on some
   systems) were rejected with "the profile has no filters". They now load like the ones with a decimal point.
+
+### Changed
+- **New icon:** a bold white "n" on the orange gradient, which reads well down to 16 px in a taskbar. The previous
+  icon and two more designs are kept in `icon/alternativos/`.
 
 ## [1.5.1] - 2026-10-20
 
