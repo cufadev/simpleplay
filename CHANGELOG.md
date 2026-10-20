@@ -5,6 +5,14 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-20
+
+### Fixed
+- **The normalizer no longer jumps.** The first time a track played, it sounded unchanged for about a second
+  (measuring takes 0.4–1.4 s) and then the gain was applied in a single audio block, so the volume dropped
+  suddenly. Now a late measurement is reached with a gentle ramp (8 dB per second), and while a track plays the
+  next one is measured in the background, so it starts already normalized.
+
 ## [1.5] - 2026-10-20
 
 ### Added

@@ -561,6 +561,38 @@ class TestCrearListas(Base):
         w2.close()
 
 
+class TestNormalizadorSuave(Base):
+    def test_una_medida_tardia_se_acomoda_con_rampa_y_no_de_golpe(self):
+        c = S.Cadena()          # propia: la del motor la usa también el hilo de audio
+        c.poner_ganancia(-8.0, suave=True)
+        x = np.full((4410, 2), 0.1, np.float32)              # 100 ms de señal constante
+        y = c.procesar(x)[:, 0]
+        self.assertGreater(y[0], 0.099)                       # empieza donde estaba (sin salto)
+        pendiente = np.abs(np.diff(20 * np.log10(y / 0.1))).max()
+        self.assertLess(pendiente, 0.01)                      # ningún paso brusco entre muestras
+        bajada = 20 * np.log10(y[-1] / 0.1)
+        self.assertAlmostEqual(bajada, -S.RAMPA_DB_S * 0.1, delta=0.1)    # a RAMPA_DB_S dB por segundo
+        for _ in range(20):
+            y = c.procesar(x)[:, 0]
+        self.assertAlmostEqual(20 * np.log10(y[-1] / 0.1), -8.0, delta=0.01)   # y llega a la meta
+
+    def test_al_cambiar_de_tema_la_ganancia_sigue_siendo_inmediata(self):
+        c = S.Cadena()          # propia: la del motor la usa también el hilo de audio
+        c.poner_ganancia(-8.0)                                # sin suave: un fundido de un bloque
+        y = c.procesar(np.full((4410, 2), 0.1, np.float32))[:, 0]
+        self.assertAlmostEqual(20 * np.log10(y[-1] / 0.1), -8.0, delta=0.01)
+
+    def test_mientras_suena_un_tema_se_mide_el_que_sigue(self):
+        self.cargar(A, B)
+        self.w.reproducir(0)
+        self.assertTrue(espera(5.0, lambda: len(self.w._cache_sonoridad()) == 2))
+        self.w.reproducir(1)
+        # el segundo ya estaba medido: su ganancia es la de la caché desde el primer instante
+        v = [v for k, v in self.w._cache_sonoridad().items() if k.startswith(B)][0]
+        esperado = 10 ** (S.ganancia_para(v["lufs"], v["pico"]) / 20)
+        self.assertAlmostEqual(self.w.motor.cadena._gan_obj, esperado, places=5)
+
+
 class TestSesion(Base):
     def test_restaura_el_tema_y_la_posicion(self):
         self.cargar(A, B)

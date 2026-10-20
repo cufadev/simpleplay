@@ -57,7 +57,7 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.5"
+VERSION = "1.5.1"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
@@ -1627,6 +1627,7 @@ OBJETIVO_LUFS = -16.0        # sonoridad a la que se lleva cada tema
 GANANCIA_MAX_DB, GANANCIA_MIN_DB = 9.0, -12.0
 LIMITE_SUAVE = 0.85          # por encima de esto el limitador empieza a comprimir (nunca pasa de 1.0)
 LARGO_SIN_MEDIR = 15 * 60    # los temas más largos (mezclas, sets) no se miden: ya son una sola pieza
+RAMPA_DB_S = 8.0             # cuando la medida llega con el tema sonando, la ganancia se acomoda a esta velocidad (dB por s)
 TAPS = 2047                  # largo del filtro del ecualizador (fase lineal; retraso de 1023 muestras = 23 ms)
 
 
@@ -1657,6 +1658,7 @@ class Cadena:
         self._pre = 1.0                   # reducción por lo que sube el ecualizador (evita saturar)
         self._gan_obj = 1.0               # ganancia de la pista (normalización), lineal
         self._gan_act = 1.0
+        self._suave = False               # la próxima ganancia se alcanza con una rampa lenta en vez de un fundido corto
         self._pre_act = 1.0
         self._hist = np.zeros((TAPS - 1, 2), np.float32)
         self._cache_h = {}
@@ -1665,7 +1667,10 @@ class Cadena:
     def activa(self):
         return self._h is not None or self._pend is not None or self._gan_obj != 1.0 or self._gan_act != 1.0
 
-    def poner_ganancia(self, db):
+    def poner_ganancia(self, db, suave=False):
+        """Ganancia del tema en dB. Con `suave`, se llega a ella de a poco (RAMPA_DB_S): para una medida que llega con el
+        tema ya sonando; si no, un salto repentino se oye. Sin `suave` es un fundido de un bloque (cambio de tema)."""
+        self._suave = suave
         self._gan_obj = 10 ** (max(GANANCIA_MIN_DB, min(GANANCIA_MAX_DB, db)) / 20)
 
     def poner_eq(self, gan_db, freqs=None, makeup_db=0.0):
@@ -1714,10 +1719,19 @@ class Cadena:
             y = self._filtrar(ext, self._h)
         else:
             y = x
-        g0, g1 = self._gan_act * self._pre_act, self._gan_obj * pre_obj
-        if g0 != 1.0 or g1 != 1.0:
-            y = y * np.linspace(g0, g1, n, dtype=np.float32)[:, None]
-        self._gan_act, self._pre_act = self._gan_obj, pre_obj
+        if self._suave and self._gan_act != self._gan_obj:
+            # rampa en dB (se oye pareja): como mucho RAMPA_DB_S dB por segundo hacia el objetivo
+            ini, meta = 20 * math.log10(self._gan_act), 20 * math.log10(self._gan_obj)
+            tope = RAMPA_DB_S * n / FS
+            fin = ini + max(-tope, min(tope, meta - ini))
+            gan = 10 ** (np.linspace(ini, fin, n) / 20)
+            gan_fin = self._gan_obj if abs(meta - fin) < 1e-6 else 10 ** (fin / 20)
+        else:
+            gan, gan_fin = np.linspace(self._gan_act, self._gan_obj, n), self._gan_obj
+        pre = np.linspace(self._pre_act, pre_obj, n)
+        if gan[0] != 1.0 or gan[-1] != 1.0 or pre[0] != 1.0 or pre[-1] != 1.0:
+            y = y * (gan * pre).astype(np.float32)[:, None]
+        self._gan_act, self._pre_act = gan_fin, pre_obj
         # limitador suave: lo que pasa del umbral se curva hacia 1.0 en vez de recortarse
         a = np.abs(y)
         if a.max(initial=0.0) > LIMITE_SUAVE:
@@ -2396,6 +2410,7 @@ class Player(QWidget):
         self._fallos = 0   # temas seguidos que no se pudieron reproducir (para no dar vueltas sin fin)
         self.normalizar = True
         self.preset = PRESET_INICIAL
+        self._midiendo = set()     # medidas de sonoridad en curso (clave de caché)
         self._sonoridades = None   # caché de sonoridad por archivo (se lee del disco la primera vez que se usa)
         self._aplicar_eq()
         self.setWindowTitle("simpleplay")
@@ -3285,23 +3300,51 @@ class Player(QWidget):
             cadena.poner_ganancia(ganancia_para(v["lufs"], v["pico"]) if v else 0.0)
             return
         cadena.poner_ganancia(0.0)          # hasta tener la medida, el tema suena como viene
-        dur = self.duracion
-        if dur <= 0 or dur > LARGO_SIN_MEDIR:
+        self._medir_en_fondo(ruta, clave, self.duracion)
+
+    def _medir_en_fondo(self, ruta, clave, dur=0.0):
+        """Mide la sonoridad de un tema en otro hilo y la guarda en la caché. Si el tema está sonando cuando llega la
+        medida, la ganancia se acomoda con una rampa suave. Sin `dur` (el tema de adelante) la lee del archivo."""
+        if clave in self._midiendo:
             return
+        self._midiendo.add(clave)
+        cache = self._cache_sonoridad()
 
         def medir():
-            r = medir_tema(ruta, dur)
-            cache[clave] = {"lufs": r[0], "pico": r[1]} if r else None
             try:
-                ESTADO.parent.mkdir(parents=True, exist_ok=True)
-                tmp = (ESTADO.parent / "sonoridad.json").with_suffix(".tmp")
-                tmp.write_text(json.dumps(cache))
-                os.replace(tmp, ESTADO.parent / "sonoridad.json")
-            except OSError:
-                pass
-            if r and self.normalizar and self.motor.ruta == ruta:
-                self.motor.cadena.poner_ganancia(ganancia_para(*r))
+                d = dur or duracion_de(ruta)
+                if d <= 0 or d > LARGO_SIN_MEDIR:
+                    return
+                r = medir_tema(ruta, d)
+                cache[clave] = {"lufs": r[0], "pico": r[1]} if r else None
+                try:
+                    ESTADO.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = (ESTADO.parent / "sonoridad.json").with_suffix(".tmp")
+                    tmp.write_text(json.dumps(cache))
+                    os.replace(tmp, ESTADO.parent / "sonoridad.json")
+                except OSError:
+                    pass
+                if r and self.normalizar and self.motor.ruta == ruta:
+                    self.motor.cadena.poner_ganancia(ganancia_para(*r), suave=True)
+            finally:
+                self._midiendo.discard(clave)
         threading.Thread(target=medir, daemon=True).start()
+
+    def _premedir_siguiente(self):
+        """Mientras suena un tema, mide el que sigue (en orden): así empieza ya normalizado, sin el salto de la primera vez."""
+        i = self.actual + 1
+        if not self.normalizar or self.btn_shuffle.isChecked() or not 0 <= i < len(self.pistas):
+            return
+        ruta = self.pistas[i]
+        if leer_replaygain(ruta) is not None:
+            return
+        try:
+            st = os.stat(ruta)
+        except OSError:
+            return
+        clave = f"{ruta}|{st.st_size}|{st.st_mtime_ns}"
+        if clave not in self._cache_sonoridad():
+            self._medir_en_fondo(ruta, clave)
 
     def _menu_sonido(self, menu, anidado=True):
         sub = menu.addMenu(tr("Sonido", "Sound")) if anidado else menu
@@ -3441,6 +3484,7 @@ class Player(QWidget):
         self.duracion = duracion_de(self.pistas[i])
         self.motor.cargar(self.pistas[i])
         self._sonoridad_del_tema(self.pistas[i])
+        self._premedir_siguiente()
         self.picos.clear()
         self.ref_suave = self._ref_p = None
         self.lista.setCurrentRow(i)
