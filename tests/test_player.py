@@ -593,6 +593,86 @@ class TestNormalizadorSuave(Base):
         self.assertAlmostEqual(self.w.motor.cadena._gan_obj, esperado, places=5)
 
 
+class TestShuffle(Base):
+    def test_cada_tema_suena_una_vez_por_ronda_con_300_temas(self):
+        pistas = [f"/m/{n:03d}.mp3" for n in range(300)]
+        ya, actual, vistos = set(), None, []
+        for _ in range(900):                                    # tres rondas completas
+            i, nueva = S.elegir_al_azar(pistas, ya, actual)
+            if nueva:
+                ya.clear()
+            actual = pistas[i]
+            ya.add(actual)
+            vistos.append(actual)
+        for ronda in (vistos[0:300], vistos[300:600], vistos[600:900]):
+            self.assertEqual(len(set(ronda)), 300)              # ninguno repetido, ninguno faltante
+        for corte in (300, 600):                                # el último de una ronda no abre la siguiente
+            self.assertNotEqual(vistos[corte - 1], vistos[corte])
+
+    def test_la_ronda_se_adapta_si_cambia_la_lista(self):
+        pistas = [f"/m/{n}.mp3" for n in range(10)]
+        ya = {pistas[0], pistas[1], pistas[2]}
+        pistas.remove("/m/5.mp3")                                # se quita uno
+        pistas.append("/m/nuevo.mp3")                            # y se agrega otro: entra a la ronda
+        restantes = set(pistas) - ya
+        sale = set()
+        actual = pistas[2]
+        for _ in range(len(restantes)):
+            i, nueva = S.elegir_al_azar(pistas, ya, actual)
+            self.assertFalse(nueva)
+            actual = pistas[i]
+            ya.add(actual)
+            sale.add(actual)
+        self.assertEqual(sale, restantes)
+
+    def test_con_dos_temas_alterna(self):
+        pistas = ["/m/a.mp3", "/m/b.mp3"]
+        ya, actual, seq = set(), None, []
+        for _ in range(8):
+            i, nueva = S.elegir_al_azar(pistas, ya, actual)
+            if nueva:
+                ya.clear()
+            actual = pistas[i]
+            ya.add(actual)
+            seq.append(actual)
+        self.assertTrue(all(seq[k] != seq[k + 1] for k in range(7)))
+
+    def test_en_el_reproductor_no_repite_hasta_agotar(self):
+        self.cargar(A, B)
+        self.w.btn_shuffle.setChecked(True)
+        self.w.reproducir(0)
+        otros = []
+        for _ in range(4):
+            self.w.siguiente()
+            otros.append(self.w.actual)
+        self.assertEqual(otros, [1, 0, 1, 0])                   # con dos temas, siempre el otro
+
+    def test_anterior_vuelve_al_que_sono_antes(self):
+        pistas = [A, B, str(CORPUS / "tono_16.flac"), str(CORPUS / "corto_2s.flac")]
+        self.cargar(*[p for p in pistas if Path(p).exists()])
+        self.w.btn_shuffle.setChecked(True)
+        self.w.reproducir(0)
+        orden = [self.w.pistas[self.w.actual]]
+        for _ in range(3):
+            self.w.siguiente()
+            orden.append(self.w.pistas[self.w.actual])
+        for esperado in reversed(orden[:-1]):
+            self.w.motor.buscar(0.0) if hasattr(self.w.motor, "buscar") else None
+            self.w.anterior()
+            self.assertEqual(self.w.pistas[self.w.actual], esperado)
+
+    def test_la_ronda_se_recuerda_en_la_sesion(self):
+        self.cargar(A, B)
+        self.w.btn_shuffle.setChecked(True)
+        self.w.reproducir(0)
+        self.w.guardar_estado()
+        w2 = S.Player()
+        w2.restaurar()
+        self.assertTrue(w2.btn_shuffle.isChecked())
+        self.assertIn(A, w2._ya_sonaron)
+        w2.close()
+
+
 class TestSesion(Base):
     def test_restaura_el_tema_y_la_posicion(self):
         self.cargar(A, B)

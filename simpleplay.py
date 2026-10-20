@@ -57,7 +57,7 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
@@ -172,6 +172,18 @@ def datos_lista(ruta):
 def nombre_para_lista(ruta):
     """Lo que se ve en la lista: "Artista - Título" de las etiquetas; si faltan, el título o el nombre limpio."""
     return datos_lista(ruta)["nombre"]
+
+
+def elegir_al_azar(pistas, ya, actual=None, rng=random):
+    """El próximo tema del shuffle: uno que no haya sonado en esta ronda (`ya`, un conjunto de rutas) ni sea el actual.
+    Cuando ya sonaron todos, empieza una ronda nueva con cualquiera salvo el actual, así ninguno se repite antes de que
+    suenen los demás y el último de una ronda no abre la siguiente. Trabaja con rutas y no con posiciones, así que
+    sigue bien si se agregan, quitan, ordenan o arrastran temas a mitad de la ronda. -> (índice, ronda_nueva)"""
+    quedan = [i for i, p in enumerate(pistas) if p not in ya and p != actual]
+    nueva = not quedan
+    if nueva:
+        quedan = [i for i, p in enumerate(pistas) if p != actual]
+    return rng.choice(quedan), nueva
 
 
 LISTAS = (".m3u", ".m3u8")      # listas de reproducción que se abren y se guardan
@@ -2433,6 +2445,9 @@ class Player(QWidget):
         self.meta = {"titulo": "", "artista": "", "arte": ""}
         self.mpris = None
         self.datos = {}              # ruta -> datos_lista(ruta): nombre, artista, título, álbum, pista
+        self._ya_sonaron = set()     # shuffle: rutas que ya sonaron en la ronda actual
+        self._historial = []         # shuffle: rutas en el orden en que sonaron (para el botón "anterior")
+        self._atras = False          # reproducir() lo marca al volver atrás, para no anotarlo dos veces
         self.orden_original = []     # orden en que se agregaron (para volver con "Orden en que se agregaron")
         self.modo_orden = "original"
         self.repetir = "off"         # off | all | one
@@ -2498,6 +2513,7 @@ class Player(QWidget):
 
         self.btn_shuffle = IconButton("shuffle", 30)
         self.btn_shuffle.setCheckable(True)
+        self.btn_shuffle.toggled.connect(self._reiniciar_ronda)
         self.btn_lista = IconButton("list", 36)
         self.btn_lista.setCheckable(True)
         self.btn_escoba = IconButton("broom", 30)
@@ -3401,6 +3417,7 @@ class Player(QWidget):
             i, pos = max(self.lista.currentRow(), 0), 0.0
         datos = {"pistas": self.pistas, "indice": i, "pos": round(pos, 1),
                  "shuffle": self.btn_shuffle.isChecked(), "repetir": self.repetir,
+                 "shuffle_ya": sorted(self._ya_sonaron),
                  "carpeta": self.carpeta_musica, "carpeta_listas": self.carpeta_listas,
                  "lista_actual": self.lista_actual, "orden_original": self.orden_original,
                  "compacto": self.compacto, "normalizar": self.normalizar, "preset": self.preset}
@@ -3419,6 +3436,10 @@ class Player(QWidget):
         except (OSError, ValueError):
             return
         self.btn_shuffle.setChecked(bool(d.get("shuffle")))
+        if self.btn_shuffle.isChecked():             # la ronda sigue donde quedó (la kiosk corre días seguidos)
+            ya = d.get("shuffle_ya")
+            if isinstance(ya, list):
+                self._ya_sonaron = {r for r in ya if isinstance(r, str)}
         self.normalizar = bool(d.get("normalizar", True))
         p = d.get("preset", PRESET_INICIAL)
         self.preset = p if p in PRESETS or (isinstance(p, str) and p.startswith("perfil:")) else PRESET_INICIAL
@@ -3480,6 +3501,7 @@ class Player(QWidget):
                     return
                 i = 0
         self.actual = i
+        self._anotar_sonado(self.pistas[i])
         self.pausado = False
         self.pendiente = None
         self.duracion = duracion_de(self.pistas[i])
@@ -3751,7 +3773,10 @@ class Player(QWidget):
         if not self.pistas:
             return
         if self.btn_shuffle.isChecked() and len(self.pistas) > 1:
-            self.reproducir(random.choice([n for n in range(len(self.pistas)) if n != self.actual]))
+            i, nueva = elegir_al_azar(self.pistas, self._ya_sonaron, self._ruta_actual())
+            if nueva:
+                self._ya_sonaron.clear()
+            self.reproducir(i)
         elif self.actual + 1 < len(self.pistas):
             self.reproducir(self.actual + 1)
         elif self.repetir == "all":
@@ -3759,12 +3784,46 @@ class Player(QWidget):
         else:
             self.parar()
 
+    def _ruta_actual(self):
+        i = self.actual if self.actual >= 0 else (self.pendiente[0] if self.pendiente else -1)
+        return self.pistas[i] if 0 <= i < len(self.pistas) else None
+
+    def _reiniciar_ronda(self, *_):
+        """Al prender o apagar el shuffle se empieza de cero: el tema actual cuenta como ya sonado."""
+        ruta = self._ruta_actual()
+        self._ya_sonaron = {ruta} if ruta else set()
+        self._historial = [ruta] if ruta else []
+
+    def _anotar_sonado(self, ruta):
+        if not self.btn_shuffle.isChecked():
+            return
+        self._ya_sonaron.add(ruta)
+        if not self._atras and (not self._historial or self._historial[-1] != ruta):
+            self._historial.append(ruta)
+            del self._historial[:-1000]
+
+    def _volver_en_shuffle(self):
+        """'Anterior' con shuffle: el tema que sonó antes, no el de arriba en la lista. -> True si había uno."""
+        while len(self._historial) > 1:
+            self._historial.pop()                              # el que suena ahora
+            previo = self._historial[-1]
+            if previo in self.pistas:
+                self._atras = True
+                try:
+                    self.reproducir(self.pistas.index(previo))
+                finally:
+                    self._atras = False
+                return True
+        return False
+
     def anterior(self, *_):
         if self.actual < 0:
             return
         # pasados 3 s vuelve al inicio de la pista, si no, a la anterior
         if self.posicion() > 3:
             self.reproducir(self.actual)
+        elif self.btn_shuffle.isChecked() and self._volver_en_shuffle():
+            pass
         elif self.actual == 0:
             self.reproducir(len(self.pistas) - 1 if self.repetir == "all" else 0)
         else:
