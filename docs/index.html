@@ -312,6 +312,14 @@ html.js .versiones li.pasada .v, html.js .versiones li.actual .v { color: var(--
 .codigo .panel { border-radius: calc(var(--radio) + 8px); background: var(--surface); border: 1px solid var(--line); padding: clamp(28px, 5vw, 72px); display: grid; grid-template-columns: 7fr 4fr; gap: clamp(24px, 5vw, 72px); align-items: end; }
 .codigo .panel p { margin-top: 18px; color: var(--muted); max-width: 52ch; }
 .codigo .botones { display: flex; flex-wrap: wrap; gap: 12px; }
+.hecho { margin-bottom: clamp(20px, 3vw, 36px); }
+.hecho h2 { font-size: clamp(1.5rem, 3vw, 2.2rem); letter-spacing: -.02em; }
+.hecho .lista { margin-top: clamp(16px, 2.4vw, 28px); display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.hecho .pieza { border: 1px solid var(--line); border-radius: var(--radio); background: var(--surface); padding: 18px 20px; }
+.hecho .pieza b { display: block; font-size: 1.05rem; letter-spacing: -.01em; }
+.hecho .pieza span { display: block; margin-top: 6px; color: var(--muted); font-size: .92rem; line-height: 1.45; }
+@media (max-width: 880px) { .hecho .lista { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .hecho .lista { grid-template-columns: 1fr; } }
 @media (max-width: 880px) { .codigo .panel { grid-template-columns: 1fr; } }
 .pie { position: relative; overflow: hidden; padding-top: 24px; }
 .pie .cont { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px 40px; position: relative; z-index: 2; }
@@ -656,6 +664,15 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   <!-- 6. código y apoyo -->
   <section class="codigo" id="codigo">
     <div class="cont">
+      <div class="hecho revela">
+        <h2><span class="es">De qué está hecho</span><span class="en">What it is made of</span></h2>
+        <div class="lista">
+          <div class="pieza"><b>Python + PySide6</b><span class="es">La interfaz, sobre Qt: una sola ventana sin bordes y sin menús.</span><span class="en">The interface, on Qt: a single frameless window with no menus.</span></div>
+          <div class="pieza"><b>miniaudio</b><span class="es">El motor de audio: decodifica y reproduce mp3 y FLAC, sin ffmpeg ni SDL.</span><span class="en">The audio engine: decodes and plays mp3 and FLAC, no ffmpeg or SDL.</span></div>
+          <div class="pieza"><b>mutagen</b><span class="es">Lee las etiquetas y la portada de cada tema.</span><span class="en">Reads the tags and cover art of each track.</span></div>
+          <div class="pieza"><b>numpy</b><span class="es">El espectro en vivo, la sonoridad y el ecualizador.</span><span class="en">The live spectrum, loudness and the equalizer.</span></div>
+        </div>
+      </div>
       <div class="panel revela">
         <div>
           <h2><span class="es">Código abierto, hecho de a poco</span><span class="en">Open source, built bit by bit</span></h2>
