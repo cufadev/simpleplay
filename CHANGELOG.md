@@ -17,8 +17,8 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
   systems) were rejected with "the profile has no filters". They now load like the ones with a decimal point.
 
 ### Changed
-- **New icon:** a bold white "n" on the orange gradient, which reads well down to 16 px in a taskbar. The previous
-  icon and two more designs are kept in `icon/alternativos/`.
+- **New icon:** a vinyl record with an orange label and a play button, on a dark rounded square. The previous icon
+  and two more designs (a bold "n" and a progress ring) are kept in `icon/alternativos/`.
 
 ## [1.5.1] - 2026-10-20
 

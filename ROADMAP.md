@@ -68,14 +68,29 @@ machine is pending, and the macOS handler for opened files is not written yet.
   not that it works.
 - Whether to sign the builds or just document the warnings.
 
-## A better shuffle
-Today `siguiente()` picks `random.choice` among every track except the current one, with no memory,
-so it can bring back a track heard a minute ago and, in a long list, some tracks come up much more
-than others. Idea: shuffle the whole list once (Fisher-Yates) and walk through it, so every track
-plays once before any repeats, and reshuffle when it ends (making sure the first of the new round
-is not the last of the old one). `anterior` should walk back through that same order, and the
-order should be kept when the playlist changes (a track added or removed) and in the saved session.
-Maybe weigh by artist so two tracks of the same artist rarely play back to back.
+## CD ripping (for a later, bigger version)
+Turn an audio CD into FLAC (or mp3) files from inside the player, so the library can grow from the discs
+people still own. Not started; written down after comparing with MusicBee, which has it.
+
+### How it would work
+- Read the disc with `libcdio-paranoia` / `cdparanoia` (Linux) and the platform's own drive access on Windows
+  and macOS. Offer a secure mode that re-reads damaged sectors.
+- Identify the disc from its table of contents (MusicBrainz **disc ID**, a short hash computed locally) to get
+  album, artist, track titles, year and cover art; this reuses the look-up and safe-writing code of the broom.
+- Encode to FLAC by default (lossless) with an mp3 option; write the tags and cover art, name the files
+  `Artist/Album/NN - Title`, and put them in the music folder.
+- Optional check against **AccurateRip** to know whether the copy is bit-perfect.
+
+### Still to decide
+- Whether to bundle the ripping and encoding tools in the AppImage and the Windows build (size, licenses) or to
+  ask the user to install them.
+- Whether it belongs in the player at all or in a companion tool like `tools/convertir.sh`: it is the opposite of
+  "a card that just plays". Probably a separate window that only appears when a disc is inserted.
+
+## Done
+- **A better shuffle** (1.5.2): every track plays once per round and a new round starts only when all have
+  played; it follows playlist edits, is saved in the session, and `anterior` walks back through the order
+  that actually played. Still open: weigh by artist so two tracks of the same artist rarely play back to back.
 
 ## Ruled out
 - Recognizing songs inside a long mix.
