@@ -198,13 +198,25 @@ html.final-directo .calor { opacity: .5; }
 .historia figure { margin-top: clamp(0px, 4vw, 56px); }
 .historia figure img { border-radius: 14px; border: 1px solid var(--line); box-shadow: var(--shadow); rotate: -1.6deg; }
 .historia figcaption { margin-top: 18px; font-size: .9rem; color: var(--muted); }
-.versiones { margin-top: clamp(64px, 9vw, 140px); display: grid; gap: clamp(14px, 2.4vw, 28px); }
-.versiones li { display: grid; grid-template-columns: clamp(110px, 18vw, 260px) 1fr; align-items: baseline; gap: 18px; }
+.versiones { position: relative; margin-top: clamp(64px, 9vw, 140px); padding-left: clamp(26px, 3.4vw, 48px); display: grid; gap: clamp(14px, 2.4vw, 28px); }
+.versiones li { display: grid; grid-template-columns: clamp(110px, 18vw, 260px) 1fr; align-items: center; gap: 18px; }
 .versiones .v { font-family: "Bebas Neue", "Geist", sans-serif; font-size: clamp(3.4rem, 9vw, 8rem); line-height: .86; color: color-mix(in srgb, var(--text) 22%, transparent); letter-spacing: .01em; transition: color .3s ease; }
-.versiones .t { font-size: clamp(1.1rem, 2vw, 1.6rem); line-height: 1.35; letter-spacing: -.015em; font-weight: 550; max-width: 36ch; }
+.versiones .t { font-size: clamp(1.1rem, 2vw, 1.6rem); line-height: 1.35; letter-spacing: -.015em; font-weight: 550; max-width: 36ch; transition: opacity .35s ease; }
 .versiones li:last-child .v { color: var(--accent); }
+/* riel con una bolita, como el slider del reproductor: avanza con el scroll y va iluminando las versiones que pasa */
+.versiones .riel { position: absolute; left: 0; width: 2px; border-radius: 2px; background: var(--line); pointer-events: none; }
+.versiones .relleno { position: absolute; inset: 0 0 auto 0; height: 0; border-radius: 2px; background: var(--accent); }
+.versiones .bola { position: absolute; left: 1px; top: 0; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); }
+html.js .versiones li:not(.pasada) .t { opacity: .45; }
+html.js .versiones li.pasada .v { color: color-mix(in srgb, var(--text) 46%, transparent); }
+html.js .versiones li.actual .v { color: var(--text); }
+html.js .versiones li:last-child.pasada .v, html.js .versiones li:last-child.actual .v { color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  html.js .versiones li .v { transition: color .35s ease, transform .35s var(--ease-out); transform-origin: left center; }
+  html.js .versiones li.actual .v { transform: scale(1.04); }
+}
 @media (max-width: 880px) { .historia .doble { grid-template-columns: 1fr; } }
-@media (max-width: 520px) { .versiones li { grid-template-columns: 1fr; gap: 0; } }
+@media (max-width: 520px) { .versiones li { grid-template-columns: 1fr; gap: 0; } .versiones { padding-left: 24px; } }
 
 /* =====================================================================
    3. LO QUE HACE (vitrina fija: el texto avanza, la imagen cambia)
@@ -775,6 +787,43 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   } else {
     aparece.forEach((el) => el.classList.add('dentro'));
     tachadas.forEach((el) => el.classList.add('dentro'));
+  }
+
+  // Versiones: la bolita avanza con el scroll por el riel y va iluminando cada versión que pasa
+  const listaV = document.querySelector('.versiones');
+  if (listaV) {
+    const items = [...listaV.children];
+    const riel = document.createElement('span');
+    riel.className = 'riel';
+    riel.setAttribute('aria-hidden', 'true');
+    riel.innerHTML = '<i class="relleno"></i><i class="bola"></i>';
+    listaV.append(riel);
+    const relleno = riel.querySelector('.relleno');
+    const bola = riel.querySelector('.bola');
+    let esperando = false;
+    const centro = (el, base) => { const r = el.querySelector('.v').getBoundingClientRect(); return r.top + r.height / 2 - base; };
+    const medir = () => {
+      esperando = false;
+      const base = listaV.getBoundingClientRect().top;
+      const c = items.map((li) => centro(li, base));
+      const primero = c[0], ultimo = c[c.length - 1];
+      riel.style.top = primero + 'px';
+      riel.style.height = (ultimo - primero) + 'px';
+      // si se pidió menos movimiento, queda todo encendido y quieto
+      const y = reducir.matches ? ultimo : Math.max(primero, Math.min(ultimo, innerHeight * 0.58 - base));
+      relleno.style.height = (y - primero) + 'px';
+      bola.style.top = (y - primero) + 'px';
+      let actual = -1;
+      items.forEach((li, i) => { if (c[i] <= y + 1) actual = i; });
+      items.forEach((li, i) => { li.classList.toggle('pasada', i <= actual); li.classList.toggle('actual', i === actual && !reducir.matches); });
+    };
+    const pedir = () => { if (!esperando) { esperando = true; requestAnimationFrame(medir); } };
+    addEventListener('scroll', pedir, { passive: true });
+    addEventListener('resize', pedir);
+    document.fonts && document.fonts.ready.then(pedir);
+    addEventListener('load', pedir);
+    if ('ResizeObserver' in window) new ResizeObserver(pedir).observe(listaV);   // si el diseño cambia (fuentes, idioma), vuelve a medir
+    pedir();
   }
 
   // Atajos: la fila de la página se ilumina cuando se aprieta el mismo atajo en el teclado (no hace nada más)
