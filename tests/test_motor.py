@@ -378,13 +378,16 @@ class TestRobustez(Base):
         self.assertLessEqual(len(os.listdir("/proc/self/fd")) - base, 6)
 
 
-@unittest.skipUnless(glob.glob(os.path.expanduser("~/Música/*.mp3")), "no hay mp3 reales en ~/Música")
+MUSICA_REAL = os.path.expanduser(os.environ.get("SIMPLEPLAY_MUSICA", "~/Música"))   # donde están tus mp3 de verdad
+
+
+@unittest.skipUnless(glob.glob(os.path.join(MUSICA_REAL, "*.mp3")), "no hay mp3 reales (SIMPLEPLAY_MUSICA=carpeta)")
 class TestArchivosReales(Base):
     """El salto por índice contra el salto exacto (lento) de miniaudio, con mp3 de verdad. Solo lectura."""
 
     def test_indice_coincide_con_el_salto_exacto(self):
         F32 = miniaudio.SampleFormat.FLOAT32
-        archivos = sorted(glob.glob(os.path.expanduser("~/Música/*.mp3")), key=os.path.getsize)[-4:]
+        archivos = sorted(glob.glob(os.path.join(MUSICA_REAL, "*.mp3")), key=os.path.getsize)[-4:]
         peor = 0
         for ruta in archivos:
             self.m.cargar(ruta)
@@ -528,6 +531,247 @@ class TestCandidatosEscoba(unittest.TestCase):
     def test_nombre_limpio_sigue_igual(self):
         self.assertEqual(S.candidatos("/x/Ram Jam - Black Betty (Official Video) [I_2D8Eo15wE].mp3", None, None)[0],
                          ("Ram Jam", "Black Betty"))
+
+
+class TestRendimiento(unittest.TestCase):
+    """Que lo que se hizo para gastar menos siga dando lo mismo."""
+
+    @staticmethod
+    def bandas_db_de_antes(v):
+        mag = np.abs(np.fft.rfft(v * S._HANN)) / (S.VENTANA / 4)
+        res = S.FS / S.VENTANA
+        out = np.empty(S.BANDAS)
+        for k in range(S.BANDAS):
+            a, b = S._BORDES[k], S._BORDES[k + 1]
+            lo = int(a / res)
+            hi = max(int(b / res), lo + 1)
+            out[k] = 20 * np.log10(mag[lo:hi].max() + 1e-9) + 3 * np.log2(np.sqrt(a * b) / 100)
+        return out
+
+    def test_el_espectro_vectorizado_da_lo_mismo_que_el_bucle(self):
+        rng = np.random.default_rng(7)
+        t = np.arange(S.VENTANA) / S.FS
+        casos = [rng.standard_normal(S.VENTANA).astype(np.float32) * 0.1,
+                 (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32),
+                 (0.3 * np.sin(2 * np.pi * 60 * t) + 0.2 * np.sin(2 * np.pi * 5000 * t)).astype(np.float32),
+                 np.zeros(S.VENTANA, np.float32)]
+        for v in casos:
+            self.assertTrue(np.allclose(S.bandas_db(v), self.bandas_db_de_antes(v), atol=1e-9, rtol=0))
+
+    def test_volver_a_plano_apaga_el_filtro_sin_clicks_y_deja_el_audio_intacto(self):
+        c = S.Cadena()
+        t = np.arange(S.FS * 3) / S.FS
+        x = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+        x = np.stack([x, x], 1)
+        salida = []
+        for i in range(0, len(x), 4410):
+            if i == 4410 * 5:
+                c.poner_eq(S.PRESETS["vivo"])
+            if i == 4410 * 15:
+                c.poner_eq(S.PRESETS["plano"])
+            salida.append(c.procesar(x[i:i + 4410]))
+            if i == 4410 * 14:
+                self.assertTrue(c.activa)
+        y = np.concatenate(salida)
+        self.assertFalse(c.activa)                                   # el filtro dejó de correr
+        self.assertIsNone(c._h)
+        self.assertTrue(np.array_equal(y[-4410 * 5:], x[-4410 * 5:]))   # y el audio pasa tal cual otra vez
+        natural = 2 * np.pi * 440 / S.FS * 0.3
+        self.assertLess(float(np.abs(np.diff(y[:, 0])).max()), natural * 1.5)
+
+
+class TestPerfilesDeAuriculares(unittest.TestCase):
+    """Los perfiles de AutoEq: lectura, filtro, nivel, índice."""
+
+    def setUp(self):
+        sys.path.insert(0, str(Path(__file__).parent))
+        import datos_autoeq
+        self.D = datos_autoeq
+
+    def respuesta_del_filtro(self, freqs, gan):
+        h = S._taps_ecualizador(gan, freqs)
+        H = 20 * np.log10(np.abs(np.fft.rfft(h, 65536)) + 1e-12)
+        return np.interp(freqs, np.fft.rfftfreq(65536, 1 / S.FS), H)
+
+    def test_se_lee_el_perfil_grafico_del_m20x(self):
+        f, g = S.leer_perfil(self.D.M20X_GRAFICO)
+        self.assertGreater(len(f), 100)
+        self.assertEqual(f, sorted(f))
+        self.assertLessEqual(f[0], 21)
+        self.assertGreaterEqual(f[-1], 19000)
+        self.assertLessEqual(max(g), 0.0)                              # el preamp ya viene metido: nada pasa de 0 dB
+        self.assertLess(min(g), -8.0)
+
+    def test_el_filtro_reproduce_la_correccion_del_m20x(self):
+        f, g = S.leer_perfil(self.D.M20X_GRAFICO)
+        err = np.abs(self.respuesta_del_filtro(f, g) - np.array(g))[np.array(f) >= 25]
+        self.assertLess(float(err.mean()), 0.3)                         # en promedio, imperceptible
+        self.assertLess(float(err.max()), 1.5)                          # y en lo peor (el sub-grave), poco
+
+    def test_el_formato_parametrico_da_la_misma_curva_que_el_grafico(self):
+        fg, gg = S.leer_perfil(self.D.M20X_GRAFICO)
+        fp, gp = S.leer_perfil(self.D.M20X_PARAMETRICO)
+        self.assertEqual(len(fp), 127)
+        diff = np.array(gp) - np.interp(np.log10(fp), np.log10(fg), gg)
+        self.assertLess(float(np.abs(diff).mean()), 1.0)
+        self.assertLess(float(np.abs(diff).max()), 2.5)
+
+    def test_los_filtros_parametricos_hacen_lo_que_dicen(self):
+        fr = np.array([20.0, 100.0, 1000.0, 10000.0])
+        pk = S._respuesta_biquad("PK", 1000, 6.0, 1.0, fr)
+        self.assertAlmostEqual(float(pk[2]), 6.0, delta=0.05)           # +6 dB justo en su frecuencia
+        self.assertLess(abs(float(pk[0])), 0.3)
+        bajo = S._respuesta_biquad("LSC", 100, 6.0, 0.7, fr)
+        self.assertGreater(float(bajo[0]), 5.5)                         # el estante de graves sube lo grave...
+        self.assertLess(abs(float(bajo[3])), 0.3)                       # ...y no toca lo agudo
+        alto = S._respuesta_biquad("HSC", 5000, -4.0, 0.7, fr)
+        self.assertLess(float(alto[3]), -3.5)
+        self.assertLess(abs(float(alto[0])), 0.3)
+
+    def test_un_archivo_que_no_es_un_perfil_da_error(self):
+        for basura in ("", "hola mundo", "GraphicEQ: ", "Preamp: -3 dB"):
+            with self.assertRaises(ValueError):
+                S.leer_perfil(basura)
+
+    def test_nivel_relativo_de_una_curva(self):
+        f = [20, 20000]
+        self.assertAlmostEqual(S.nivel_relativo_db(f, [0, 0]), 0.0, places=6)
+        self.assertAlmostEqual(S.nivel_relativo_db(f, [-6, -6]), -6.0, places=6)
+        fm, gm = S.leer_perfil(self.D.M20X_GRAFICO)
+        self.assertTrue(-9 < S.nivel_relativo_db(fm, gm) < -3)          # el M20x baja el nivel general
+
+    def test_el_indice_se_lee_y_se_busca_sin_mayusculas_ni_acentos(self):
+        e = S.indice_autoeq(self.D.INDICE)
+        self.assertEqual(len(e), 6)
+        self.assertIn(("1MORE Aero (ANC Off)", "HypetheSonics on GRAS RA0045",
+                       "HypetheSonics/GRAS RA0045 in-ear/1MORE Aero (ANC Off)"), e)    # los paréntesis del nombre no rompen
+        r = S.buscar_en_indice(e, "m20X")
+        self.assertEqual([x[1] for x in r], ["oratory1990", "Rtings on HMS II.3"])    # oratory1990 primero
+        self.assertEqual([x[0] for x in S.buscar_en_indice(e, "audio technica m50")], ["Audio-Technica ATH-M50x"])
+        self.assertEqual(S.buscar_en_indice(e, "no existe este modelo"), [])
+        self.assertEqual(S.buscar_en_indice(e, "   "), [])
+
+    def test_la_direccion_del_perfil(self):
+        e = S.indice_autoeq(self.D.INDICE)
+        ruta = next(x[2] for x in e if x[1] == "oratory1990" and "M20x" in x[0])
+        self.assertEqual(S.url_perfil(ruta), "https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results/"
+                         "oratory1990/over-ear/Audio-Technica%20ATH-M20x/Audio-Technica%20ATH-M20x%20GraphicEQ.txt")
+
+    def test_el_motor_aplica_un_perfil_con_su_compensacion_de_nivel(self):
+        t = np.arange(S.FS * 2) / S.FS
+        x = np.stack([(0.1 * np.sin(2 * np.pi * 1000 * t)).astype(np.float32)] * 2, 1)
+        f, g = S.leer_perfil(self.D.M20X_GRAFICO)
+        c = S.Cadena()
+        c.poner_eq(g, freqs=f, makeup_db=3.0)
+        y = np.concatenate([c.procesar(x[i:i + 4410]) for i in range(0, len(x), 4410)])
+        medido = 20 * np.log10(np.sqrt(np.mean(y[S.FS // 2:] ** 2)) / np.sqrt(np.mean(x[S.FS // 2:] ** 2)))
+        esperado = float(np.interp(np.log10(1000), np.log10(f), g)) + 3.0
+        self.assertAlmostEqual(medido, esperado, delta=0.5)
+        c.poner_eq(None)                                                # y volver a plano lo apaga
+        for i in range(0, 8820, 4410):
+            c.procesar(x[i:i + 4410])
+        self.assertFalse(c.activa)
+
+
+class TestFlac(Base):
+    """El motor y las funciones de apoyo con archivos FLAC (datos de prueba inventados)."""
+
+    def test_un_flac_suena_con_el_tono_y_el_nivel_correctos(self):
+        self.m.cargar(str(CORPUS / "tono_16.flac"))
+        espera(1.2)
+        self.assertTrue(self.m.reproduciendo)
+        x = self.audio()[-8192:]
+        self.assertAlmostEqual(frecuencia(x), 440, delta=6)
+        self.assertAlmostEqual(float(np.abs(x).max()), 0.5, delta=0.03)       # el seno de amplitud 0,5, sin tocar
+        self.assertAlmostEqual(self.m.duracion, 10.0, delta=0.1)
+
+    def test_un_flac_de_24_bits_a_96_khz_suena_afinado_y_dura_lo_mismo(self):
+        self.m.cargar(str(CORPUS / "tono_24_96k.flac"))
+        espera(1.2)
+        self.assertAlmostEqual(frecuencia(self.audio()[-8192:]), 440, delta=6)    # se convierte a 44,1 kHz sin desafinar
+        self.assertAlmostEqual(self.m.duracion, 10.0, delta=0.1)
+        self.assertAlmostEqual(float(np.abs(self.audio()[-8192:]).max()), 0.5, delta=0.03)
+
+    def test_el_flac_suena_igual_que_el_mp3_del_mismo_tono(self):
+        self.m.cargar(str(CORPUS / "tono_16.flac"))
+        espera(1.0)
+        a = float(np.sqrt(np.mean(self.audio()[-16384:] ** 2)))
+        n = len(self.bloques)
+        self.m.cargar(str(CORPUS / "tono_44k.mp3"))
+        espera(1.0)
+        b = float(np.sqrt(np.mean(self.audio(n)[-16384:] ** 2)))
+        self.assertAlmostEqual(20 * np.log10(a / b), 0.0, delta=0.5)
+
+    def test_se_puede_saltar_dentro_de_un_flac(self):
+        self.m.cargar(str(CORPUS / "tono_16.flac"))
+        espera(0.5)
+        self.assertTrue(self.m.saltar(6.0))
+        espera(0.6)
+        self.assertAlmostEqual(self.m.posicion(), 6.4, delta=0.5)
+        self.assertAlmostEqual(frecuencia(self.audio()[-8192:]), 440, delta=6)
+
+    def test_al_terminar_un_flac_avisa_una_sola_vez(self):
+        self.m.cargar(str(CORPUS / "corto_2s.flac"))
+        self.assertTrue(espera(4.0, lambda: bool(self.fines)))
+        espera(0.5)
+        self.assertEqual(len(self.fines), 1)
+
+    def test_las_etiquetas_y_la_tapa_del_flac(self):
+        e = S.etiquetas_de(str(CORPUS / "con_etiquetas.flac"), con_portada=True)
+        self.assertEqual((e["titulo"], e["artista"], e["album"], e["pista"]),
+                         ("Tema de prueba", "Artista de prueba", "Álbum de prueba", 3))
+        self.assertTrue(e["portada"] and e["portada"][:4] == b"\x89PNG")           # la carátula es un PNG
+        self.assertEqual(S.leer_meta(str(CORPUS / "con_etiquetas.flac"))[:2], ("Tema de prueba", "Artista de prueba"))
+        sin = S.etiquetas_de(str(CORPUS / "tono_16.flac"), con_portada=True)
+        self.assertEqual((sin["titulo"], sin["artista"], sin["pista"], sin["portada"]), ("", "", 0, None))
+        self.assertEqual(S.leer_meta(str(CORPUS / "tono_16.flac"))[0], "tono_16")        # sin título: el nombre del archivo
+
+    def test_los_mp3_siguen_leyendo_sus_etiquetas(self):
+        import shutil, tempfile
+        from mutagen.id3 import ID3, TIT2, TPE1, TALB, TRCK, APIC
+        ruta = os.path.join(tempfile.mkdtemp(), "t.mp3")
+        shutil.copy(CORPUS / "tono_44k.mp3", ruta)
+        t = ID3()
+        t.add(TIT2(encoding=3, text="Otro tema"))
+        t.add(TPE1(encoding=3, text="Otro artista"))
+        t.add(TALB(encoding=3, text="Otro álbum"))
+        t.add(TRCK(encoding=3, text="7/12"))
+        t.add(APIC(encoding=3, mime="image/png", type=3, desc="", data=b"\x89PNGfalso"))
+        t.save(ruta)
+        e = S.etiquetas_de(ruta, con_portada=True)
+        self.assertEqual((e["titulo"], e["artista"], e["album"], e["pista"], e["portada"]),
+                         ("Otro tema", "Otro artista", "Otro álbum", 7, b"\x89PNGfalso"))
+        d = S.datos_lista(ruta)
+        self.assertEqual((d["nombre"], d["pista"]), ("Otro artista - Otro tema", 7))
+
+    def test_la_duracion_de_mp3_y_flac(self):
+        self.assertAlmostEqual(S.duracion_de(str(CORPUS / "tono_16.flac")), 10.0, delta=0.05)
+        self.assertAlmostEqual(S.duracion_de(str(CORPUS / "tono_44k.mp3")), 10.0, delta=0.2)
+        self.assertEqual(S.duracion_de(str(CORPUS / "basura.mp3")), 0.0)
+        self.assertEqual(S.duracion_de("/no/existe.flac"), 0.0)
+
+    def test_buscar_audio_acepta_mp3_y_flac_y_nada_mas(self):
+        import shutil, tempfile
+        d = Path(tempfile.mkdtemp())
+        (d / "sub").mkdir()
+        for origen, destino in (("tono_44k.mp3", "b.mp3"), ("tono_16.flac", "a.flac"), ("tono_16.flac", "sub/C.FLAC")):
+            shutil.copy(CORPUS / origen, d / destino)
+        (d / "nota.txt").write_text("no es audio")
+        (d / "cancion.ogg").write_bytes(b"OggS")
+        hallados = [os.path.relpath(r, d) for r in S.buscar_audio([str(d)])]
+        self.assertEqual(hallados, ["a.flac", "b.mp3", "sub/C.FLAC"])             # en orden, y sin .txt ni .ogg
+        self.assertEqual(S.buscar_audio([str(d / "a.flac"), str(d / "nota.txt"), str(d / "a.flac")]), [str(d / "a.flac")])
+
+    def test_el_replaygain_de_un_flac(self):
+        self.assertAlmostEqual(S.leer_replaygain(str(CORPUS / "con_replaygain.flac")), -6.5 + (S.OBJETIVO_LUFS + 18.0), delta=0.01)
+        self.assertIsNone(S.leer_replaygain(str(CORPUS / "tono_16.flac")))
+
+    def test_la_sonoridad_de_un_flac_es_igual_a_la_del_mp3(self):
+        flac = S.medir_tema(str(CORPUS / "tono_16.flac"), 10.0)
+        mp3 = S.medir_tema(str(CORPUS / "tono_44k.mp3"), 10.0)
+        self.assertAlmostEqual(flac[0], mp3[0], delta=0.5)
+        hires = S.medir_tema(str(CORPUS / "tono_24_96k.flac"), 10.0)
+        self.assertAlmostEqual(hires[0], flac[0], delta=0.5)
 
 
 if __name__ == "__main__":

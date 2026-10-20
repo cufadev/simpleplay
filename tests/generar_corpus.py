@@ -47,4 +47,20 @@ mp3 = (DESTINO / "tono_44k.mp3").read_bytes()
 (DESTINO / "basura.mp3").write_bytes(random.Random(1).randbytes(5000))            # no es audio
 (DESTINO / "vacio.mp3").write_bytes(b"")                                          # 0 bytes
 (DESTINO / "solo_etiqueta.mp3").write_bytes(b"ID3\x03\x00\x00\x00\x00\x00\x10" + bytes(16))  # etiqueta sin audio
+# FLAC (con datos inventados: nunca de artistas reales)
+def flac(expr, dur, rate, salida, extra=()):
+    ffmpeg("-f", "lavfi", "-i", f"aevalsrc={expr}:s={rate}:d={dur}:c=stereo", "-codec:a", "flac", *extra,
+           str(DESTINO / salida))
+
+
+flac("0.5*sin(2*PI*440*t)", 10, 44100, "tono_16.flac")
+flac("0.5*sin(2*PI*440*t)", 2, 44100, "corto_2s.flac")
+flac("0.5*sin(2*PI*440*t)", 10, 96000, "tono_24_96k.flac", extra=("-sample_fmt", "s32", "-bits_per_raw_sample", "24"))
+flac("0.5*sin(2*PI*440*t)", 10, 44100, "con_replaygain.flac", extra=("-metadata", "REPLAYGAIN_TRACK_GAIN=-6.50 dB"))
+tapa = DESTINO / "_tapa.png"
+ffmpeg("-f", "lavfi", "-i", "color=c=0x3366aa:s=120x90", "-frames:v", "1", str(tapa))
+ffmpeg("-f", "lavfi", "-i", "aevalsrc=0.5*sin(2*PI*440*t):s=44100:d=10:c=stereo", "-i", str(tapa), "-map", "0:a", "-map", "1:v",
+       "-codec:a", "flac", "-codec:v", "copy", "-disposition:v:0", "attached_pic",
+       "-metadata", "title=Tema de prueba", "-metadata", "artist=Artista de prueba", "-metadata", "album=Álbum de prueba",
+       "-metadata", "tracknumber=3", str(DESTINO / "con_etiquetas.flac"))
 print("corpus listo en", DESTINO)

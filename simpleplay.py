@@ -36,6 +36,8 @@ import numpy as np
 import miniaudio
 
 from mutagen.id3 import ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TDRC, APIC
+from mutagen import File as MutagenFile
+from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
 from PySide6.QtCore import (Qt, QTimer, QCoreApplication, QRectF, QPointF, QSize, Signal, QLocale, QUrl, QObject,
                             ClassInfo, Property, Slot, QMetaType,
@@ -46,7 +48,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QSlider, QAbstractButton, QListWidget,
                                QFileDialog, QFrame, QLayout, QMenu, QSizePolicy,
                                QStackedLayout, QGraphicsOpacityEffect, QMessageBox,
-                               QAbstractItemView, QLineEdit, QListWidgetItem)
+                               QAbstractItemView, QLineEdit, QListWidgetItem, QDialog, QPushButton)
 
 try:
     from PySide6.QtDBus import (QDBusConnection, QDBusAbstractAdaptor, QDBusObjectPath,
@@ -55,7 +57,7 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.4.1"
+VERSION = "1.5"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
@@ -119,19 +121,48 @@ def fmt(s):
     return f"{s // 60}:{s % 60:02d}"
 
 
-def datos_lista(ruta):
-    """Lo que la lista necesita de un tema: nombre para mostrar, artista, título, álbum y n.º de pista."""
-    art = tit = alb = ""
-    pista = 0
+EXTENSIONES = (".mp3", ".flac")     # lo que el reproductor abre
+
+
+def etiquetas_de(ruta, con_portada=False):
+    """Título, artista, álbum, n.º de pista (y la carátula si se pide) de un mp3 (etiquetas ID3) o de un flac
+    (comentarios Vorbis). Lo que falte queda vacío (0 / None)."""
+    d = {"titulo": "", "artista": "", "album": "", "pista": 0, "portada": None}
     try:
-        t = ID3(ruta)
-        tit = str(t["TIT2"]).strip() if "TIT2" in t else ""
-        art = str(t["TPE1"]).strip() if "TPE1" in t else ""
-        alb = str(t["TALB"]).strip() if "TALB" in t else ""
-        m = re.match(r"\d+", str(t["TRCK"])) if "TRCK" in t else None
-        pista = int(m.group()) if m else 0
+        if ruta.lower().endswith(".flac"):
+            f = FLAC(ruta)
+            for clave, campo in (("title", "titulo"), ("artist", "artista"), ("album", "album")):
+                d[campo] = (f.get(clave) or [""])[0].strip()
+            m = re.match(r"\d+", (f.get("tracknumber") or [""])[0])
+            d["pista"] = int(m.group()) if m else 0
+            if con_portada and f.pictures:
+                d["portada"] = next((p for p in f.pictures if p.type == 3), f.pictures[0]).data   # tipo 3 = carátula frontal
+        else:
+            t = ID3(ruta)
+            d["titulo"] = str(t["TIT2"]).strip() if "TIT2" in t else ""
+            d["artista"] = str(t["TPE1"]).strip() if "TPE1" in t else ""
+            d["album"] = str(t["TALB"]).strip() if "TALB" in t else ""
+            m = re.match(r"\d+", str(t["TRCK"])) if "TRCK" in t else None
+            d["pista"] = int(m.group()) if m else 0
+            if con_portada:
+                d["portada"] = next((t[k].data for k in t if k.startswith("APIC")), None)
     except Exception:
         pass
+    return d
+
+
+def duracion_de(ruta):
+    """Duración en segundos de un mp3 o un flac (0.0 si no se puede leer)."""
+    try:
+        return float(MutagenFile(ruta).info.length)
+    except Exception:
+        return 0.0
+
+
+def datos_lista(ruta):
+    """Lo que la lista necesita de un tema: nombre para mostrar, artista, título, álbum y n.º de pista."""
+    e = etiquetas_de(ruta)
+    art, tit, alb, pista = e["artista"], e["titulo"], e["album"], e["pista"]
     # sin etiquetas útiles: el nombre del archivo, sin "[id de YouTube]" ni "(Official Video)" (solo para mostrar)
     limpio = limpiar_nombre(Path(ruta).stem) or Path(ruta).stem
     return {"nombre": f"{art} - {tit}" if tit and art else (tit or limpio),
@@ -143,21 +174,109 @@ def nombre_para_lista(ruta):
     return datos_lista(ruta)["nombre"]
 
 
-def buscar_mp3(rutas):
-    """Expande carpetas (con sus subcarpetas) y devuelve los mp3, sin repetir y en orden."""
+LISTAS = (".m3u", ".m3u8")      # listas de reproducción que se abren y se guardan
+
+
+def leer_lista(ruta):
+    """Lee una lista M3U/M3U8. -> (rutas que existen, en orden, cantidad de entradas que no se encontraron).
+
+    Las rutas relativas se toman desde la carpeta de la lista, así sigue andando si se mueve junto con la música."""
+    crudo = Path(ruta).read_bytes()
+    try:
+        texto = crudo.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        texto = crudo.decode("latin-1")      # los .m3u viejos no son UTF-8
+    base = Path(ruta).resolve().parent
+    hallados, faltan = [], 0
+    for linea in texto.splitlines():
+        linea = linea.strip()
+        if not linea or linea.startswith("#"):
+            continue
+        if linea.lower().startswith("file://"):
+            linea = urllib.parse.unquote(urllib.parse.urlparse(linea).path)
+        p = base / linea
+        if not p.is_file() and "\\" in linea:
+            p = base / linea.replace("\\", "/")      # lista hecha en Windows
+        if p.is_file() and p.suffix.lower() in EXTENSIONES:
+            hallados.append(str(p.resolve()))
+        else:
+            faltan += 1
+    return hallados, faltan
+
+
+def escribir_lista(ruta, pistas, datos=None):
+    """Guarda una lista M3U8 (UTF-8) con rutas relativas a su carpeta; con 'datos' agrega #EXTINF con el nombre."""
+    base = Path(ruta).resolve().parent
+    lineas = ["#EXTM3U"]
+    for p in pistas:
+        try:
+            rel = Path(os.path.relpath(p, base)).as_posix()
+        except ValueError:                   # otro disco (Windows): no hay ruta relativa posible
+            rel = Path(p).as_posix()
+        if datos and p in datos:
+            lineas.append(f"#EXTINF:-1,{datos[p]['nombre']}")
+        lineas.append(rel)
+    tmp = Path(str(ruta) + ".parcial")
+    tmp.write_text("\n".join(lineas) + "\n", encoding="utf-8")
+    os.replace(tmp, ruta)                    # nunca queda una lista a medio escribir
+
+
+def agregar_a_lista(ruta, pistas, datos=None):
+    """Agrega temas al final de una lista M3U8 sin tocar el resto (ni las entradas que hoy no se encuentran).
+    Crea la lista si no existe y no repite lo que ya tiene. -> cantidad de temas agregados."""
+    ruta = Path(ruta)
+    if not ruta.exists():
+        escribir_lista(ruta, pistas, datos)
+        return len(pistas)
+    ya = set(leer_lista(ruta)[0])
+    nuevos = [p for p in pistas if str(Path(p).resolve()) not in ya]
+    if nuevos:
+        crudo = ruta.read_bytes()
+        try:
+            texto = crudo.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            texto = crudo.decode("latin-1")
+        base = ruta.resolve().parent
+        lineas = []
+        for p in nuevos:
+            try:
+                rel = Path(os.path.relpath(p, base)).as_posix()
+            except ValueError:
+                rel = Path(p).as_posix()
+            if datos and p in datos:
+                lineas.append(f"#EXTINF:-1,{datos[p]['nombre']}")
+            lineas.append(rel)
+        if not texto.strip():
+            texto = "#EXTM3U"
+        tmp = Path(str(ruta) + ".parcial")
+        tmp.write_text(texto.rstrip("\n") + "\n" + "\n".join(lineas) + "\n", encoding="utf-8")
+        os.replace(tmp, ruta)
+    return len(nuevos)
+
+
+def buscar_audio(rutas):
+    """Expande carpetas (con sus subcarpetas) y listas M3U, y devuelve los mp3 y flac, sin repetir y en orden."""
     out, vistos = [], set()
     for r in rutas:
         p = Path(r)
-        if p.is_dir():
-            hallados = sorted((x for x in p.rglob("*") if x.suffix.lower() == ".mp3" and x.is_file()),
+        if p.suffix.lower() in LISTAS and p.is_file():
+            try:
+                hallados = [Path(x) for x in leer_lista(p)[0]]      # el orden de la lista se respeta
+            except OSError:
+                hallados = []
+        elif p.is_dir():
+            hallados = sorted((x for x in p.rglob("*") if x.suffix.lower() in EXTENSIONES and x.is_file()),
                               key=lambda x: str(x).lower())
         else:
-            hallados = [p] if p.suffix.lower() == ".mp3" and p.is_file() else []
+            hallados = [p] if p.suffix.lower() in EXTENSIONES and p.is_file() else []
         for x in hallados:
             if str(x) not in vistos:
                 vistos.add(str(x))
                 out.append(str(x))
     return out
+
+
+buscar_mp3 = buscar_audio     # el nombre de antes
 
 
 ORDENES = ("original", "artista", "titulo", "album")
@@ -175,20 +294,8 @@ def clave_orden(modo, d):
 
 
 def leer_meta(path):
-    titulo, artista, portada = Path(path).stem, "", None
-    try:
-        t = ID3(path)
-        if t.get("TIT2"):
-            titulo = str(t["TIT2"])
-        if t.get("TPE1"):
-            artista = str(t["TPE1"])
-        for k in t:
-            if k.startswith("APIC"):
-                portada = t[k].data
-                break
-    except Exception:
-        pass
-    return titulo, artista, portada
+    e = etiquetas_de(path, con_portada=True)
+    return e["titulo"] or Path(path).stem, e["artista"], e["portada"]
 
 
 DEBUG = bool(os.environ.get("SIMPLEPLAY_DEBUG"))
@@ -212,15 +319,8 @@ _HANN = np.hanning(VENTANA)
 def bandas_db(v):
     """Nivel en dB de cada banda (escala log) para VENTANA muestras mono float32 (±1) a FS Hz."""
     mag = np.abs(np.fft.rfft(v * _HANN)) / (VENTANA / 4)  # senoidal a fondo ≈ 1.0
-    res = FS / VENTANA
-    out = np.empty(BANDAS)
-    for k in range(BANDAS):
-        a, b = _BORDES[k], _BORDES[k + 1]
-        lo = int(a / res)
-        hi = max(int(b / res), lo + 1)
-        # la segunda parte compensa la caída natural de los agudos en la música
-        out[k] = 20 * math.log10(mag[lo:hi].max() + 1e-9) + 3 * math.log2(math.sqrt(a * b) / 100)
-    return out
+    mx = np.maximum.reduceat(mag, _IDX)[0::2]             # el máximo de cada banda, de una sola vez
+    return 20 * np.log10(mx + 1e-9) + _COMP
 
 
 def diagnosticar(ruta):
@@ -237,7 +337,7 @@ def diagnosticar(ruta):
     except Exception as e:
         print(f"formato: ERROR {e!r}")
     try:  # un tema corto no tiene un segundo 5: se arranca más cerca del principio
-        inicio = min(5.0, max(0.0, MP3(ruta).info.length - 3))
+        inicio = min(5.0, max(0.0, duracion_de(ruta) - 3))
     except Exception:
         inicio = 0.0
     t0 = time.time()
@@ -569,10 +669,7 @@ def etiquetar_archivo(ruta, carpeta_undo, n):
     tit = str(t["TIT2"]) if t is not None and "TIT2" in t else ""
     art = str(t["TPE1"]) if t is not None and "TPE1" in t else ""
     try:
-        try:
-            duracion = MP3(ruta).info.length
-        except Exception:
-            duracion = None
+        duracion = duracion_de(ruta) or None
         for artista, titulo in candidatos(ruta, tit, art):
             info = buscar_mb(artista, titulo, duracion)
             if info:
@@ -632,6 +729,23 @@ def circular(pix, d):
     p.drawPixmap((d - esc.width()) // 2, (d - esc.height()) // 2, esc)
     p.end()
     return out
+
+
+class Menu(QMenu):
+    """QMenu con las esquinas redondeadas: sin marco del sistema y con fondo transparente, así se ve el radio del estilo."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.setWindowFlag(Qt.FramelessWindowHint, True)
+        self.setWindowFlag(Qt.NoDropShadowWindowHint, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def addMenu(self, *args):
+        if args and isinstance(args[0], str):       # los submenús también redondeados
+            sub = Menu(args[0], self)
+            super().addMenu(sub)
+            return sub
+        return super().addMenu(*args)
 
 
 class IconButton(QAbstractButton):
@@ -814,6 +928,16 @@ class IconButton(QAbstractButton):
                 p.drawRoundedRect(QRectF(x - s * 1.25, y - s * 0.55, s * 2.5, s * 1.1), s * 0.55, s * 0.55)
             else:               # la tarjeta
                 p.drawRoundedRect(QRectF(x - s * 0.95, y - s * 0.95, s * 1.9, s * 1.9), s * 0.45, s * 0.45)
+        elif k == "save":     # disquete
+            pen = QPen(w, 1.6)
+            pen.setJoinStyle(Qt.RoundJoin)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(QRectF(x - s * 0.95, y - s * 0.95, s * 1.9, s * 1.9), s * 0.3, s * 0.3)
+            p.setPen(Qt.NoPen)
+            p.setBrush(w)
+            p.drawRoundedRect(QRectF(x - s * 0.5, y - s * 0.95, s * 0.95, s * 0.7), 1, 1)    # la tapa metálica
+            p.drawRoundedRect(QRectF(x - s * 0.6, y + s * 0.2, s * 1.2, s * 0.75), 1, 1)     # la etiqueta
         elif k == "minus":
             p.drawRoundedRect(QRectF(x - s, y - s * 0.14, 2 * s, s * 0.28), 1, 1)
         elif k == "plus":
@@ -882,21 +1006,42 @@ class Marquee(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.pos = 0
         self.espera = self.ESPERA
-        self.timer = QTimer(self)
+        self.dy = 0.0   # cuánto se corre hacia arriba (px): lo usa la transición hacia las barras
+        self._tw = 0    # el ancho del texto: se mide una vez por texto
+        self.timer = QTimer(self)               # solo corre si el texto no entra (si no, despertaría 30 veces por segundo en vano)
         self.timer.timeout.connect(self._avanzar)
-        self.timer.start(33)
 
     def sizeHint(self):
         return QSize(10, self.height())
 
     def set_text(self, texto):
         self.texto = texto
+        self._tw = QFontMetrics(self.fuente).horizontalAdvance(texto)
         self.pos = 0
         self.espera = self.ESPERA
+        self._revisar()
         self.update()
 
     def _ancho(self):
-        return QFontMetrics(self.fuente).horizontalAdvance(self.texto)
+        return self._tw
+
+    def _revisar(self):
+        """Enciende el desplazamiento si el texto no entra y lo apaga si entra."""
+        if self._ancho() > self.width():
+            if not self.timer.isActive():
+                self.timer.start(33)
+        elif self.timer.isActive():
+            self.timer.stop()
+            self.pos = 0
+            self.update()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._revisar()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._revisar()
 
     def _avanzar(self):
         if self._ancho() <= self.width():
@@ -914,6 +1059,7 @@ class Marquee(QWidget):
         p = QPainter(self)
         p.setFont(self.fuente)
         p.setPen(self.color)
+        p.translate(0, self.dy)
         fm = QFontMetrics(self.fuente)
         y = (self.height() + fm.ascent() - fm.descent()) / 2
         tw = self._ancho()
@@ -945,6 +1091,8 @@ class Barras(QWidget):
         self.vals = [0.0] * self.N
         self.picos = [0.0] * self.N
         self.espera = [0] * self.N
+        self.entrada = 1.0   # 0 -> 1: la transición desde el texto; las barras suben de a una, de izquierda a derecha
+        self._geom = None    # (tamaño, rectángulos de cada segmento de cada barra, cortes de color): se calcula una vez
         self.setFixedHeight(24)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.timer = QTimer(self)
@@ -973,6 +1121,14 @@ class Barras(QWidget):
         self.update()
 
     @staticmethod
+    def factor(i, n, entrada):
+        """Qué parte de su altura tiene la barra i (de n) cuando la entrada va por `entrada` (0-1). Cada una arranca un
+        poquito después que la anterior y frena al llegar, así que el conjunto sube como una ola."""
+        retraso = 0.5 * i / max(n - 1, 1)
+        t = min(max((entrada - retraso) / 0.5, 0.0), 1.0)
+        return 1 - (1 - t) ** 3
+
+    @staticmethod
     def _color(frac):
         if frac < 0.55:
             return QColor(60, 220, 70)
@@ -980,21 +1136,46 @@ class Barras(QWidget):
             return QColor(235, 215, 40)
         return QColor(240, 60, 40)
 
+    def _geometria(self):
+        """Los rectángulos de todos los segmentos (por barra, de abajo hacia arriba) y dónde cambia el color. Solo
+        dependen del tamaño: se calculan una vez y no en cada cuadro."""
+        clave = (self.width(), self.height())
+        if self._geom is None or self._geom[0] != clave:
+            h = self.height()
+            paso = self.SEG + self.HUECO_SEG
+            filas = h // paso
+            bw = (self.width() - self.HUECO * (self.N - 1)) / self.N
+            cols = [[QRectF(i * (bw + self.HUECO), h - (r + 1) * paso + self.HUECO_SEG, bw, self.SEG) for r in range(filas)]
+                    for i in range(self.N)]
+            verde = sum(1 for r in range(filas) if r / filas < 0.55)
+            amarillo = sum(1 for r in range(filas) if r / filas < 0.8)
+            self._geom = (clave, cols, filas, verde, amarillo)
+        return self._geom[1:]
+
     def paintEvent(self, e):
-        p = QPainter(self)
-        h = self.height()
-        paso = self.SEG + self.HUECO_SEG
-        filas = h // paso
-        bw = (self.width() - self.HUECO * (self.N - 1)) / self.N
+        cols, filas, verde, amarillo = self._geometria()
+        verdes, amarillos, rojos, picos = [], [], [], []
         for i in range(self.N):
-            x = i * (bw + self.HUECO)
-            for r in range(round(self.vals[i] * filas)):
-                y = h - (r + 1) * paso + self.HUECO_SEG
-                p.fillRect(QRectF(x, y, bw, self.SEG), self._color(r / filas))
-            if self.picos[i] > 0.02:
-                r = min(round(self.picos[i] * filas), filas) - 1
-                y = h - (r + 1) * paso + self.HUECO_SEG
-                p.fillRect(QRectF(x, y, bw, self.SEG), QColor(255, 255, 255, 220))
+            f = self.factor(i, self.N, self.entrada)
+            col = cols[i]
+            n = round(self.vals[i] * f * filas)
+            if n > 0:
+                verdes += col[:min(n, verde)]
+                if n > verde:
+                    amarillos += col[verde:min(n, amarillo)]
+                if n > amarillo:
+                    rojos += col[amarillo:n]
+            if self.picos[i] * f > 0.02:
+                r = min(round(self.picos[i] * f * filas), filas) - 1
+                if r >= 0:
+                    picos.append(col[r])
+        p = QPainter(self)
+        p.setPen(Qt.NoPen)
+        for lote, color in ((verdes, self._color(0.0)), (amarillos, self._color(0.6)), (rojos, self._color(0.9)),
+                            (picos, QColor(255, 255, 255, 220))):
+            if lote:
+                p.setBrush(color)
+                p.drawRects(lote)
 
 
 class Card(QWidget):
@@ -1251,7 +1432,7 @@ if HAY_DBUS:
         @Slot(str)
         def OpenUri(self, uri):
             ruta = QUrl(uri).toLocalFile()
-            if ruta.lower().endswith(".mp3") and Path(ruta).exists():
+            if ruta.lower().endswith(EXTENSIONES) and Path(ruta).exists():
                 self.p.agregar([ruta])
                 self.p.reproducir(len(self.p.pistas) - 1)
 
@@ -1306,6 +1487,14 @@ if HAY_DBUS:
 # y las muestras para el espectro salen todos del mismo callback, así que no hay desfases entre ellos.
 FS = 44100          # frecuencia fija del dispositivo: miniaudio convierte los archivos que usen otra
 FADE = 220          # frames (5 ms) de los fundidos de pausa y de salto, para que no haya clicks
+# Qué casillas de la transformada entran en cada banda (se calcula una vez) y cuánto se compensa la caída natural de
+# los agudos en la música.
+_RES = FS / VENTANA
+_LO = np.array([int(_BORDES[k] / _RES) for k in range(BANDAS)])
+_HI = np.maximum(np.array([int(_BORDES[k + 1] / _RES) for k in range(BANDAS)]), _LO + 1)
+_IDX = np.empty(2 * BANDAS, dtype=np.intp)
+_IDX[0::2], _IDX[1::2] = _LO, _HI
+_COMP = np.array([3 * math.log2(math.sqrt(_BORDES[k] * _BORDES[k + 1]) / 100) for k in range(BANDAS)])
 LECTURA = 8192      # tope de frames por send() (el generador de miniaudio reserva 16384)
 PREVIOS = 4         # frames mp3 que se decodifican de más antes de un salto (llenan la reserva de bits)
 
@@ -1441,12 +1630,14 @@ LARGO_SIN_MEDIR = 15 * 60    # los temas más largos (mezclas, sets) no se miden
 TAPS = 2047                  # largo del filtro del ecualizador (fase lineal; retraso de 1023 muestras = 23 ms)
 
 
-def _taps_ecualizador(gan_db):
-    """Filtro FIR de fase lineal que aplica las 10 ganancias (dB), interpoladas en escala logarítmica."""
+def _taps_ecualizador(gan_db, freqs=None):
+    """Filtro FIR de fase lineal que aplica una curva de ganancias (dB), interpolada en escala logarítmica. Por defecto
+    son las 10 bandas de los presets (BANDAS_HZ); con `freqs` puede ser cualquier tabla (frecuencia, dB), por ejemplo
+    la de un perfil de auriculares."""
     m = 4096
     f = np.fft.rfftfreq(m, 1 / FS)
     f[0] = 1.0
-    curva = np.interp(np.log10(f), np.log10(BANDAS_HZ), gan_db)
+    curva = np.interp(np.log10(f), np.log10(BANDAS_HZ if freqs is None else freqs), gan_db)
     h0 = np.fft.irfft(10 ** (curva / 20), n=m)               # respuesta de fase cero
     medio = (TAPS - 1) // 2
     h = np.concatenate([h0[-medio:], h0[:medio + 1]]) * np.hanning(TAPS)
@@ -1477,19 +1668,20 @@ class Cadena:
     def poner_ganancia(self, db):
         self._gan_obj = 10 ** (max(GANANCIA_MIN_DB, min(GANANCIA_MAX_DB, db)) / 20)
 
-    def poner_eq(self, gan_db):
-        """gan_db: 10 valores en dB (BANDAS_HZ), o None / todo ceros para dejarlo plano."""
-        plano = gan_db is None or not any(gan_db)
+    def poner_eq(self, gan_db, freqs=None, makeup_db=0.0):
+        """gan_db: 10 valores en dB (BANDAS_HZ), o None / todo ceros para dejarlo plano. Con `freqs`, una tabla de
+        ganancias en esas frecuencias (un perfil de auriculares); `makeup_db` sube el nivel general para compensar lo que
+        el perfil baja (ver `nivel_relativo_db`)."""
+        plano = gan_db is None or (not any(gan_db) and not makeup_db)
         with self._lock:
             if plano and self._h is None and self._pend is None:
                 return
             if plano:
-                delta = np.zeros(TAPS, np.float32)
-                delta[(TAPS - 1) // 2] = 1.0      # el mismo retraso que los otros filtros: el cambio no salta
-                self._pend = ("eq", delta, 1.0)
+                self._pend = ("bypass", None, 1.0)  # se funde de vuelta al audio tal cual y el filtro deja de correr
             else:
                 subida = max(0.0, max(gan_db))
-                self._pend = ("eq", _taps_ecualizador(gan_db), 10 ** (-0.5 * subida / 20))
+                pre_db = -0.5 * subida if freqs is None else makeup_db - subida
+                self._pend = ("eq", _taps_ecualizador(gan_db, freqs), 10 ** (pre_db / 20))
 
     def _filtrar(self, ext, h):
         n = len(ext) - (TAPS - 1)
@@ -1514,7 +1706,7 @@ class Cadena:
             _, h_nuevo, pre_obj = pend
             self._pre = pre_obj
             r = np.minimum(np.arange(1, n + 1) / 2205.0, 1.0).astype(np.float32)[:, None]   # fundido de 50 ms
-            nuevo = self._filtrar(ext, h_nuevo)
+            nuevo = self._filtrar(ext, h_nuevo) if h_nuevo is not None else x
             viejo = self._filtrar(ext, self._h) if self._h is not None else x     # sin filtro previo: se funde desde el audio tal cual, sin saltos
             y = viejo * (1 - r) + nuevo * r
             self._h = h_nuevo
@@ -1608,6 +1800,105 @@ def leer_replaygain(ruta):
     except Exception:
         pass
     return None
+
+
+# --- perfiles de auriculares (AutoEq): la corrección de respuesta de frecuencia medida para cada modelo ---
+# AutoEq (github.com/jaakkopasanen/AutoEq, licencia MIT) publica, para miles de auriculares, la curva que lleva su respuesta
+# hacia una referencia pareja. Se baja solo el perfil que se elige y queda guardado: después anda sin internet.
+AUTOEQ_RAIZ = "https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results"
+COMPENSACION_MAX_DB = 4.0     # cuánto se sube el nivel general para igualar lo que el perfil baja (el limitador cuida los picos)
+PUNTOS_PERFIL = np.geomspace(20, 20000, 127)
+
+
+def leer_graphiceq(texto):
+    """'GraphicEQ: 20 -1.6; 21 -1.7; ...' -> (frecuencias, ganancias en dB). Ya trae el preamp metido."""
+    cuerpo = texto.split(":", 1)[1] if ":" in texto else texto
+    pares = [(float(a), float(b)) for a, b in re.findall(r"([\d.]+)\s+(-?[\d.]+)", cuerpo)]
+    if len(pares) < 2:
+        raise ValueError("el perfil no tiene puntos")
+    pares.sort()
+    return [p[0] for p in pares], [p[1] for p in pares]
+
+
+def _respuesta_biquad(tipo, fc, gan_db, q, freqs):
+    """Respuesta en dB de un filtro paramétrico (receta de R. Bristow-Johnson) a las frecuencias `freqs`."""
+    A = 10 ** (gan_db / 40)
+    w0 = 2 * math.pi * fc / FS
+    cs, alfa = math.cos(w0), math.sin(w0) / (2 * max(q, 0.05))
+    if tipo == "PK":
+        b = (1 + alfa * A, -2 * cs, 1 - alfa * A)
+        a = (1 + alfa / A, -2 * cs, 1 - alfa / A)
+    else:
+        r = 2 * math.sqrt(A) * alfa
+        if tipo == "LSC":
+            b = (A * ((A + 1) - (A - 1) * cs + r), 2 * A * ((A - 1) - (A + 1) * cs), A * ((A + 1) - (A - 1) * cs - r))
+            a = ((A + 1) + (A - 1) * cs + r, -2 * ((A - 1) + (A + 1) * cs), (A + 1) + (A - 1) * cs - r)
+        else:   # HSC
+            b = (A * ((A + 1) + (A - 1) * cs + r), -2 * A * ((A - 1) + (A + 1) * cs), A * ((A + 1) + (A - 1) * cs - r))
+            a = ((A + 1) - (A - 1) * cs + r, 2 * ((A - 1) - (A + 1) * cs), (A + 1) - (A - 1) * cs - r)
+    z = np.exp(-1j * 2 * math.pi * np.asarray(freqs) / FS)
+    H = (b[0] + b[1] * z + b[2] * z ** 2) / (a[0] + a[1] * z + a[2] * z ** 2)
+    return 20 * np.log10(np.abs(H) + 1e-12)
+
+
+def leer_parametrico(texto):
+    """El formato 'Preamp: -6.8 dB / Filter 1: ON PK Fc 1496 Hz Gain -2.9 dB Q 0.94 ...' -> la curva que resulta de sumar
+    todos los filtros (y el preamp), a 127 frecuencias entre 20 Hz y 20 kHz."""
+    pre = re.search(r"Preamp:\s*(-?[\d.]+)\s*dB", texto, re.I)
+    curva = np.full(len(PUNTOS_PERFIL), float(pre.group(1)) if pre else 0.0)
+    n = 0
+    for tipo, fc, gan, q in re.findall(r"Filter\s*\d+:\s*ON\s+(PK|PEQ|LSC|LS|HSC|HS)\s+Fc\s+([\d.]+)\s*Hz\s+Gain\s+(-?[\d.]+)\s*dB"
+                                       r"(?:\s+Q\s+([\d.]+))?", texto, re.I):
+        tipo = {"PEQ": "PK", "LS": "LSC", "HS": "HSC"}.get(tipo.upper(), tipo.upper())
+        curva += _respuesta_biquad(tipo, float(fc), float(gan), float(q) if q else 0.7, PUNTOS_PERFIL)
+        n += 1
+    if not n:
+        raise ValueError("el perfil no tiene filtros")
+    return list(PUNTOS_PERFIL), [float(x) for x in curva]
+
+
+def leer_perfil(texto):
+    """Lee un perfil de AutoEq en cualquiera de sus dos formatos (GraphicEQ o ParametricEQ)."""
+    return leer_graphiceq(texto) if "GraphicEQ" in texto[:40] else leer_parametrico(texto)
+
+
+def nivel_relativo_db(freqs, gan_db):
+    """Cuánto cambia el volumen que se percibe con una curva, para música (la energía se reparte parejo por octavas):
+    el promedio en energía de la curva a lo largo de las octavas. Un perfil que baja los medios 6 dB devuelve ~-6."""
+    f = np.geomspace(31, 16000, 60)
+    g = np.interp(np.log10(f), np.log10(freqs), gan_db)
+    return float(10 * np.log10(np.mean(10 ** (g / 10))))
+
+
+def indice_autoeq(texto):
+    """[(nombre, fuente, ruta)] de las líneas del INDEX.md de AutoEq."""
+    out = []
+    for linea in texto.splitlines():
+        m = re.match(r"^- \[(.+)\]\((\./.+?)\) by (.+)$", linea)
+        if m:
+            out.append((m.group(1), m.group(3), urllib.parse.unquote(m.group(2)[2:])))
+    return out
+
+
+def buscar_en_indice(entradas, consulta, limite=80):
+    """Las entradas que contienen todas las palabras de la consulta (sin mayúsculas ni acentos); oratory1990 primero."""
+    palabras = _norm(consulta).split()
+    if not palabras:
+        return []
+    hallados = [e for e in entradas if all(p in _norm(e[0] + " " + e[1]) for p in palabras)]
+    hallados.sort(key=lambda e: (0 if e[1].lower().startswith("oratory") else 1, e[0], e[1]))
+    return hallados[:limite]
+
+
+def url_perfil(ruta):
+    """La dirección del archivo GraphicEQ de una entrada del índice (su ruta, sin el './')."""
+    base = ruta.rstrip("/").rsplit("/", 1)[-1]
+    return f"{AUTOEQ_RAIZ}/{urllib.parse.quote(ruta)}/{urllib.parse.quote(base + ' GraphicEQ.txt')}"
+
+
+def slug_de(nombre):
+    s = re.sub(r"[^a-z0-9]+", "-", _norm(nombre)).strip("-")
+    return s[:60] or "perfil"
 
 
 class Motor(QObject):
@@ -1828,9 +2119,7 @@ class Motor(QObject):
     @staticmethod
     def _duracion(ruta):
         try:
-            if ruta.lower().endswith(".mp3"):
-                return float(MP3(ruta).info.length)
-            return float(miniaudio.get_file_info(ruta).duration)
+            return duracion_de(ruta) or float(miniaudio.get_file_info(ruta).duration)
         except Exception:
             return 0.0
 
@@ -1992,7 +2281,109 @@ class Motor(QObject):
 
 # ------------------------------------------------------------------------------------------------
 
+class DialogoAuriculares(QDialog):
+    """Busca un modelo de auriculares en la lista de AutoEq y baja su perfil. La lista de modelos (unos 800 KB) se baja una vez
+    y queda guardada; sin conexión se sigue usando la guardada."""
+    _indice_listo = Signal(str)
+    _fallo = Signal(str)
+    VIGENCIA_S = 30 * 24 * 3600     # la lista se vuelve a bajar pasado un mes
+
+    def __init__(self, player, descargar=True):
+        super().__init__(player)
+        self.player = player
+        self.entradas = []
+        self.setWindowTitle(tr("Buscar auriculares (AutoEq)", "Find headphones (AutoEq)"))
+        self.resize(480, 440)
+        self.setStyleSheet("""QDialog { background: #1e1e22; } QLabel { color: #cfcfd4; }
+            QLineEdit { background: rgba(255,255,255,26); color: white; border: none; border-radius: 10px; padding: 8px 12px; }
+            QListWidget { background: rgba(0,0,0,70); color: white; border: none; border-radius: 10px; outline: 0; padding: 4px; }
+            QListWidget::item { padding: 7px 8px; border-radius: 6px; } QListWidget::item:selected { background: #ff4e01; }
+            QPushButton { background: rgba(255,255,255,40); color: white; border: none; border-radius: 10px; padding: 8px 18px; }
+            QPushButton:hover { background: rgba(255,255,255,75); } QPushButton:disabled { color: rgba(255,255,255,90); }
+            QPushButton#usar:enabled { background: #ff4e01; }""")
+        self.busca = QLineEdit()
+        self.busca.setPlaceholderText(tr("Escribí el modelo, por ejemplo: ATH-M20x", "Type the model, e.g. ATH-M20x"))
+        self.busca.setClearButtonEnabled(True)
+        self.lista = QListWidget()
+        self.estado = QLabel(tr("Bajando la lista de modelos…", "Downloading the list of models…"))
+        self.estado.setWordWrap(True)
+        self.usar = QPushButton(tr("Usar este perfil", "Use this profile"))
+        self.usar.setObjectName("usar")
+        self.usar.setEnabled(False)
+        cancelar = QPushButton(tr("Cancelar", "Cancel"))
+        abajo = QHBoxLayout()
+        abajo.addWidget(self.estado, 1)
+        abajo.addWidget(cancelar)
+        abajo.addWidget(self.usar)
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.busca)
+        lay.addWidget(self.lista, 1)
+        lay.addLayout(abajo)
+        self.busca.textChanged.connect(self._filtrar)
+        self.lista.itemSelectionChanged.connect(lambda: self.usar.setEnabled(self.lista.currentItem() is not None))
+        self.lista.itemDoubleClicked.connect(lambda _: self._usar())
+        self.usar.clicked.connect(self._usar)
+        cancelar.clicked.connect(self.reject)
+        self._indice_listo.connect(self._llenar)
+        self._fallo.connect(self.estado.setText)
+        if descargar:
+            self._pedir_indice()
+
+    def _cache(self):
+        return ESTADO.parent / "autoeq-indice.md"
+
+    def _pedir_indice(self):
+        cache = self._cache()
+        try:
+            if time.time() - cache.stat().st_mtime < self.VIGENCIA_S:
+                self._llenar(cache.read_text(encoding="utf-8"))
+                return
+        except OSError:
+            pass
+
+        def trabajo():
+            try:
+                texto = _http(AUTOEQ_RAIZ + "/INDEX.md", binario=True).decode("utf-8")
+                try:
+                    cache.parent.mkdir(parents=True, exist_ok=True)
+                    cache.write_text(texto, encoding="utf-8")
+                except OSError:
+                    pass
+                self._indice_listo.emit(texto)
+            except Exception:
+                try:                                    # sin conexión: la lista vieja sirve igual
+                    self._indice_listo.emit(cache.read_text(encoding="utf-8"))
+                except OSError:
+                    self._fallo.emit(tr("No hay conexión: no se pudo bajar la lista de modelos.",
+                                        "No connection: the list of models could not be downloaded."))
+        threading.Thread(target=trabajo, daemon=True).start()
+
+    def _llenar(self, texto):
+        self.entradas = indice_autoeq(texto)
+        self.estado.setText(tr(f"{len(self.entradas)} perfiles. Escribí el modelo para buscar.",
+                               f"{len(self.entradas)} profiles. Type the model to search."))
+        self._filtrar(self.busca.text())
+
+    def _filtrar(self, texto):
+        self.lista.clear()
+        for nombre, fuente, ruta in buscar_en_indice(self.entradas, texto):
+            it = QListWidgetItem(f"{nombre}   ·   {fuente}")
+            it.setData(Qt.UserRole, (nombre, fuente, ruta))
+            self.lista.addItem(it)
+        self.usar.setEnabled(False)
+
+    def _usar(self):
+        it = self.lista.currentItem()
+        if it is None:
+            return
+        nombre, fuente, ruta = it.data(Qt.UserRole)
+        self.player.descargar_perfil(nombre, fuente, ruta)
+        self.accept()
+
+
 class Player(QWidget):
+    perfil_listo = Signal(str, str)   # (perfil instalado, error): lo emite el hilo que baja un perfil
+
     def __init__(self):
         super().__init__()
         # SIMPLEPLAY_AUDIO=null: dispositivo de audio simulado (para las pruebas, sin placa de sonido)
@@ -2001,6 +2392,7 @@ class Player(QWidget):
         self.motor.fin_de_pista.connect(self._motor_fin)
         self.motor.error_dispositivo.connect(self._motor_error)
         self.motor.error_archivo.connect(self._motor_error_archivo)
+        self.perfil_listo.connect(self._perfil_listo)
         self._fallos = 0   # temas seguidos que no se pudieron reproducir (para no dar vueltas sin fin)
         self.normalizar = True
         self.preset = PRESET_INICIAL
@@ -2018,7 +2410,8 @@ class Player(QWidget):
         self.duracion = 0.0
         # espectro: lee del motor las muestras que están sonando; el nivel de referencia sale de los picos recientes
         self.picos = collections.deque(maxlen=HISTORIA)
-        self.ref_suave = None   # nivel de referencia que usan las barras, suavizado
+        self._cuenta_ref = 0
+        self.ref_suave = self._ref_p = None   # nivel de referencia que usan las barras, suavizado
         self.pendiente = None  # (índice, segundo) de la sesión restaurada, aún sin sonar
         self.vaciada = False   # el usuario quitó todos los temas (hay que guardar la lista vacía)
         self.meta = {"titulo": "", "artista": "", "arte": ""}
@@ -2028,6 +2421,8 @@ class Player(QWidget):
         self.modo_orden = "original"
         self.repetir = "off"         # off | all | one
         self.carpeta_musica = ""     # última carpeta usada en los diálogos
+        self.carpeta_listas = ""     # dónde se guardan las listas (la última usada)
+        self.lista_actual = ""       # archivo de la lista abierta o guardada: "Guardar lista" la reescribe
         self.etiquetando = False  # la escoba está trabajando
         self.etiquetador = None
         self.lote_undo = None
@@ -2073,10 +2468,13 @@ class Player(QWidget):
         self.textos_w.setGraphicsEffect(self.ef_texto)
         self.barras.setGraphicsEffect(self.ef_barras)
         self.ef_barras.setOpacity(0.0)
+        self.ef_texto.setEnabled(False)         # los efectos de opacidad hacen que Qt pinte cada widget aparte y lo mezcle:
+        self.ef_barras.setEnabled(False)        # solo se encienden mientras dura la transición
+        self.barras.hide()
         self.modo_barras = False
         self.mezcla = 0.0
         self.fundido = QVariantAnimation(self)
-        self.fundido.setDuration(240)
+        self.fundido.setDuration(380)
         self.fundido.setEasingCurve(QEasingCurve.InOutCubic)
         self.fundido.valueChanged.connect(self._fundir)
         self.fundido.finished.connect(self._fin_fundido)
@@ -2146,6 +2544,8 @@ class Player(QWidget):
         self.lista.setDragDropMode(QAbstractItemView.InternalMove)        # arrastrar para reordenar
         self.lista.setDefaultDropAction(Qt.MoveAction)
         self.lista.model().rowsMoved.connect(self._reordenado)
+        self.lista.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.lista.customContextMenuRequested.connect(self._menu_tema)
         self.buscador = QLineEdit()
         self.buscador.setPlaceholderText(tr("Buscar en la lista…", "Search the list…"))
         self.buscador.setClearButtonEnabled(True)
@@ -2160,6 +2560,10 @@ class Player(QWidget):
         self.btn_quitar = IconButton("minus", 28)
         self.btn_quitar.setToolTip(tr("Quitar el tema seleccionado", "Remove the selected track"))
         self.btn_quitar.clicked.connect(self.quitar)
+        self.btn_guardar = IconButton("save", 28)
+        self.btn_guardar.setToolTip(tr("Guardar la lista (en la lista abierta, o como una nueva)",
+                                       "Save the playlist (over the open one, or as a new one)"))
+        self.btn_guardar.clicked.connect(self._guardar_rapido)
         self.btn_abrir = IconButton("plus", 32)
         self.btn_abrir.setToolTip(tr("Agregar archivos o una carpeta", "Add files or a folder"))
         self.btn_abrir.clicked.connect(self._menu_agregar)
@@ -2170,6 +2574,7 @@ class Player(QWidget):
             self.btn_escoba.setFixedSize(28, 28)
             abajo.addWidget(self.btn_escoba, 0, Qt.AlignVCenter)
         abajo.addStretch()
+        abajo.addWidget(self.btn_guardar, 0, Qt.AlignVCenter)
         abajo.addWidget(self.btn_quitar, 0, Qt.AlignVCenter)
         abajo.addWidget(self.btn_abrir, 0, Qt.AlignVCenter)
         self.panel = QFrame()
@@ -2319,7 +2724,7 @@ class Player(QWidget):
 
     def abrir(self):
         archivos, _ = QFileDialog.getOpenFileNames(
-            self, tr("Abrir", "Open"), self._carpeta_inicial(), "MP3 (*.mp3)")
+            self, tr("Abrir", "Open"), self._carpeta_inicial(), tr("Audio (*.mp3 *.flac)", "Audio (*.mp3 *.flac)"))
         if archivos:
             self.carpeta_musica = str(Path(archivos[0]).parent)
             self.agregar(archivos, avisar=True)
@@ -2334,16 +2739,133 @@ class Player(QWidget):
             self.guardar_estado()
 
     def _menu_agregar(self):
-        menu = QMenu(self)
+        menu = Menu(self)
         menu.addAction(tr("Agregar archivos…", "Add files…"), self.abrir)
         menu.addAction(tr("Agregar una carpeta…", "Add a folder…"), self.abrir_carpeta)
+        menu.addSeparator()
+        menu.addAction(tr("Abrir lista…", "Open playlist…"), self.abrir_lista)
+        if self.lista_actual:
+            menu.addAction(tr(f"Guardar «{Path(self.lista_actual).stem}»", f"Save “{Path(self.lista_actual).stem}”"),
+                           lambda: self.guardar_lista(self.lista_actual)).setEnabled(bool(self.pistas))
+        menu.addAction(tr("Guardar lista como…", "Save playlist as…"),
+                       lambda: self.guardar_lista()).setEnabled(bool(self.pistas))
         menu.exec(self.btn_abrir.mapToGlobal(QPoint(0, self.btn_abrir.height())))
+
+    def abrir_lista(self, ruta=None):
+        """Reemplaza la lista actual por la de un archivo M3U/M3U8; avisa cuántas entradas no se encontraron."""
+        if not ruta:
+            ruta, _ = QFileDialog.getOpenFileName(
+                self, tr("Abrir lista", "Open playlist"), self._carpeta_inicial(),
+                tr("Listas (*.m3u *.m3u8)", "Playlists (*.m3u *.m3u8)"))
+        if not ruta:
+            return
+        try:
+            temas, faltan = leer_lista(ruta)
+        except OSError:
+            self._aviso(tr("No se pudo leer la lista", "Couldn't read the playlist"))
+            return
+        if not temas:
+            self._aviso(tr("La lista no tiene temas que se encuentren", "No tracks of that list were found"))
+            return
+        self.buscador.clear()                # con un filtro activo "quitar" solo vería lo visible
+        if self.pistas:
+            self.lista.selectAll()
+            self.quitar()
+        self.agregar(temas)
+        self.carpeta_musica = str(Path(temas[0]).parent)
+        self.lista_actual = str(Path(ruta).resolve())
+        self.carpeta_listas = str(Path(ruta).resolve().parent)
+        self._aviso(tr(f"{len(temas)} temas", f"{len(temas)} tracks") +
+                    (tr(f" ({faltan} no se encontraron)", f" ({faltan} not found)") if faltan else ""), 3500)
+        self.guardar_estado()
+
+    def _carpeta_listas(self):
+        if self.carpeta_listas and Path(self.carpeta_listas).is_dir():
+            return self.carpeta_listas
+        return self._carpeta_inicial()
+
+    def _menu_tema(self, pos):
+        """Clic derecho sobre un tema: agregarlo a una lista (existente o nueva) o quitarlo."""
+        if not self.filas_elegidas():
+            return
+        menu = Menu(self)
+        sub = menu.addMenu(tr("Agregar a lista", "Add to playlist"))
+        sub.addAction(tr("Nueva lista…", "New playlist…"), self.nueva_lista)
+        existentes = sorted(Path(self._carpeta_listas()).glob("*.m3u8"), key=lambda x: x.name.lower())
+        if existentes:
+            sub.addSeparator()
+        for f in existentes[:30]:
+            sub.addAction(f.stem, lambda f=f: self.agregar_a_lista(str(f)))
+        sub.addSeparator()
+        sub.addAction(tr("Otra lista…", "Another playlist…"), lambda: self.agregar_a_lista(None))
+        menu.addAction(tr("Quitar de la lista", "Remove from the list"), self.quitar)
+        menu.exec(self.lista.viewport().mapToGlobal(pos))
+
+    def nueva_lista(self):
+        """Crea una lista nueva con los temas elegidos."""
+        ruta, _ = QFileDialog.getSaveFileName(
+            self, tr("Nueva lista", "New playlist"), str(Path(self._carpeta_listas()) / "lista.m3u8"),
+            tr("Lista M3U8 (*.m3u8)", "M3U8 playlist (*.m3u8)"))
+        if ruta:
+            self.agregar_a_lista(ruta if Path(ruta).suffix.lower() in LISTAS else ruta + ".m3u8")
+
+    def agregar_a_lista(self, ruta):
+        """Agrega los temas elegidos al final de una lista (la crea si no existe) sin tocar la lista que suena."""
+        filas = self.filas_elegidas()
+        if not filas:
+            return
+        if not ruta:
+            ruta, _ = QFileDialog.getOpenFileName(
+                self, tr("Agregar a lista", "Add to playlist"), self._carpeta_listas(),
+                tr("Listas (*.m3u *.m3u8)", "Playlists (*.m3u *.m3u8)"))
+            if not ruta:
+                return
+        try:
+            n = agregar_a_lista(ruta, [self.pistas[i] for i in filas], self.datos)
+        except OSError:
+            self._aviso(tr("No se pudo guardar la lista", "Couldn't save the playlist"))
+            return
+        self.carpeta_listas = str(Path(ruta).resolve().parent)
+        nombre = Path(ruta).stem
+        self._aviso(tr(f"{n} agregado(s) a «{nombre}»", f"{n} added to “{nombre}”") if n
+                    else tr(f"Ya estaban en «{nombre}»", f"Already in “{nombre}”"))
+
+    def _guardar_rapido(self):
+        """El disquete: reescribe la lista abierta; si no hay una, pide el nombre."""
+        if not self.pistas:
+            self._aviso(tr("No hay temas para guardar", "There are no tracks to save"))
+        elif self.lista_actual and Path(self.lista_actual).parent.is_dir():
+            self.guardar_lista(self.lista_actual)
+        else:
+            self.guardar_lista()
+
+    def guardar_lista(self, ruta=None):
+        """Guarda los temas de la lista, en el orden en que están, como M3U8 con rutas relativas."""
+        if not self.pistas:
+            return
+        if not ruta:
+            ruta, _ = QFileDialog.getSaveFileName(
+                self, tr("Guardar lista", "Save playlist"), str(Path(self._carpeta_listas()) / "lista.m3u8"),
+                tr("Lista M3U8 (*.m3u8)", "M3U8 playlist (*.m3u8)"))
+        if not ruta:
+            return
+        if Path(ruta).suffix.lower() not in LISTAS:
+            ruta += ".m3u8"
+        try:
+            escribir_lista(ruta, self.pistas, self.datos)
+        except OSError:
+            self._aviso(tr("No se pudo guardar la lista", "Couldn't save the playlist"))
+            return
+        self.lista_actual = str(Path(ruta).resolve())
+        self.carpeta_listas = str(Path(ruta).resolve().parent)
+        self.guardar_estado()
+        self._aviso(tr(f"Lista guardada ({len(self.pistas)} temas)", f"Playlist saved ({len(self.pistas)} tracks)"))
 
     def agregar(self, archivos, mostrar=True, avisar=False):
         """Agrega mp3 (o carpetas, con sus subcarpetas) a la lista; los que ya estaban no se repiten."""
         primera = not self.pistas
         existentes = set(self.pistas)
-        nuevos = [r for r in buscar_mp3(archivos) if r not in existentes]
+        nuevos = [r for r in buscar_audio(archivos) if r not in existentes]
         for r in nuevos:
             self.pistas.append(r)
             self.orden_original.append(r)
@@ -2405,7 +2927,7 @@ class Player(QWidget):
         self.close()
 
     def _menu_orden(self):
-        menu = QMenu(self)
+        menu = Menu(self)
         for modo, es, en in (("original", "En el orden en que se agregaron", "In the order they were added"),
                              ("artista", "Por artista", "By artist"),
                              ("titulo", "Por título", "By title"),
@@ -2540,6 +3062,10 @@ class Player(QWidget):
         if not filas:  # que no parezca que el botón no hace nada
             self._aviso(tr("Elegí temas en la lista primero", "Select tracks in the list first"))
             return
+        filas = [i for i in filas if self.pistas[i].lower().endswith(".mp3")]      # escribe etiquetas ID3: solo mp3
+        if not filas:
+            self._aviso(tr("La escoba solo trabaja con mp3", "The broom only works with mp3 files"))
+            return
         if not self._preguntar(len(filas)):
             return
         self.etiquetando = True
@@ -2612,7 +3138,7 @@ class Player(QWidget):
         self.pendiente = None
         self.duracion = 0.0
         self.picos.clear()
-        self.ref_suave = None
+        self.ref_suave = self._ref_p = None
         self.vaciada = True
         self.orden_original = []
         self.meta = {"titulo": "", "artista": "", "arte": ""}
@@ -2628,13 +3154,99 @@ class Player(QWidget):
         self.icono_play()
 
     # --- sonido ---
+    # --- perfiles de auriculares ---
+    def _dir_perfiles(self):
+        return ESTADO.parent / "perfiles"
+
+    def perfiles_instalados(self):
+        """[(identificador, nombre)] de los perfiles guardados."""
+        out = []
+        for f in sorted(self._dir_perfiles().glob("*.json")):
+            try:
+                out.append((f.stem, json.loads(f.read_text(encoding="utf-8"))["nombre"]))
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+        return out
+
+    def _cargar_perfil(self, ident):
+        try:
+            d = json.loads((self._dir_perfiles() / f"{ident}.json").read_text(encoding="utf-8"))
+            return [float(x) for x in d["freqs"]], [float(x) for x in d["ganancias"]], d.get("nombre", ident)
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def instalar_perfil(self, nombre, fuente, freqs, ganancias):
+        """Guarda un perfil y devuelve su identificador."""
+        ident = slug_de(f"{nombre} {fuente}")
+        carpeta = self._dir_perfiles()
+        carpeta.mkdir(parents=True, exist_ok=True)
+        tmp = carpeta / f"{ident}.tmp"
+        tmp.write_text(json.dumps({"nombre": nombre, "fuente": fuente, "freqs": [round(f, 2) for f in freqs],
+                                   "ganancias": [round(g, 2) for g in ganancias]}, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, carpeta / f"{ident}.json")
+        return ident
+
     def _aplicar_eq(self):
+        if self.preset.startswith("perfil:"):
+            p = self._cargar_perfil(self.preset[7:])
+            if p is not None:
+                freqs, gan, _ = p
+                # un perfil suele bajar el nivel general (trae su preamp metido): se sube para que escucharlo y volver
+                # a un preset suene igual de fuerte, sin que "el mejor" sea solo "el más fuerte"
+                comp = min(max(-nivel_relativo_db(freqs, gan), 0.0), COMPENSACION_MAX_DB)
+                self.motor.cadena.poner_eq(gan, freqs=freqs, makeup_db=comp)
+                return
+            self.preset = "plano"                                    # el perfil ya no está guardado
         self.motor.cadena.poner_eq(PRESETS.get(self.preset, PRESETS["plano"]))
 
     def poner_preset(self, nombre):
-        self.preset = nombre if nombre in PRESETS else "plano"
+        existe = nombre in PRESETS or (nombre.startswith("perfil:") and self._cargar_perfil(nombre[7:]) is not None)
+        self.preset = nombre if existe else "plano"
         self._aplicar_eq()
         self.guardar_estado()
+
+    def buscar_auriculares(self):
+        DialogoAuriculares(self).exec()
+
+    def descargar_perfil(self, nombre, fuente, ruta):
+        """Baja el perfil de AutoEq de un modelo, lo guarda y lo activa."""
+        self._aviso(tr("Bajando el perfil…", "Downloading the profile…"), 4000)
+
+        def trabajo():
+            try:
+                freqs, gan = leer_perfil(_http(url_perfil(ruta), binario=True).decode("utf-8"))
+                self.perfil_listo.emit(self.instalar_perfil(nombre, fuente, freqs, gan), "")
+            except Exception as e:
+                self.perfil_listo.emit("", str(e) or type(e).__name__)
+        threading.Thread(target=trabajo, daemon=True).start()
+
+    @Slot(str, str)
+    def _perfil_listo(self, ident, error):
+        if error:
+            self._aviso(tr("No se pudo bajar el perfil: ", "Could not download the profile: ") + error, 5000)
+            return
+        self.poner_preset("perfil:" + ident)
+        p = self._cargar_perfil(ident)
+        self._aviso((p[2] if p else ident) + tr(" listo", " ready"), 3500)
+
+    def importar_perfil(self):
+        """Lee un perfil de AutoEq (GraphicEQ.txt o ParametricEQ.txt) de un archivo."""
+        ruta, _ = QFileDialog.getOpenFileName(self, tr("Importar un perfil de ecualización", "Import an equalizer profile"),
+                                              str(Path.home()), tr("Perfiles de AutoEq (*.txt);;Todos (*)", "AutoEq profiles (*.txt);;All (*)"))
+        if ruta:
+            self.importar_perfil_de(ruta)
+
+    def importar_perfil_de(self, ruta):
+        try:
+            freqs, gan = leer_perfil(Path(ruta).read_text(encoding="utf-8", errors="replace"))
+        except (OSError, ValueError) as e:
+            self._aviso(tr("No se pudo leer el perfil: ", "Could not read the profile: ") + str(e), 5000)
+            return None
+        nombre = re.sub(r"\s*(GraphicEQ|ParametricEQ)$", "", Path(ruta).stem, flags=re.I)
+        ident = self.instalar_perfil(nombre, tr("importado", "imported"), freqs, gan)
+        self.poner_preset("perfil:" + ident)
+        self._aviso(nombre + tr(" listo", " ready"), 3500)
+        return ident
 
     def poner_normalizar(self, si):
         self.normalizar = bool(si)
@@ -2706,13 +3318,23 @@ class Player(QWidget):
             b.setCheckable(True)
             b.setChecked(self.preset == clave)
             b.triggered.connect(lambda _=False, c=clave: self.poner_preset(c))
+        # los perfiles de auriculares: una corrección medida para cada modelo, que se baja una vez y queda guardada
+        sub.addSeparator()
+        aur = sub.addMenu(tr("Auriculares", "Headphones")) if anidado else sub
+        instalados = self.perfiles_instalados()
+        for ident, nombre in instalados:
+            b = aur.addAction(nombre)
+            b.setCheckable(True)
+            b.setChecked(self.preset == f"perfil:{ident}")
+            b.triggered.connect(lambda _=False, i=ident: self.poner_preset("perfil:" + i))
+        if instalados:
+            aur.addSeparator()
+        aur.addAction(tr("Buscar auriculares…", "Find headphones…"), self.buscar_auriculares)
+        aur.addAction(tr("Importar un perfil…", "Import a profile…"), self.importar_perfil)
 
     def _preparar(self, i, pos):
         """Deja el tema i listo para dar play: en pausa, en la posición pos y sin sonar."""
-        try:
-            self.duracion = MP3(self.pistas[i]).info.length
-        except Exception:
-            self.duracion = 0.0
+        self.duracion = duracion_de(self.pistas[i])
         if self.duracion > 0:
             pos = min(pos, self.duracion)
             self.linea.setValue(round(pos / self.duracion * 1000))
@@ -2735,7 +3357,8 @@ class Player(QWidget):
             i, pos = max(self.lista.currentRow(), 0), 0.0
         datos = {"pistas": self.pistas, "indice": i, "pos": round(pos, 1),
                  "shuffle": self.btn_shuffle.isChecked(), "repetir": self.repetir,
-                 "carpeta": self.carpeta_musica, "orden_original": self.orden_original,
+                 "carpeta": self.carpeta_musica, "carpeta_listas": self.carpeta_listas,
+                 "lista_actual": self.lista_actual, "orden_original": self.orden_original,
                  "compacto": self.compacto, "normalizar": self.normalizar, "preset": self.preset}
         try:
             ESTADO.parent.mkdir(parents=True, exist_ok=True)
@@ -2753,10 +3376,13 @@ class Player(QWidget):
             return
         self.btn_shuffle.setChecked(bool(d.get("shuffle")))
         self.normalizar = bool(d.get("normalizar", True))
-        self.preset = d.get("preset", PRESET_INICIAL) if d.get("preset", PRESET_INICIAL) in PRESETS else PRESET_INICIAL
+        p = d.get("preset", PRESET_INICIAL)
+        self.preset = p if p in PRESETS or (isinstance(p, str) and p.startswith("perfil:")) else PRESET_INICIAL
         self._aplicar_eq()
         self.poner_repetir(d.get("repetir", "off"))
         self.carpeta_musica = d.get("carpeta", "")
+        self.carpeta_listas = d.get("carpeta_listas", "")
+        self.lista_actual = d.get("lista_actual", "")
         self.poner_compacto(bool(d.get("compacto")), animar=False)
         if not con_pistas:
             return
@@ -2812,14 +3438,11 @@ class Player(QWidget):
         self.actual = i
         self.pausado = False
         self.pendiente = None
-        try:
-            self.duracion = MP3(self.pistas[i]).info.length
-        except Exception:
-            self.duracion = 0.0
+        self.duracion = duracion_de(self.pistas[i])
         self.motor.cargar(self.pistas[i])
         self._sonoridad_del_tema(self.pistas[i])
         self.picos.clear()
-        self.ref_suave = None
+        self.ref_suave = self._ref_p = None
         self.lista.setCurrentRow(i)
         self.mostrar_meta(i)
         self.icono_play()
@@ -2941,18 +3564,33 @@ class Player(QWidget):
         if self.modo_barras:
             self.barras.activar(True)
         self.fundido.stop()
+        self.ef_texto.setEnabled(True)
+        self.ef_barras.setEnabled(True)
+        self.textos_w.show()
+        self.barras.show()
         self.fundido.setStartValue(self.mezcla)
         self.fundido.setEndValue(1.0 if self.modo_barras else 0.0)
         self.fundido.start()
 
     def _fundir(self, v):
+        """v: 0 = el nombre del tema, 1 = las barras. El texto se levanta un poco y se desvanece rápido; las barras
+        aparecen y suben una por una (ver Barras.factor). Al volver pasa todo al revés."""
         self.mezcla = v
-        self.ef_barras.setOpacity(v)
-        self.ef_texto.setOpacity(1 - v)
+        self.ef_texto.setOpacity(min(max(1 - v * 1.7, 0.0), 1.0))
+        self.ef_barras.setOpacity(min(max((v - 0.05) / 0.6, 0.0), 1.0))
+        for m in (self.titulo, self.artista):
+            m.dy = -6.0 * v
+            m.update()
+        self.barras.entrada = v
+        self.barras.update()
 
     def _fin_fundido(self):
         if not self.modo_barras:
             self.barras.activar(False)
+        self.textos_w.setVisible(not self.modo_barras)      # lo que no se ve no se pinta, y sin efectos se pinta directo
+        self.barras.setVisible(self.modo_barras)
+        self.ef_texto.setEnabled(False)
+        self.ef_barras.setEnabled(False)
 
     def espectro(self, n):
         """BANDAS valores 0..1 con la energía por banda en este instante (escala log, autoajustada).
@@ -2969,7 +3607,10 @@ class Player(QWidget):
         if pico < -70:  # silencio digital (o todavía sin audio): barras planas y sin ensuciar el nivel de referencia
             return [0.0] * n
         self.picos.append(pico)
-        ref = float(np.percentile(self.picos, 90))
+        self._cuenta_ref = (self._cuenta_ref + 1) % 6          # ordenar 300 valores 30 veces por segundo es de más:
+        if self._ref_p is None or self._cuenta_ref == 0:       # el nivel de referencia ya se suaviza, alcanza cada ~0,2 s
+            self._ref_p = float(np.percentile(self.picos, 90))
+        ref = self._ref_p
         self.ref_suave = ref if self.ref_suave is None else self.ref_suave + (ref - self.ref_suave) * 0.08
         return [float(x) for x in np.clip((db - (self.ref_suave - RANGO_DB)) / RANGO_DB, 0.0, 1.0)]
 
@@ -3127,8 +3768,20 @@ class Player(QWidget):
                 formas.append((r, 18, self.ef_caja.opacity()))
         return formas
 
-    def paintEvent(self, e):
+    def _sombra_necesaria(self, zona):
+        """False si `zona` cae entera dentro del cuerpo de la tarjeta: es opaca y la tapa, así que lo que cambió ahí
+        (las barras, el tiempo, la barra de progreso) no necesita que se repinte la sombra de toda la ventana."""
         if not SOMBRA:
+            return False
+        if self.card.isVisible():
+            g = QRectF(self.card.geometry())
+            m = 30 * 0.3                       # las esquinas redondeadas dejan ver el fondo: se queda adentro de ellas
+            if g.adjusted(m, m, -m, -m).contains(zona):
+                return False
+        return True
+
+    def paintEvent(self, e):
+        if not self._sombra_necesaria(QRectF(e.rect())):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -3148,7 +3801,7 @@ class Player(QWidget):
         self.agregar([u.toLocalFile() for u in e.mimeData().urls()], avisar=True)  # archivos o carpetas
 
     def contextMenuEvent(self, e):
-        menu = QMenu(self)
+        menu = Menu(self)
         menu.addAction(f"simpleplay v{VERSION}").setEnabled(False)
         menu.addSeparator()
         menu.addAction(tr("Abrir archivos…", "Open files…"), self.abrir)
@@ -3163,13 +3816,13 @@ class Player(QWidget):
 if __name__ == "__main__":
     if "--diagnose" in sys.argv:
         resto = [a for a in sys.argv[1:] if a != "--diagnose"]
-        sys.exit(diagnosticar(resto[0]) if resto else print("uso: simpleplay.py --diagnose archivo.mp3") or 2)
+        sys.exit(diagnosticar(resto[0]) if resto else print("uso: simpleplay.py --diagnose archivo.mp3|archivo.flac") or 2)
     app = QApplication(sys.argv)
     app.setApplicationName("simpleplay")
     app.setDesktopFileName("simpleplay")  # Wayland: une la ventana con su .desktop e ícono
     app.setWindowIcon(QIcon(recurso("icon/simpleplay-256.png")))
     w = Player()
-    args = buscar_mp3([a for a in sys.argv[1:] if not a.startswith("-")])  # archivos o carpetas
+    args = buscar_audio([a for a in sys.argv[1:] if not a.startswith("-")])  # archivos o carpetas
     w.restaurar(con_pistas=not args)  # con archivos por parámetro, solo se recuerdan shuffle, repetir y carpeta
     w.agregar(args)
     w.show()

@@ -440,6 +440,127 @@ class TestLista(Base):
         self.assertEqual(self.w.actual, -1)
 
 
+class TestListas(Base):
+    def _lista(self, nombre, texto, carpeta=None):
+        d = Path(carpeta or tempfile.mkdtemp())
+        f = d / nombre
+        f.write_text(texto, encoding="utf-8")
+        return f
+
+    def test_guardar_y_abrir_con_rutas_relativas(self):
+        self.cargar(A, B)
+        destino = Path(tempfile.mkdtemp()) / "mia.m3u8"
+        self.w.guardar_lista(str(destino))
+        lineas = destino.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lineas[0], "#EXTM3U")
+        rutas = [l for l in lineas if not l.startswith("#")]
+        self.assertEqual(len(rutas), 2)
+        self.assertFalse(any(Path(r).is_absolute() for r in rutas))
+        self.w.lista.selectAll()
+        self.w.quitar()
+        self.w.abrir_lista(str(destino))
+        self.assertEqual([Path(p).resolve() for p in self.w.pistas], [Path(A).resolve(), Path(B).resolve()])
+
+    def test_abrir_reemplaza_la_lista_y_respeta_el_orden(self):
+        self.cargar(A, B)
+        f = self._lista("o.m3u", f"{B}\n{A}\n")
+        self.w.abrir_lista(str(f))
+        self.assertEqual([Path(p).name for p in self.w.pistas], [Path(B).name, Path(A).name])
+        self.assertEqual(self.w.lista.count(), 2)
+
+    def test_entradas_que_faltan_se_saltean(self):
+        f = self._lista("f.m3u", f"#EXTM3U\n#EXTINF:-1,x\n{A}\nno_existe.mp3\nC:\\musica\\otro.mp3\n")
+        temas, faltan = S.leer_lista(f)
+        self.assertEqual(len(temas), 1)
+        self.assertEqual(faltan, 2)
+
+    def test_sobrevive_a_mover_lista_y_musica_juntas(self):
+        origen = Path(tempfile.mkdtemp())
+        (origen / "musica").mkdir()
+        import shutil
+        shutil.copy(A, origen / "musica" / "a.mp3")
+        S.escribir_lista(origen / "l.m3u8", [str(origen / "musica" / "a.mp3")])
+        destino = Path(tempfile.mkdtemp()) / "nuevo"
+        shutil.move(str(origen), destino)
+        temas, faltan = S.leer_lista(destino / "l.m3u8")
+        self.assertEqual((len(temas), faltan), (1, 0))
+        self.assertTrue(temas[0].startswith(str(destino.resolve())))
+
+    def test_lista_en_latin1_y_url_file(self):
+        d = Path(tempfile.mkdtemp())
+        import shutil
+        shutil.copy(A, d / "canción ñ.mp3")
+        f = d / "v.m3u"
+        f.write_bytes("canción ñ.mp3\n".encode("latin-1"))
+        self.assertEqual(len(S.leer_lista(f)[0]), 1)
+        g = d / "u.m3u"
+        g.write_text((d / "canción ñ.mp3").resolve().as_uri() + "\n", encoding="utf-8")
+        self.assertEqual(len(S.leer_lista(g)[0]), 1)
+
+    def test_arrastrar_o_pasar_una_lista_agrega_sus_temas(self):
+        f = self._lista("d.m3u8", f"{A}\n{B}\n")
+        self.assertEqual(len(S.buscar_audio([str(f)])), 2)
+        self.w.agregar([str(f)])
+        self.assertEqual(len(self.w.pistas), 2)
+
+    def test_lista_vacia_o_ilegible_no_toca_la_actual(self):
+        self.cargar(A)
+        f = self._lista("v.m3u8", "#EXTM3U\nnada.mp3\n")
+        self.w.abrir_lista(str(f))
+        self.assertEqual(len(self.w.pistas), 1)
+        self.w.abrir_lista(str(f) + ".no_existe")
+        self.assertEqual(len(self.w.pistas), 1)
+
+
+class TestCrearListas(Base):
+    def setUp(self):
+        super().setUp()
+        self.d = Path(tempfile.mkdtemp())
+
+    def test_agregar_crea_la_lista_y_no_repite(self):
+        self.cargar(A, B)
+        f = self.d / "nueva.m3u8"
+        self.w.lista.setCurrentRow(1)
+        self.w.agregar_a_lista(str(f))
+        self.assertEqual([Path(x).name for x in S.leer_lista(f)[0]], [Path(B).name])
+        self.w.lista.selectAll()
+        self.w.agregar_a_lista(str(f))
+        self.assertEqual([Path(x).name for x in S.leer_lista(f)[0]], [Path(B).name, Path(A).name])
+        self.w.agregar_a_lista(str(f))
+        self.assertEqual(len(S.leer_lista(f)[0]), 2)
+        self.assertEqual(len(self.w.pistas), 2)            # la lista que suena no cambia
+
+    def test_agregar_conserva_las_entradas_que_hoy_faltan(self):
+        f = self.d / "x.m3u8"
+        f.write_text("#EXTM3U\nmusica_en_disco_ausente/zzz.mp3\n", encoding="utf-8")
+        self.cargar(A)
+        self.w.lista.setCurrentRow(0)
+        self.w.agregar_a_lista(str(f))
+        texto = f.read_text(encoding="utf-8")
+        self.assertIn("zzz.mp3", texto)
+        self.assertEqual(len(S.leer_lista(f)[0]), 1)
+
+    def test_guardar_sobre_la_lista_abierta(self):
+        f = self.d / "o.m3u8"
+        S.escribir_lista(f, [A, B])
+        self.w.abrir_lista(str(f))
+        self.assertEqual(self.w.lista_actual, str(f.resolve()))
+        self.w.lista.setCurrentRow(0)
+        self.w.quitar()
+        self.w.guardar_lista(self.w.lista_actual)
+        self.assertEqual(len(S.leer_lista(f)[0]), 1)
+
+    def test_la_lista_abierta_se_recuerda_en_la_sesion(self):
+        f = self.d / "r.m3u8"
+        S.escribir_lista(f, [A])
+        self.w.abrir_lista(str(f))
+        self.w.guardar_estado()
+        w2 = S.Player()
+        w2.restaurar()
+        self.assertEqual(w2.lista_actual, str(f.resolve()))
+        w2.close()
+
+
 class TestSesion(Base):
     def test_restaura_el_tema_y_la_posicion(self):
         self.cargar(A, B)
@@ -509,6 +630,401 @@ class TestSonido(Base):
     def test_un_preset_desconocido_cae_en_plano(self):
         self.w.poner_preset("no-existe")
         self.assertEqual(self.w.preset, "plano")
+
+
+class TestTransicionBarras(Base):
+    """El paso entre el nombre del tema y las barras del espectro (clic en la píldora)."""
+
+    def test_cada_barra_empieza_un_poco_despues_y_todas_terminan_arriba(self):
+        n = S.BANDAS
+        self.assertEqual([S.Barras.factor(i, n, 0.0) for i in range(n)], [0.0] * n)
+        self.assertEqual([S.Barras.factor(i, n, 1.0) for i in range(n)], [1.0] * n)
+        for e in (0.2, 0.5, 0.8):
+            f = [S.Barras.factor(i, n, e) for i in range(n)]
+            self.assertEqual(f, sorted(f, reverse=True))            # las de la izquierda van más adelantadas
+            self.assertGreater(f[0], f[-1])
+        for i in range(n):                                          # y ninguna baja mientras la entrada sube
+            valores = [S.Barras.factor(i, n, e / 20) for e in range(21)]
+            self.assertEqual(valores, sorted(valores))
+
+    def test_la_transicion_hacia_las_barras_pasa_por_estados_intermedios_y_termina(self):
+        w = self.w
+        w.alternar_barras()
+        espera(0.12)
+        self.assertTrue(0.0 < w.mezcla < 1.0)
+        self.assertTrue(0.0 < w.ef_texto.opacity() < 1.0)           # el texto se está yendo
+        self.assertLess(w.titulo.dy, 0.0)                           # levantándose
+        self.assertTrue(0.0 < w.barras.entrada < 1.0)               # y las barras están subiendo
+        self.assertTrue(espera(1.5, lambda: w.mezcla == 1.0 and not w.fundido.state() == w.fundido.State.Running))
+        self.assertEqual(w.ef_texto.opacity(), 0.0)
+        self.assertEqual(w.ef_barras.opacity(), 1.0)
+        self.assertEqual(w.barras.entrada, 1.0)
+        self.assertTrue(w.barras.timer.isActive())
+
+    def test_la_vuelta_al_texto_lo_deja_todo_en_su_lugar_y_apaga_las_barras(self):
+        w = self.w
+        w.alternar_barras()
+        self.assertTrue(espera(1.5, lambda: w.mezcla == 1.0))
+        w.alternar_barras()
+        self.assertTrue(espera(1.5, lambda: w.mezcla == 0.0))
+        espera(0.1)
+        self.assertEqual(w.ef_texto.opacity(), 1.0)
+        self.assertEqual(w.titulo.dy, 0.0)
+        self.assertEqual(w.artista.dy, 0.0)
+        self.assertEqual(w.barras.entrada, 0.0)
+        self.assertFalse(w.barras.timer.isActive())                 # sin barras a la vista no se las dibuja ni se las calcula
+
+    def test_apretar_dos_veces_seguidas_no_deja_nada_a_medias(self):
+        w = self.w
+        w.alternar_barras()
+        espera(0.1)
+        w.alternar_barras()                                         # cambia de idea a la mitad: vuelve desde donde estaba
+        self.assertTrue(espera(1.5, lambda: w.mezcla == 0.0))
+        espera(0.1)
+        self.assertEqual(w.ef_texto.opacity(), 1.0)
+        self.assertEqual(w.titulo.dy, 0.0)
+        self.assertFalse(w.modo_barras)
+
+    def test_se_dibujan_las_barras_a_medio_subir(self):
+        from PySide6.QtGui import QColor
+        b = self.w.barras
+        self.w.ef_barras.setOpacity(1.0)                            # en modo texto están a opacidad 0: se las vería transparentes
+        b.resize(200, 24)
+        b.vals = [1.0] * b.N
+        b.picos = [1.0] * b.N
+        b.entrada = 0.0
+        vacio = b.grab().toImage()
+        b.entrada = 1.0
+        lleno = b.grab().toImage()
+        b.entrada = 0.45
+        medio = b.grab().toImage()
+
+        def distintos(img):                                         # píxeles que cambian respecto del fondo (la imagen vacía)
+            return sum(1 for x in range(img.width()) for y in range(img.height()) if img.pixel(x, y) != vacio.pixel(x, y))
+        self.assertEqual(distintos(vacio), 0)
+        self.assertGreater(distintos(lleno), 0)
+        self.assertTrue(0 < distintos(medio) < distintos(lleno))
+
+
+class TestConsumo(Base):
+    """Cosas que no se ven pero que hacen que el reproductor gaste poco."""
+
+    def pixeles_de_referencia(self, b, fondo):
+        """Las barras dibujadas como se hacía antes (un rectángulo por segmento), sobre el mismo fondo."""
+        from PySide6.QtGui import QImage, QPainter
+        img = QImage(b.width(), b.height(), QImage.Format_ARGB32)
+        img.fill(fondo)
+        p = QPainter(img)
+        h = b.height()
+        paso = b.SEG + b.HUECO_SEG
+        filas = h // paso
+        bw = (b.width() - b.HUECO * (b.N - 1)) / b.N
+        for i in range(b.N):
+            x = i * (bw + b.HUECO)
+            f = S.Barras.factor(i, b.N, b.entrada)
+            for r in range(round(b.vals[i] * f * filas)):
+                y = h - (r + 1) * paso + b.HUECO_SEG
+                p.fillRect(S.QRectF(x, y, bw, b.SEG), b._color(r / filas))
+            if b.picos[i] * f > 0.02:
+                r = min(round(b.picos[i] * f * filas), filas) - 1
+                y = h - (r + 1) * paso + b.HUECO_SEG
+                p.fillRect(S.QRectF(x, y, bw, b.SEG), S.QColor(255, 255, 255, 220))
+        p.end()
+        return img
+
+    def test_las_barras_por_lotes_se_ven_igual_que_dibujadas_una_por_una(self):
+        import random
+        b = self.w.barras
+        self.w.ef_barras.setOpacity(1.0)
+        random.seed(5)
+        for ancho in (200, 241, 333):
+            b.resize(ancho, 24)
+            b.vals, b.picos, b.entrada = [0.0] * b.N, [0.0] * b.N, 1.0
+            vacio = b.grab().toImage()
+            fondo = vacio.pixelColor(0, 0)
+            for entrada in (1.0, 0.5):
+                b.entrada = entrada
+                b.vals = [random.random() for _ in range(b.N)]
+                b.picos = [min(1.0, v + random.random() * 0.3) for v in b.vals]
+                real = b.grab().toImage()
+                ref = self.pixeles_de_referencia(b, fondo)
+                distintos = sum(1 for x in range(real.width()) for y in range(real.height()) if real.pixel(x, y) != ref.pixel(x, y))
+                self.assertEqual(distintos, 0, f"ancho {ancho}, entrada {entrada}")
+
+    def test_los_efectos_de_opacidad_solo_existen_durante_la_transicion(self):
+        w = self.w
+        self.assertFalse(w.ef_texto.isEnabled())
+        self.assertFalse(w.ef_barras.isEnabled())
+        self.assertTrue(w.barras.isHidden())                       # en modo texto las barras ni se pintan
+        w.alternar_barras()
+        espera(0.1)
+        self.assertTrue(w.ef_texto.isEnabled() and w.ef_barras.isEnabled())
+        self.assertTrue(espera(1.5, lambda: w.mezcla == 1.0 and w.fundido.state() != w.fundido.State.Running))
+        self.assertFalse(w.ef_texto.isEnabled() or w.ef_barras.isEnabled())
+        self.assertTrue(w.textos_w.isHidden())                     # y en modo barras, el texto no se pinta
+        self.assertFalse(w.barras.isHidden())
+        w.alternar_barras()
+        self.assertTrue(espera(1.5, lambda: w.mezcla == 0.0 and w.fundido.state() != w.fundido.State.Running))
+        self.assertTrue(w.barras.isHidden())
+        self.assertFalse(w.textos_w.isHidden())
+
+    def test_un_texto_que_entra_no_gasta_un_temporizador_y_uno_largo_si(self):
+        w = self.w
+        w.titulo.set_text("Corto")
+        espera(0.1)
+        self.assertFalse(w.titulo.timer.isActive())
+        w.titulo.set_text("Un título larguísimo que no entra en la píldora de ninguna manera, ni a palos, nunca")
+        self.assertTrue(w.titulo.timer.isActive())
+        w.titulo.set_text("Otra vez corto")
+        self.assertFalse(w.titulo.timer.isActive())
+        self.assertEqual(w.titulo.pos, 0)
+
+    def test_el_titulo_largo_sigue_desplazandose(self):
+        w = self.w
+        w.titulo.set_text("Un título larguísimo que no entra en la píldora de ninguna manera, ni a palos, nunca")
+        w.titulo.espera = 0
+        antes = w.titulo.pos
+        espera(0.4)
+        self.assertGreater(w.titulo.pos, antes)
+
+    def test_la_sombra_no_se_repinta_por_un_cambio_dentro_de_la_tarjeta(self):
+        from PySide6.QtCore import QRectF
+        w = self.w
+        g = QRectF(w.card.geometry())
+        self.assertFalse(w._sombra_necesaria(g.adjusted(20, 20, -20, -20)))        # las barras, el tiempo...
+        self.assertTrue(w._sombra_necesaria(QRectF(w.rect())))                     # la ventana entera sí
+        self.assertTrue(w._sombra_necesaria(g.adjusted(-8, -8, 8, 8)))             # el borde de la tarjeta, donde se ve la sombra
+        self.assertTrue(w._sombra_necesaria(g.adjusted(0, 0, -g.width() + 10, -g.height() + 10)))   # la esquina redondeada
+
+
+class TestPerfilesAuriculares(Base):
+    def setUp(self):
+        super().setUp()
+        sys.path.insert(0, str(Path(__file__).parent))
+        import datos_autoeq
+        self.D = datos_autoeq
+        for f in (S.ESTADO.parent / "perfiles").glob("*"):
+            f.unlink()
+        self._http = S._http
+
+    def tearDown(self):
+        S._http = self._http
+        super().tearDown()
+
+    def instalar_m20x(self):
+        f, g = S.leer_perfil(self.D.M20X_GRAFICO)
+        return self.w.instalar_perfil("Audio-Technica ATH-M20x", "oratory1990", f, g)
+
+    def archivo(self, nombre, texto):
+        p = Path(tempfile.mkdtemp()) / nombre
+        p.write_text(texto)
+        return str(p)
+
+    def acciones(self, menu):
+        out = []
+        for a in menu.actions():
+            out.append(a.text())
+            if a.menu():
+                out += self.acciones(a.menu())
+        return out
+
+    def test_un_perfil_se_guarda_y_se_lee_igual(self):
+        ident = self.instalar_m20x()
+        self.assertEqual(self.w.perfiles_instalados(), [(ident, "Audio-Technica ATH-M20x")])
+        f, g, nombre = self.w._cargar_perfil(ident)
+        f0, g0 = S.leer_perfil(self.D.M20X_GRAFICO)
+        self.assertEqual(len(f), len(f0))
+        self.assertAlmostEqual(g[40], g0[40], places=1)
+        self.assertEqual(nombre, "Audio-Technica ATH-M20x")
+
+    def test_activar_un_perfil_enciende_el_filtro_con_su_compensacion(self):
+        ident = self.instalar_m20x()
+        self.w.poner_preset("perfil:" + ident)
+        c = self.w.motor.cadena
+        self.assertEqual(self.w.preset, "perfil:" + ident)
+        c.procesar(np.zeros((4410, 2), np.float32))                    # el bloque que aplica el cambio pendiente
+        self.assertTrue(c.activa)
+        f, g, _ = self.w._cargar_perfil(ident)
+        comp = min(max(-S.nivel_relativo_db(f, g), 0.0), S.COMPENSACION_MAX_DB)
+        self.assertAlmostEqual(c._pre, 10 ** ((comp - max(0.0, max(g))) / 20), places=4)
+        self.assertGreater(comp, 0.0)
+        self.assertLessEqual(comp, S.COMPENSACION_MAX_DB)
+
+    def test_el_perfil_elegido_se_recuerda(self):
+        ident = self.instalar_m20x()
+        self.w.poner_preset("perfil:" + ident)
+        self.cargar(A)
+        self.w.guardar_estado()
+        self.w.close()
+        self.w.motor.cerrar()
+        w2 = S.Player()
+        w2.show()
+        self.w = w2
+        w2.restaurar()
+        self.assertEqual(w2.preset, "perfil:" + ident)
+        w2.motor.cadena.procesar(np.zeros((4410, 2), np.float32))
+        self.assertTrue(w2.motor.cadena.activa)
+
+    def test_si_el_perfil_ya_no_esta_se_vuelve_a_plano_sin_romper_nada(self):
+        self.w.poner_preset("perfil:no-existe")
+        self.assertEqual(self.w.preset, "plano")
+        ident = self.instalar_m20x()
+        self.w.poner_preset("perfil:" + ident)
+        (S.ESTADO.parent / "perfiles" / f"{ident}.json").unlink()
+        self.w._aplicar_eq()
+        self.assertEqual(self.w.preset, "plano")
+
+    def test_importar_un_archivo_grafico_o_parametrico(self):
+        a = self.w.importar_perfil_de(self.archivo("Audio-Technica ATH-M20x GraphicEQ.txt", self.D.M20X_GRAFICO))
+        self.assertEqual(self.w.preset, "perfil:" + a)
+        self.assertEqual(dict(self.w.perfiles_instalados())[a], "Audio-Technica ATH-M20x")      # sin el " GraphicEQ"
+        b = self.w.importar_perfil_de(self.archivo("otro ParametricEQ.txt", self.D.M20X_PARAMETRICO))
+        self.assertEqual(self.w.preset, "perfil:" + b)
+        self.assertEqual(len(self.w.perfiles_instalados()), 2)
+
+    def test_importar_algo_que_no_es_un_perfil_no_cambia_nada(self):
+        antes = self.w.preset
+        self.assertIsNone(self.w.importar_perfil_de(self.archivo("basura.txt", "esto no es un perfil")))
+        self.assertIsNone(self.w.importar_perfil_de("/no/existe.txt"))
+        self.assertEqual(self.w.preset, antes)
+        self.assertEqual(self.w.perfiles_instalados(), [])
+
+    def test_el_menu_de_sonido_lista_los_perfiles_y_las_dos_formas_de_agregar(self):
+        from PySide6.QtWidgets import QMenu
+        ident = self.instalar_m20x()
+        self.w.poner_preset("perfil:" + ident)
+        m = QMenu()
+        self.w._menu_sonido(m)
+        textos = self.acciones(m)
+        self.assertIn("Audio-Technica ATH-M20x", textos)
+        self.assertTrue(any("Buscar auriculares" in t for t in textos))
+        self.assertTrue(any("Importar un perfil" in t for t in textos))
+        marcada = [a for sub in m.actions() if sub.menu() for a in sub.menu().actions() if a.menu()
+                   for b in a.menu().actions() if b.text() == "Audio-Technica ATH-M20x" and b.isChecked()]
+        self.assertEqual(len(marcada), 1)
+
+    def test_el_dialogo_busca_en_el_indice_y_baja_el_elegido(self):
+        from PySide6.QtWidgets import QApplication
+        d = S.DialogoAuriculares(self.w, descargar=False)
+        d._llenar(self.D.INDICE)
+        self.assertEqual(d.lista.count(), 0)                           # sin escribir nada no se vuelcan los ~800 modelos
+        self.assertIn("6 perfiles", d.estado.text())
+        d.busca.setText("m20x")
+        self.assertEqual(d.lista.count(), 2)
+        self.assertIn("oratory1990", d.lista.item(0).text())
+        self.assertFalse(d.usar.isEnabled())
+        d.lista.setCurrentRow(0)
+        self.assertTrue(d.usar.isEnabled())
+        pedido = []
+        self.w.descargar_perfil = lambda *a: pedido.append(a)
+        d._usar()
+        self.assertEqual(pedido, [("Audio-Technica ATH-M20x", "oratory1990", "oratory1990/over-ear/Audio-Technica ATH-M20x")])
+        d.deleteLater()
+
+    def test_bajar_un_perfil_lo_instala_y_lo_activa(self):
+        pedidas = []
+        S._http = lambda url, binario=False, reintentos=4: (pedidas.append(url), self.D.M20X_GRAFICO.encode())[1]
+        self.w.descargar_perfil("Audio-Technica ATH-M20x", "oratory1990", "oratory1990/over-ear/Audio-Technica ATH-M20x")
+        self.assertTrue(espera(3.0, lambda: self.w.preset.startswith("perfil:")))
+        self.assertTrue(pedidas[0].endswith("Audio-Technica%20ATH-M20x%20GraphicEQ.txt"))
+        self.assertEqual([n for _, n in self.w.perfiles_instalados()], ["Audio-Technica ATH-M20x"])
+
+    def test_si_falla_la_descarga_avisa_y_no_cambia_nada(self):
+        def sin_red(*a, **k):
+            raise OSError("sin conexión")
+        S._http = sin_red
+        avisos = []
+        self.w._aviso = lambda texto, ms=0: avisos.append(texto)
+        self.w.descargar_perfil("X", "y", "a/b/X")
+        self.assertTrue(espera(3.0, lambda: any("No se pudo bajar" in a for a in avisos)))
+        self.assertEqual(self.w.perfiles_instalados(), [])
+        self.assertFalse(self.w.preset.startswith("perfil:"))
+
+    def test_los_tests_no_tocan_la_configuracion_real(self):
+        self.assertTrue(str(S.ESTADO).startswith(CONFIG))
+
+
+class TestFlacEnElReproductor(Base):
+    F = str(CORPUS / "con_etiquetas.flac")
+    F2 = str(CORPUS / "tono_16.flac")
+    CORTO = str(CORPUS / "corto_2s.flac")
+
+    def test_un_flac_se_agrega_con_sus_etiquetas_y_se_reproduce(self):
+        self.cargar(self.F)
+        self.assertEqual(self.w.pistas, [self.F])
+        self.assertEqual(self.w.lista.item(0).text(), "Artista de prueba - Tema de prueba")
+        self.w.reproducir(0)
+        espera(1.0)
+        self.assertTrue(self.w.motor.reproduciendo)
+        self.assertAlmostEqual(self.w.duracion, 10.0, delta=0.1)
+        self.assertGreater(self.w.posicion(), 0.5)
+        self.assertEqual(self.w.titulo.texto, "Tema de prueba")
+        self.assertEqual(self.w.artista.texto, "Artista de prueba")
+
+    def test_la_tapa_del_flac_llega_a_la_tarjeta_y_a_todas_las_vistas(self):
+        self.cargar(self.F)
+        self.w.reproducir(0)
+        espera(0.5)
+        self.assertIsNotNone(self.w.card.escalada)                     # la tarjeta clásica muestra la carátula
+        self.cargar(self.F2)
+        self.w.reproducir(1)
+        espera(0.5)
+        self.assertIsNone(self.w.card.escalada)                        # un flac sin carátula: vuelve el degradé
+
+    def test_una_lista_con_mp3_y_flac_pasa_de_uno_al_otro(self):
+        self.cargar(self.CORTO, A)
+        self.w.reproducir(0)
+        self.assertTrue(espera(5.0, lambda: self.w.actual == 1))       # el flac de 2 s termina y sigue el mp3
+        espera(0.5)
+        self.assertTrue(self.w.motor.reproduciendo)
+        self.assertEqual(self.w.pistas[self.w.actual], A)
+
+    def test_agregar_una_carpeta_toma_los_flac_y_los_mp3(self):
+        import shutil
+        d = Path(tempfile.mkdtemp())
+        shutil.copy(CORPUS / "tono_16.flac", d / "uno.flac")
+        shutil.copy(CORPUS / "tono_44k.mp3", d / "dos.mp3")
+        (d / "tres.ogg").write_bytes(b"OggS")
+        self.cargar(str(d))
+        self.assertEqual([Path(p).name for p in self.w.pistas], ["dos.mp3", "uno.flac"])
+
+    def test_el_volumen_de_un_flac_se_normaliza_igual_que_el_de_un_mp3(self):
+        self.cargar(self.F2)
+        self.w.reproducir(0)
+        self.assertTrue(espera(5.0, lambda: bool(self.w._cache_sonoridad())))
+        v = next(iter(self.w._cache_sonoridad().values()))
+        self.assertIsNotNone(v)
+        self.assertAlmostEqual(v["pico"], 0.5, delta=0.05)
+
+    def test_las_barras_del_espectro_siguen_a_un_flac(self):
+        self.cargar(self.F2)
+        self.w.reproducir(0)
+        espera(1.2)
+        barras = self.w.espectro(S.BANDAS)
+        self.assertGreater(max(barras), 0.5)
+        self.assertEqual(barras.index(max(barras)), int(np.argmax(S.bandas_db(self.w.motor.muestras(S.VENTANA)))))
+
+    def test_la_sesion_con_un_flac_se_guarda_y_se_restaura(self):
+        self.cargar(self.F, A)
+        self.w.reproducir(0)
+        espera(0.6)
+        self.w.guardar_estado()
+        self.w.close()
+        self.w.motor.cerrar()
+        w2 = S.Player()
+        w2.show()
+        self.w = w2
+        w2.restaurar()
+        self.assertEqual(w2.pistas, [self.F, A])
+        self.assertEqual(w2.titulo.texto, "Tema de prueba")
+
+    def test_saltar_dentro_de_un_flac_desde_el_reproductor(self):
+        self.cargar(self.F2)
+        self.w.reproducir(0)
+        espera(0.5)
+        self.w.saltar(0.6)
+        espera(0.6)
+        self.assertAlmostEqual(self.w.posicion(), 6.6, delta=0.8)
 
 
 if __name__ == "__main__":

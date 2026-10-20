@@ -228,6 +228,9 @@ html.final-directo .calor { opacity: .5; }
 .vitrina img { max-height: calc(72dvh - 2 * var(--pad)); width: auto; max-width: 100%; object-fit: contain; }
 .vitrina figure.v2 img { width: min(100%, 460px); }
 .vitrina figure.v4 { background: var(--accent); color: var(--on-accent); }
+.vitrina figure.dato { background: var(--surface-2); text-align: center; }
+.gran { font-family: "Bebas Neue", "Geist", sans-serif; line-height: 1; font-size: clamp(5rem, 12vw, 10rem); color: var(--accent-text); }
+.dato-pie { margin-top: 16px; color: var(--muted); font-size: 1.05rem; }
 .medida { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: center; gap: 8px 22px; font-family: "Bebas Neue", "Geist", sans-serif; line-height: 1; }
 .medida .viejo { font-size: clamp(2.4rem, 5vw, 4rem); opacity: .55; }
 .medida .nuevo { font-size: clamp(5rem, 12vw, 10rem); }
@@ -240,6 +243,8 @@ html.final-directo .calor { opacity: .5; }
   .paso { min-height: 0; opacity: 1; padding-block: 28px; }
   .paso .fig-movil { display: block; margin-top: 14px; border-radius: var(--radio); border: 1px solid var(--line); background: var(--surface); padding: 18px; }
   .paso .fig-movil img { margin-inline: auto; max-height: 340px; width: auto; }
+  .paso .fig-movil.dato { text-align: center; padding: 28px 18px; }
+  .paso .fig-movil .gran { font-size: clamp(3.4rem, 18vw, 5rem); }
   .paso .fig-movil.motor { background: var(--accent); color: var(--on-accent); border-color: transparent; padding: 28px 18px; }
 }
 
@@ -434,6 +439,8 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
         <li class="revela"><span class="v">1.2</span><span class="t"><span class="es">Búsqueda, orden y carpetas enteras en la lista. Repetir un tema o toda la lista.</span><span class="en">Search, sorting and whole folders in the list. Repeat a track or the whole list.</span></span></li>
         <li class="revela"><span class="v">1.3</span><span class="t"><span class="es">El modo compacto: la tarjeta se achica a una barra.</span><span class="en">Compact mode: the card shrinks to a bar.</span></span></li>
         <li class="revela"><span class="v">1.4</span><span class="t"><span class="es">Un motor de audio propio, una transición animada y una sombra suave.</span><span class="en">Its own audio engine, an animated transition and a soft shadow.</span></span></li>
+        <li class="revela"><span class="v">1.4.1</span><span class="t"><span class="es">Normalizador de volumen y ecualizador con presets.</span><span class="en">Volume normalizer and an equalizer with presets.</span></span></li>
+        <li class="revela"><span class="v">1.5</span><span class="t"><span class="es">FLAC, perfiles de auriculares, listas de reproducción y menos consumo de CPU.</span><span class="en">FLAC, headphone profiles, playlists and lower CPU use.</span></span></li>
       </ol>
     </div>
   </section>
@@ -473,6 +480,21 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
               <p class="medida-pie"><span class="es">Medido en un mp3 de 60 minutos.</span><span class="en">Measured on a 60-minute mp3.</span></p>
             </figure>
           </article>
+          <article class="paso" data-i="5">
+            <h3><span class="es">Listas de reproducción de verdad</span><span class="en">Real playlists</span></h3>
+            <p><span class="es">Guardalas y abrilas como archivos M3U8 comunes, que también leen VLC o mpv. Clic derecho en un tema para agregarlo a una lista o crear una nueva. Si movés la carpeta con la música, la lista sigue andando.</span><span class="en">Save and open them as plain M3U8 files, which VLC or mpv read too. Right click a track to add it to a list or start a new one. Move the music folder and the list keeps working.</span></p>
+            <figure class="fig-movil dato"><div class="gran">M3U8</div><p class="dato-pie"><span class="es">Rutas relativas: la lista viaja con la música.</span><span class="en">Relative paths: the list travels with the music.</span></p></figure>
+          </article>
+          <article class="paso" data-i="6">
+            <h3><span class="es">También reproduce FLAC</span><span class="en">It plays FLAC too</span></h3>
+            <p><span class="es">Con etiquetas, portada y ReplayGain, y búsqueda dentro del tema. Probado hasta 24 bits y 96 kHz.</span><span class="en">With tags, cover art and ReplayGain, and seeking inside the track. Tested up to 24-bit and 96 kHz.</span></p>
+            <figure class="fig-movil dato"><div class="gran">FLAC</div><p class="dato-pie"><span class="es">24 bits, 96 kHz.</span><span class="en">24-bit, 96 kHz.</span></p></figure>
+          </article>
+          <article class="paso" data-i="7">
+            <h3><span class="es">Sonido a tu medida</span><span class="en">Sound to fit you</span></h3>
+            <p><span class="es">Un normalizador para que todos los temas suenen parejos, un ecualizador con presets y la base AutoEq para corregir tus auriculares. El perfil se baja una vez y después anda sin internet.</span><span class="en">A normalizer so every track sounds even, an equalizer with presets, and the AutoEq database to correct your headphones. A profile is downloaded once and then works offline.</span></p>
+            <figure class="fig-movil dato"><div class="gran">~800</div><p class="dato-pie"><span class="es">modelos de auriculares.</span><span class="en">headphone models.</span></p></figure>
+          </article>
         </div>
         <div class="vitrina" aria-hidden="true" id="vitrina">
           <figure class="v0 activa"><picture><source srcset="img/player.webp" type="image/webp"><img src="screenshots/player.png" width="744" height="744" alt=""></picture></figure>
@@ -485,6 +507,9 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
               <p class="medida-pie"><span class="es">Medido en un mp3 de 60 minutos.</span><span class="en">Measured on a 60-minute mp3.</span></p>
             </div>
           </figure>
+          <figure class="v5 dato"><div><div class="gran">M3U8</div><p class="dato-pie"><span class="es">Rutas relativas: la lista viaja con la música.</span><span class="en">Relative paths: the list travels with the music.</span></p></div></figure>
+          <figure class="v6 dato"><div><div class="gran">FLAC</div><p class="dato-pie"><span class="es">24 bits, 96 kHz.</span><span class="en">24-bit, 96 kHz.</span></p></div></figure>
+          <figure class="v7 dato"><div><div class="gran">~800</div><p class="dato-pie"><span class="es">modelos de auriculares.</span><span class="en">headphone models.</span></p></div></figure>
         </div>
       </div>
     </div>

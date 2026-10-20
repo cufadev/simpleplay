@@ -3,6 +3,43 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
+## [Unreleased]
+
+## [1.5] - 2026-10-20
+
+### Added
+- **Playlists.** The **+** menu has **Open playlist…** (replaces the current list) and **Save playlist as…**.
+  Plain M3U/M3U8 files, readable by VLC, mpv or Navidrome, with paths relative to the playlist so it keeps working
+  when you move it together with the music. Dragging a `.m3u`/`.m3u8` onto the window, or passing one on the
+  command line, adds its tracks. Entries that cannot be found are skipped and counted.
+  To build lists: right click one or more tracks > **Add to playlist** > a saved list, **New playlist…** or
+  **Another playlist…**. It appends to the file without touching the list that is playing (or the entries that
+  are missing right now). The **+** menu also has **Save “name”** to overwrite the list you opened.
+  A floppy-disk button next to the list saves it in one click (over the open list, or asks for a name).
+  All pop-up menus now have rounded corners.
+- **FLAC.** The player opens `.flac` files next to `.mp3`: from the file dialog, by dragging files or folders onto
+  the window, and from the command line. It reads the Vorbis tags (title, artist, album, track number) and the
+  embedded cover art, the ReplayGain tags, and seeks inside the file. Tested with 16-bit/44.1 kHz and
+  24-bit/96 kHz files (converted to the device rate while playing). The broom (MusicBrainz look-up) still only
+  writes ID3 tags, so it skips FLAC files.
+- **Headphone profiles** (right click > **Sound** > **Headphones**). Pick your model from the
+  [AutoEq](https://github.com/jaakkopasanen/AutoEq) database (about 800 models, searched from inside the player) or
+  import a `GraphicEQ.txt` / `ParametricEQ.txt` file. The profile is downloaded only when you choose it and then
+  kept, so it works offline. The overall level is raised (up to 4 dB) to make up for what the profile lowers, so
+  comparing it with the other presets is fair.
+- **A transition between the track name and the spectrum bars:** the text lifts and fades while the bars rise
+  one by one from left to right.
+
+- **`tools/convertir.sh`**: turns the audio of every video in a folder (subfolders included) into mp3 or FLAC, keeping the
+  folder structure and the tags, never overwriting what is already converted, and reporting the files that could not be
+  converted. Needs `ffmpeg`.
+
+### Changed
+- **Lower CPU use** (about a third less with the bars on): the bars are drawn in four batches instead of one call
+  per segment, the opacity effects only exist while a transition runs, the title timers only run when the text does
+  not fit, the window shadow is not repainted for changes inside the card, and the spectrum is computed with fewer
+  Python loops. The equalizer now really switches off when you go back to Flat.
+
 ## [1.4.1] - 2026-10-19
 
 ### Added

@@ -1,6 +1,6 @@
 # simpleplay
 
-A small, clean mp3 player for Linux and Windows, for people who just want to play their own music.
+A small, clean mp3 and FLAC player for Linux and Windows, for people who just want to play their own music.
 No streaming, no accounts, no ads.
 
 **Website:** https://cufadev.github.io/simpleplay/
@@ -44,6 +44,11 @@ No streaming, no accounts, no ads.
 - **Sound:** a volume normalizer (uses ReplayGain tags, or measures each track once) so tracks play at
   the same loudness, and an equalizer with presets (Flat, Lively, More bass, Vocals, Bright, Warm) behind a
   soft limiter. Right click > **Sound**. Flat leaves the audio untouched.
+- **Headphone profiles:** pick your headphone model from the AutoEq database (or import a profile) and the equalizer
+  corrects its frequency response. Right click > **Sound** > **Headphones**.
+- **Playlists:** save and open plain M3U8 files (VLC and mpv read them too), with paths relative to the list so it
+  survives moving the music. Right click tracks > **Add to playlist**, or use the floppy-disk button next to the list.
+- Plays **mp3 and FLAC** (including 24-bit / 96 kHz), with tags and cover art in both.
 - The overall volume is left to the system mixer.
 - The interface is in English or Spanish, following your system language.
 
@@ -159,6 +164,20 @@ python tools/limpiar_biblioteca.py --deshacer               # puts the last run 
 - `--musicbrainz` needs internet and takes around 6 seconds per file. It only accepts a clearly
   matching official studio album, whose length is close to the file's. Its results are still
   being tuned: look at the dry run before using `--aplicar`.
+
+## Turn videos into audio
+
+`tools/convertir.sh` converts the audio of every video in a folder (and its subfolders) to mp3 or FLAC. It needs
+`ffmpeg` (with no folder it uses the current one), keeps the folder structure and the tags, never overwrites what is already converted, and leaves the
+originals alone.
+
+```
+tools/convertir.sh                                      # the folder you are in
+tools/convertir.sh ~/Videos/concerts                    # mp3, best variable quality, into ~/Videos/concerts/audio-convertido
+tools/convertir.sh ~/Videos/concerts -q 320             # constant 320 kbps
+tools/convertir.sh ~/Videos/concerts -f flac -o ~/Music/concerts
+tools/convertir.sh ~/Videos/movies -p 1                 # the second audio track
+```
 
 ## Build the AppImage
 
