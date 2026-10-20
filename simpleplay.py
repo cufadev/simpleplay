@@ -1858,6 +1858,7 @@ def _respuesta_biquad(tipo, fc, gan_db, q, freqs):
 def leer_parametrico(texto):
     """El formato 'Preamp: -6.8 dB / Filter 1: ON PK Fc 1496 Hz Gain -2.9 dB Q 0.94 ...' -> la curva que resulta de sumar
     todos los filtros (y el preamp), a 127 frecuencias entre 20 Hz y 20 kHz."""
+    texto = re.sub(r"(?<=\d),(?=\d)", ".", texto)       # Equalizer APO con la coma decimal del sistema: "Gain 2,2 dB"
     pre = re.search(r"Preamp:\s*(-?[\d.]+)\s*dB", texto, re.I)
     curva = np.full(len(PUNTOS_PERFIL), float(pre.group(1)) if pre else 0.0)
     n = 0

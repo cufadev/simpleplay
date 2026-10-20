@@ -5,6 +5,10 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
 
 ## [Unreleased]
 
+### Fixed
+- **Imported ParametricEQ profiles with a decimal comma** (`Gain 2,2 dB`, as Equalizer APO writes them on some
+  systems) were rejected with "the profile has no filters". They now load like the ones with a decimal point.
+
 ## [1.5.1] - 2026-10-20
 
 ### Fixed

@@ -830,6 +830,12 @@ class TestConsumo(Base):
 
 
 class TestPerfilesAuriculares(Base):
+    def test_parametrico_con_coma_decimal(self):
+        coma = "Preamp: -4,7 dB\nFilter 1: ON LS Fc 55 Hz Gain 2,2 dB Q 0,71\nFilter 2: ON PK Fc 210 Hz Gain -3,9 dB Q 0,5\n"
+        punto = coma.replace(",", ".")
+        self.assertEqual(S.leer_parametrico(coma), S.leer_parametrico(punto))
+        self.assertNotEqual(min(S.leer_parametrico(coma)[1]), max(S.leer_parametrico(coma)[1]))
+
     def setUp(self):
         super().setUp()
         sys.path.insert(0, str(Path(__file__).parent))
