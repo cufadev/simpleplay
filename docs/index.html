@@ -78,6 +78,13 @@ a { color: inherit; }
 h1, h2, h3, p, ol, ul, figure { margin: 0; padding: 0; }
 ol, ul { list-style: none; }
 html[lang="es"] .en, html[lang="en"] .es { display: none !important; }
+/* cambio de idioma: solo opacidad (con transform o filter se rompería lo que está fijo o pegado al scroll) */
+@media (prefers-reduced-motion: no-preference) {
+  main, footer, .barra .enlace { transition: opacity .19s ease; }
+  html.idioma-sale main, html.idioma-sale footer, html.idioma-sale .barra .enlace { opacity: 0; }
+  html.idioma-entra main, html.idioma-entra footer, html.idioma-entra .barra .enlace { animation: idioma-entra .38s var(--ease-out, ease) both; }
+  @keyframes idioma-entra { from { opacity: 0; } to { opacity: 1; } }
+}
 .ic { width: 1.25em; height: 1.25em; fill: currentColor; flex: none; }
 :focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; border-radius: 6px; }
 .saltar { position: absolute; left: 12px; top: -60px; background: var(--accent); color: var(--on-accent); padding: 10px 16px; border-radius: 999px; font-weight: 600; z-index: 60; }
@@ -198,7 +205,7 @@ html.final-directo .calor { opacity: .5; }
 .historia figure { margin-top: clamp(0px, 4vw, 56px); }
 .historia figure img { border-radius: 14px; border: 1px solid var(--line); box-shadow: var(--shadow); rotate: -1.6deg; }
 .historia figcaption { margin-top: 18px; font-size: .9rem; color: var(--muted); }
-.versiones { position: relative; margin-top: clamp(64px, 9vw, 140px); padding-left: clamp(26px, 3.4vw, 48px); display: grid; gap: clamp(14px, 2.4vw, 28px); }
+.versiones { position: relative; margin-top: clamp(64px, 9vw, 140px); padding-left: clamp(26px, 3.4vw, 48px); display: grid; gap: clamp(30px, 5.2vw, 72px); }
 .versiones li { display: grid; grid-template-columns: clamp(110px, 18vw, 260px) 1fr; align-items: center; gap: 18px; }
 .versiones .v { font-family: "Bebas Neue", "Geist", sans-serif; font-size: clamp(3.4rem, 9vw, 8rem); line-height: .86; color: color-mix(in srgb, var(--text) 22%, transparent); letter-spacing: .01em; transition: color .3s ease; }
 .versiones .t { font-size: clamp(1.1rem, 2vw, 1.6rem); line-height: 1.35; letter-spacing: -.015em; font-weight: 550; max-width: 36ch; transition: opacity .35s ease; }
@@ -208,9 +215,7 @@ html.final-directo .calor { opacity: .5; }
 .versiones .relleno { position: absolute; inset: 0 0 auto 0; height: 0; border-radius: 2px; background: var(--accent); }
 .versiones .bola { position: absolute; left: 1px; top: 0; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); }
 html.js .versiones li:not(.pasada) .t { opacity: .45; }
-html.js .versiones li.pasada .v { color: color-mix(in srgb, var(--text) 46%, transparent); }
-html.js .versiones li.actual .v { color: var(--text); }
-html.js .versiones li:last-child.pasada .v, html.js .versiones li:last-child.actual .v { color: var(--accent); }
+html.js .versiones li.pasada .v, html.js .versiones li.actual .v { color: var(--accent); }   /* las que ya pasó la bolita se pintan de naranja; la actual, además, crece */
 @media (prefers-reduced-motion: no-preference) {
   html.js .versiones li .v { transition: color .35s ease, transform .35s var(--ease-out); transform-origin: left center; }
   html.js .versiones li.actual .v { transform: scale(1.04); }
@@ -707,7 +712,21 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   };
   const delNavegador = (navigator.language || 'es').toLowerCase().startsWith('es') ? 'es' : 'en';
   ponerIdioma(memoria.leer('sp-idioma') || delNavegador);
-  document.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('click', () => ponerIdioma(b.dataset.lang)));
+  // Al cambiar de idioma el contenido se desvanece, se cambian los textos y vuelve a aparecer (con menos movimiento, se cambia directo)
+  let cambiandoIdioma = false;
+  const cambiarIdioma = (l) => {
+    if (l === html.lang || cambiandoIdioma) return;
+    if (reducir.matches) { ponerIdioma(l); return; }
+    cambiandoIdioma = true;
+    html.classList.add('idioma-sale');
+    setTimeout(() => {
+      ponerIdioma(l);
+      dispatchEvent(new Event('resize'));        // el largo de los textos cambia: el scroll y el riel de versiones se vuelven a medir
+      html.classList.replace('idioma-sale', 'idioma-entra');
+      setTimeout(() => { html.classList.remove('idioma-entra'); cambiandoIdioma = false; }, 380);
+    }, 190);
+  };
+  document.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('click', () => cambiarIdioma(b.dataset.lang)));
 
   // Tema: el guardado, y si no el del sistema
   const sistema = matchMedia('(prefers-color-scheme: dark)');
