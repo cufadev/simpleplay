@@ -16,12 +16,14 @@ from pathlib import Path
 CONFIG = tempfile.mkdtemp()
 HOME_REAL = os.environ.get("HOME", "")   # los subprocesos lo necesitan: de él sale el sitio de paquetes del usuario
 os.environ.update(QT_QPA_PLATFORM="offscreen", SIMPLEPLAY_AUDIO="null", SIMPLEPLAY_NO_MPRIS="1",
-                  XDG_CONFIG_HOME=CONFIG, XDG_DATA_HOME=CONFIG, LANGUAGE="es",
+                  XDG_CONFIG_HOME=CONFIG, XDG_DATA_HOME=CONFIG, LANGUAGE="es", SIMPLEPLAY_ECUALIZADOR="1",
                   HOME=CONFIG)   # la app guarda su estado en Path.home()/.config: sin esto los tests pisarían el real
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ))
 
 import numpy as np
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication
 
 import simpleplay as S
@@ -435,9 +437,61 @@ class TestLista(Base):
         self.w.reproducir(0)
         espera(0.5)
         self.w.parar()
-        espera(0.3)
-        self.assertFalse(self.w.motor.activo)
+        self.assertFalse(self.w.motor.reproduciendo)        # para quien mira, ya está parado
+        self.assertTrue(espera(1.0, lambda: not self.w.motor.activo))   # y el sonido se apaga tras el fundido
         self.assertEqual(self.w.actual, -1)
+
+
+class TestContadorYMiniatura(Base):
+    def test_el_contador_sigue_a_la_lista(self):
+        self.assertEqual(self.w.cuenta.text(), "0 temas")
+        self.cargar(A, B)
+        espera(0.1)
+        self.assertEqual(self.w.cuenta.text(), "2 temas")
+        self.w.buscador.setText("mono")
+        espera(0.1)
+        self.assertEqual(self.w.cuenta.text(), "1 de 2")           # con una búsqueda: cuántos se ven
+        self.w.buscador.clear()
+        self.w.lista.setCurrentRow(0)
+        self.w.lista.item(0).setSelected(True)
+        self.w.quitar()
+        espera(0.1)
+        self.assertEqual(self.w.cuenta.text(), "1 tema")
+
+    def test_la_miniatura_se_funde_al_cambiar_de_tema(self):
+        from PySide6.QtGui import QPixmap
+        def sol(c):
+            pix = QPixmap(28, 28)
+            pix.fill(QColor(c))
+            return pix
+        m = S.Miniatura(28)
+        m.show()
+        m.setPixmap(sol("#ff0000"))
+        espera(0.6)
+        self.assertEqual(m.mezcla, 1.0)
+        m.setPixmap(sol("#0000ff"))
+        espera(0.19)
+        self.assertTrue(0.0 < m.mezcla < 1.0)                      # a mitad de camino: mezcla de los dos
+        px = m.grab().toImage().pixelColor(14, 14)
+        self.assertTrue(px.red() > 20 and px.blue() > 20)
+        espera(0.4)
+        self.assertEqual(m.mezcla, 1.0)
+        self.assertIsNone(m.previa)
+        px = m.grab().toImage().pixelColor(14, 14)
+        self.assertEqual((px.red(), px.blue()), (0, 255))
+
+    def test_la_miniatura_oculta_aparece_de_a_poco(self):
+        from PySide6.QtGui import QPixmap
+        pix = QPixmap(28, 28)
+        pix.fill(QColor("#00ff00"))
+        m = S.Miniatura(28)
+        m.setPixmap(pix)                                           # todavía oculta: no hay carátula anterior
+        self.assertIsNone(m.previa)
+        m.show()
+        espera(0.1)
+        self.assertLess(m.mezcla, 1.0)
+        espera(0.5)
+        self.assertEqual(m.mezcla, 1.0)
 
 
 class TestListas(Base):
@@ -581,6 +635,38 @@ class TestNormalizadorSuave(Base):
         c.poner_ganancia(-8.0)                                # sin suave: un fundido de un bloque
         y = c.procesar(np.full((4410, 2), 0.1, np.float32))[:, 0]
         self.assertAlmostEqual(20 * np.log10(y[-1] / 0.1), -8.0, delta=0.01)
+
+    def test_con_shuffle_tambien_se_mide_el_que_sigue_y_ese_es_el_que_suena(self):
+        self.cargar(A, B)
+        self.w.btn_shuffle.setChecked(True)
+        self.w.reproducir(0)
+        self.assertTrue(espera(5.0, lambda: len(self.w._cache_sonoridad()) == 2))     # midió el otro antes de que suene
+        self.assertEqual(self.w._sig_azar[0], B)
+        self.w.siguiente()
+        self.assertEqual(self.w.actual, 1)                                              # el sorteado de antemano
+        v = [v for k, v in self.w._cache_sonoridad().items() if k.startswith(B)][0]
+        esperado = 10 ** (S.ganancia_para(v["lufs"], v["pico"]) / 20)
+        self.assertAlmostEqual(self.w.motor.cadena._gan_obj, esperado, places=5)      # arranca ya normalizado
+
+    def test_prender_el_shuffle_mide_el_que_va_a_seguir(self):
+        self.cargar(A, B)
+        self.w.reproducir(0)
+        espera(3.0, lambda: len(self.w._cache_sonoridad()) == 2)
+        for f in Path(CONFIG).rglob("sonoridad.json"):
+            f.unlink()
+        self.w._sonoridades = None
+        self.assertEqual(len(self.w._cache_sonoridad()), 0)
+        self.w.btn_shuffle.setChecked(True)
+        self.assertTrue(espera(5.0, lambda: any(k.startswith(B) for k in self.w._cache_sonoridad())))
+
+    def test_el_sorteo_anticipado_se_descarta_si_ya_no_vale(self):
+        self.cargar(A, B)
+        self.w.btn_shuffle.setChecked(True)
+        self.w.reproducir(0)
+        self.w._sig_azar = (A, False)                          # el actual no puede ser el que sigue
+        self.assertEqual(self.w._sortear_siguiente(), 1)
+        self.w._sig_azar = ("/no/esta.mp3", False)             # ya no está en la lista
+        self.assertEqual(self.w._sortear_siguiente(), 1)
 
     def test_mientras_suena_un_tema_se_mide_el_que_sigue(self):
         self.cargar(A, B)
@@ -1143,6 +1229,348 @@ class TestFlacEnElReproductor(Base):
         self.w.saltar(0.6)
         espera(0.6)
         self.assertAlmostEqual(self.w.posicion(), 6.6, delta=0.8)
+
+
+def _distancia(a, b):
+    return float(np.sqrt(np.mean((np.array(a) - np.array(b)) ** 2)))
+
+
+def _oyente(objetivo, ruido=0.0, azar=None):
+    """Una persona simulada con un gusto oculto: prefiere la curva más cercana a `objetivo` (y duda si casi empatan)."""
+    azar = azar or __import__("random").Random(1)
+
+    def elegir(a, b):
+        da, db = _distancia(a, objetivo) + azar.gauss(0, ruido), _distancia(b, objetivo) + azar.gauss(0, ruido)
+        return "igual" if abs(da - db) < 0.15 else ("a" if da < db else "b")
+    return elegir
+
+
+def _gusto(azar):
+    ejes = {k: azar.uniform(-6, 6) for k in S.EJES_AFINADOR}
+    return sum((v * np.array(S.EJES_AFINADOR[k]) for k, v in ejes.items()), np.zeros(len(S.BANDAS_HZ)))
+
+
+class TestAfinador(unittest.TestCase):
+    """La búsqueda por comparaciones A/B (sin Qt)."""
+
+    def correr(self, a, elegir):
+        n = 0
+        while not a.terminado:
+            self.assertLessEqual(n, S.Afinador.MAX_COMPARACIONES)
+            a.responder(elegir(*a.par()))
+            n += 1
+        return n
+
+    def test_se_acerca_al_gusto_de_quien_escucha(self):
+        import random
+        azar = random.Random(5)
+        antes, despues = [], []
+        for t in range(60):
+            objetivo = _gusto(azar)
+            a = S.Afinador(azar=random.Random(t))
+            antes.append(_distancia(a.mejor, objetivo))
+            self.correr(a, _oyente(objetivo))
+            despues.append(_distancia(a.mejor, objetivo))
+        self.assertLess(np.mean(despues), 0.5 * np.mean(antes))        # recorta al menos la mitad del error
+        self.assertGreater(np.mean(np.array(despues) < np.array(antes)), 0.9)
+
+    def test_aguanta_a_alguien_que_a_veces_se_equivoca(self):
+        import random
+        azar = random.Random(9)
+        antes, despues = [], []
+        for t in range(60):
+            objetivo = _gusto(azar)
+            a = S.Afinador(azar=random.Random(t))
+            antes.append(_distancia(a.mejor, objetivo))
+            self.correr(a, _oyente(objetivo, ruido=0.35, azar=random.Random(t)))
+            despues.append(_distancia(a.mejor, objetivo))
+        self.assertLess(np.mean(despues), 0.7 * np.mean(antes))
+
+    def test_son_pocas_comparaciones_y_la_curva_no_se_pasa_de_los_limites(self):
+        import random
+        a = S.Afinador(azar=random.Random(2))
+        n = self.correr(a, lambda x, y: "b")                          # siempre "B": empuja todo lo posible
+        self.assertLessEqual(n, S.Afinador.MAX_COMPARACIONES)
+        self.assertTrue(all(abs(g) <= S.LIM_BANDA_DB for g in a.mejor))
+        self.assertTrue(all(abs(v) <= S.Afinador.MAX_EJE_DB + 1e-6 for v in a.resumen().values()))
+
+    def test_si_todo_suena_igual_no_se_toca_nada(self):
+        import random
+        a = S.Afinador([1.0] * 10, azar=random.Random(3))
+        self.correr(a, lambda x, y: "igual")
+        self.assertEqual(a.mejor, [1.0] * 10)
+
+    def test_no_se_sabe_cual_es_la_nueva_y_la_mejor_se_conserva(self):
+        import random
+        lados = set()
+        for t in range(30):
+            a = S.Afinador(azar=random.Random(t))
+            A, B = a.par()
+            lados.add(A == a.mejor)                                   # a veces la actual va de A y a veces de B
+        self.assertEqual(lados, {True, False})
+
+    def test_parte_de_la_curva_que_ya_tenias(self):
+        a = S.Afinador(S.PRESETS["voces"])
+        self.assertEqual(a.mejor, [float(x) for x in S.PRESETS["voces"]])
+
+    def test_responder_despues_de_terminar_no_hace_nada(self):
+        import random
+        a = S.Afinador(azar=random.Random(4))
+        self.correr(a, lambda x, y: "igual")
+        antes = a.mejor
+        a.responder("a")
+        self.assertEqual(a.mejor, antes)
+        self.assertIsNone(a.par())
+
+
+class TestEcualizadorGrafico(Base):
+    def test_el_motor_iguala_el_volumen_de_una_curva(self):
+        curva = [6, 5, 3, 1, 0, 0, 0, 0, 0, 0]
+        self.w.escuchar_curva(curva)
+        pre = self.w.motor.cadena._pend[2]
+        self.assertAlmostEqual(20 * np.log10(pre), -S.nivel_relativo_db(S.BANDAS_HZ, curva), places=3)
+        self.assertLess(pre, 1.0)                                      # una curva que sube se baja de volumen
+
+    def test_mi_sonido_se_guarda_y_se_restaura(self):
+        curva = [2, 1, 0, -1, 0, 1.5, 2.5, 0, -1, 3]
+        self.w.poner_curva_personal(curva)
+        self.assertEqual(self.w.preset, "personal")
+        self.cargar(A)
+        self.w.guardar_estado()
+        self.w.close()
+        self.w.motor.cerrar()
+        w2 = S.Player()
+        w2.show()
+        self.w = w2
+        w2.restaurar()
+        self.assertEqual(w2.preset, "personal")
+        self.assertEqual(w2.eq_personal, curva)
+        self.assertTrue(w2.motor.cadena.activa)
+
+    def test_sin_mi_sonido_guardado_el_preset_personal_cae_en_plano(self):
+        self.w.poner_preset("personal")
+        self.assertEqual(self.w.preset, "plano")
+
+    def test_valores_fuera_de_rango_se_recortan(self):
+        self.w.poner_curva_personal([99, -99] + [0] * 8)
+        self.assertEqual(self.w.eq_personal[:2], [S.LIM_BANDA_DB, -S.LIM_BANDA_DB])
+
+    def test_curva_actual_de_un_preset_y_de_un_perfil(self):
+        self.w.poner_preset("graves")
+        self.assertEqual(self.w.curva_actual(), [float(x) for x in S.PRESETS["graves"]])
+        ident = self.w.instalar_perfil("Prueba", "test", [20, 1000, 20000], [4, 0, -4])
+        self.w.poner_preset("perfil:" + ident)
+        c = self.w.curva_actual()
+        self.assertEqual(len(c), 10)
+        self.assertGreater(c[0], 0)                                    # el perfil sube los graves
+        self.assertLess(c[-1], 0)
+
+    def test_las_barras_mueven_el_sonido(self):
+        d = S.DialogoEcualizador(self.w)
+        self.assertEqual(d.curva(), [float(x) for x in S.PRESETS[S.PRESET_INICIAL]])   # arranca desde lo que suena
+        d.sliders[0].setValue(10)                                      # +5 dB en 31 Hz (el preset tenía +4)
+        espera(0.3, lambda: self.w.preset == "personal")
+        self.assertEqual(self.w.preset, "personal")
+        self.assertEqual(self.w.eq_personal[0], 5.0)
+        self.assertEqual(self.w.eq_personal[1:], [float(x) for x in S.PRESETS[S.PRESET_INICIAL][1:]])
+        self.assertEqual(d.valores[0].text(), "+5")
+
+    def test_partir_de_un_preset_carga_sus_valores(self):
+        d = S.DialogoEcualizador(self.w)
+        d.poner_curva(S.curva_de_preset("voces"))
+        self.assertEqual(d.curva(), [float(x) for x in S.PRESETS["voces"]])
+        self.assertEqual(self.w.eq_personal, [float(x) for x in S.PRESETS["voces"]])
+
+    def test_al_elegir_un_preset_las_barras_se_deslizan_hasta_su_lugar(self):
+        d = S.DialogoEcualizador(self.w)
+        d.show()
+        antes = [sl.value() for sl in d.sliders]
+        destino = [round(g * 2) for g in S.curva_de_preset("graves")]
+        d.poner_curva(S.curva_de_preset("graves"), animar=True)
+        self.assertEqual(self.w.preset, "personal")                       # el sonido cambia enseguida
+        self.assertEqual(self.w.eq_personal, [x / 2 for x in destino])
+        self.assertEqual([sl.value() for sl in d.sliders], antes)         # las barras todavía no se movieron
+        vistos = []
+        espera(0.8, lambda: vistos.append([sl.value() for sl in d.sliders]) and d.anim_barras.state() != d.anim_barras.State.Running and len(vistos) > 3)
+        final = [sl.value() for sl in d.sliders]
+        self.assertEqual(final, destino)
+        medios = [v for v in vistos if v != antes and v != destino]
+        self.assertTrue(medios)                                           # pasaron por posiciones intermedias
+        i = max(range(10), key=lambda k: abs(destino[k] - antes[k]))     # y la que más recorre lo hace sin saltos hacia atrás
+        serie = [v[i] for v in vistos]
+        sentido = 1 if destino[i] > antes[i] else -1
+        self.assertTrue(all((b - a) * sentido >= 0 for a, b in zip(serie, serie[1:])))
+        self.assertEqual(d.valores[i].text(), S.fmt_db(destino[i] / 2))   # y el número va acompañando
+        d.reject()
+
+    def test_tocar_una_barra_a_mitad_de_la_animacion_la_asienta(self):
+        d = S.DialogoEcualizador(self.w)
+        d.poner_curva(S.curva_de_preset("brillante"), animar=True)
+        d.anim_barras.setCurrentTime(100)
+        d._asentar()
+        self.assertEqual([sl.value() / 2 for sl in d.sliders], [float(x) for x in S.PRESETS["brillante"]])
+        self.assertNotEqual(d.anim_barras.state(), d.anim_barras.State.Running)
+
+    def test_afinar_sin_musica_avisa_y_no_deja_responder(self):
+        d = S.DialogoAfinar(self.w)
+        self.assertFalse(d.pref_a.isEnabled())
+
+    def test_afinar_de_punta_a_punta_guarda_mi_sonido(self):
+        import random
+        self.cargar(A)
+        objetivo = np.array([3, 2, 1, 0, 0, 0, 1, 2, 3, 3], dtype=float)
+        d = S.DialogoAfinar(self.w, azar=random.Random(1))
+        self.assertTrue(espera(1.0, lambda: self.w.actual >= 0))      # arrancó un tema para poder comparar
+        elegir = _oyente(objetivo)
+        antes = _distancia(d.afinador.mejor, objetivo)
+        n = 0
+        while d.resultado is None and n < 20:
+            n += 1
+            r = elegir(*d.par)
+            {"a": d.pref_a, "b": d.pref_b, "igual": d.igual}[r].click()
+        self.assertIsNotNone(d.resultado)
+        self.assertLessEqual(n, S.Afinador.MAX_COMPARACIONES)
+        self.assertLess(_distancia(d.resultado, objetivo), antes)
+        d.guardar.click()
+        self.assertEqual(self.w.preset, "personal")
+        self.assertEqual(self.w.eq_personal, [round(x * 2) / 2 for x in d.resultado])
+
+    def test_cancelar_el_afinado_deja_el_sonido_como_estaba(self):
+        self.cargar(A)
+        self.w.poner_preset("voces")
+        d = S.DialogoAfinar(self.w)
+        d.pref_b.click()
+        d.reject()
+        self.assertEqual(self.w.preset, "voces")
+        self.assertIsNone(d.resultado)
+        self.assertIsNone(self.w.eq_personal)
+
+    def test_sin_la_variable_el_menu_no_ofrece_ni_el_ecualizador_ni_el_afinado(self):
+        S.EQ_GRAFICO = False
+        try:
+            self.w.eq_personal = [1.0] * 10
+            menu = S.Menu()
+            self.w._menu_sonido(menu, anidado=False)
+            textos = [a.text() for a in menu.actions()]
+            for no in ("Ecualizador gráfico…", "Afinar al oído…", "Mi sonido"):
+                self.assertNotIn(no, textos)
+        finally:
+            S.EQ_GRAFICO = True
+
+    def test_el_menu_de_sonido_ofrece_el_ecualizador_y_el_afinado(self):
+        menu = S.Menu()
+        self.w._menu_sonido(menu, anidado=False)
+        textos = [a.text() for a in menu.actions()]
+        self.assertIn("Ecualizador gráfico…", textos)
+        self.assertIn("Afinar al oído…", textos)
+        self.assertNotIn("Mi sonido", textos)                          # todavía no hay
+        self.w.poner_curva_personal([1] * 10)
+        menu = S.Menu()
+        self.w._menu_sonido(menu, anidado=False)
+        self.assertIn("Mi sonido", [a.text() for a in menu.actions()])
+
+
+class TestPanelLateral(Base):
+    """El ecualizador y el afinado se abren al costado de la ventana, con el mismo vidrio que el reproductor."""
+
+    def test_el_lado_depende_del_lugar_que_hay(self):
+        from PySide6.QtCore import QRect
+        pant = QRect(0, 0, 1920, 1080)
+        self.assertEqual(S.lado_para_panel(pant, QRect(100, 100, 400, 500), 380), "der")
+        self.assertEqual(S.lado_para_panel(pant, QRect(1400, 100, 400, 500), 380), "izq")     # a la derecha no entra
+        self.assertEqual(S.lado_para_panel(pant, QRect(100, 100, 400, 500), 1700), "der")     # no entra en ningún lado: donde sobra más
+        self.assertEqual(S.lado_para_panel(pant, QRect(1000, 100, 400, 500), 1700), "izq")
+
+    def _abrir(self, x):
+        pant = self.w.screen().availableGeometry()
+        self.w.move(pant.left() + x, pant.top() + 60)
+        espera(0.1)
+        return self.w.ecualizador()
+
+    def test_se_pega_a_la_derecha_si_hay_lugar_y_a_la_izquierda_si_no(self):
+        pant = self.w.screen().availableGeometry()
+        d = self._abrir(10)
+        visible = self.w.frameGeometry().adjusted(M, M, -M, -M)
+        cuerpo_x = d.x() + M
+        if pant.width() > visible.width() * 2 + 100:
+            self.assertEqual(cuerpo_x, visible.right() + 1 + S.HUECO_PANEL)
+        self.assertEqual(d.y() + M, visible.top())                       # alineado arriba
+        d.reject()
+        d = self._abrir(pant.width() - self.w.width() - 10)               # pegada al borde derecho
+        visible = self.w.frameGeometry().adjusted(M, M, -M, -M)
+        self.assertLessEqual(d.x() + d.width() - M, pant.right() + 1)    # no se sale de la pantalla
+        if visible.left() - pant.left() > d.width():
+            self.assertLessEqual(d.x() + d.width() - M, visible.left())  # quedó a la izquierda, sin tapar la ventana
+        d.reject()
+
+    def test_sigue_a_la_ventana_y_se_despega_si_se_la_arrastra(self):
+        d = self._abrir(10)
+        x0 = d.x()
+        self.w.move(self.w.x() + 40, self.w.y())
+        espera(0.2, lambda: d.x() != x0)
+        self.assertNotEqual(d.x(), x0)                                    # fue detrás de la ventana
+        d._pegado = False
+        x1 = d.x()
+        self.w.move(self.w.x() + 40, self.w.y())
+        espera(0.2)
+        self.assertEqual(d.x(), x1)                                       # despegado: ya no la sigue
+        d.reject()
+
+    def test_es_una_ventana_sin_marco_y_translucida_y_no_bloquea(self):
+        d = self._abrir(10)
+        self.assertTrue(d.windowFlags() & Qt.FramelessWindowHint)
+        self.assertTrue(d.testAttribute(Qt.WA_TranslucentBackground))
+        self.assertFalse(d.isModal())
+        self.assertIs(self.w._panel, d)
+        d.reject()
+
+    def test_se_despliega_y_se_pliega_como_el_panel_de_la_lista(self):
+        d = self._abrir(10)
+        self.assertLess(d._v, 1.0)                                        # recién abierto: todavía saliendo
+        self.assertTrue(espera(1.0, lambda: d._v >= 1.0))
+        self.assertTrue(d.mask().isEmpty())                               # abierto del todo: sin recorte
+        d.reject()
+        self.assertTrue(d.isVisible())                                    # se pliega antes de cerrarse
+        vistos = []
+        espera(0.12, lambda: vistos.append(d._v) and False)
+        self.assertTrue(espera(1.0, lambda: not d.isVisible()))
+        self.assertTrue(any(0.0 < v < 1.0 for v in vistos))              # y pasó por valores intermedios
+
+    def test_a_medio_desplegar_el_recorte_va_del_lado_pegado_a_la_ventana(self):
+        d = self._abrir(10)
+        d.despliegue.stop()
+        c = d.cuerpo
+        d._lado = "der"
+        d._desplegar(0.5)
+        r = c.mask().boundingRect()
+        self.assertEqual(r.left(), 0)
+        self.assertAlmostEqual(r.width(), c.width() / 2, delta=2)
+        self.assertLess(d.ef.opacity(), 1.0)                              # y a medio fundir
+        d._lado = "izq"
+        d._desplegar(0.5)
+        r = c.mask().boundingRect()
+        self.assertEqual(r.right() + 1, c.width())
+        d._desplegar(1.0)
+        self.assertTrue(c.mask().isEmpty())
+        self.assertFalse(d.ef.isEnabled())                                # abierto: se dibuja directo
+        d.cerrar_ya()
+        self.assertFalse(d.isVisible())
+
+    def test_no_usa_opacidad_ni_mascara_de_ventana(self):
+        # Wayland no las soporta: Qt avisaba "does not support setting window opacity" en cada cuadro de la animación
+        d = self._abrir(10)
+        espera(0.5, lambda: d._v >= 1.0)
+        self.assertEqual(d.windowOpacity(), 1.0)
+        self.assertTrue(d.mask().isEmpty())
+        d.reject()
+        espera(0.5, lambda: not d.isVisible())
+
+    def test_abrir_otro_panel_cierra_el_anterior(self):
+        a = self.w.ecualizador()
+        b = self.w.afinar_al_oido()
+        self.assertFalse(a.isVisible())
+        self.assertTrue(b.isVisible())
+        b.reject()
 
 
 if __name__ == "__main__":

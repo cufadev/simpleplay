@@ -39,16 +39,16 @@ from mutagen.id3 import ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TDRC, APIC
 from mutagen import File as MutagenFile
 from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
-from PySide6.QtCore import (Qt, QTimer, QCoreApplication, QRectF, QPointF, QSize, Signal, QLocale, QUrl, QObject,
+from PySide6.QtCore import (Qt, QEvent, QTimer, QCoreApplication, QRectF, QPointF, QSize, Signal, QLocale, QUrl, QObject,
                             ClassInfo, Property, Slot, QMetaType,
-                            QStandardPaths, QVariantAnimation, QEasingCurve, QPoint, QItemSelectionModel)
+                            QStandardPaths, QVariantAnimation, QEasingCurve, QPoint, QItemSelectionModel, QEventLoop)
 from PySide6.QtGui import (QShortcut, QKeySequence, QIcon, QFont, QFontMetrics, QPainter, QColor, QPixmap, QImage, QLinearGradient,
-                           QPainterPath, QPolygonF, QPen, QPalette)
+                           QPainterPath, QPolygonF, QPen, QPalette, QRegion)
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QSlider, QAbstractButton, QListWidget,
                                QFileDialog, QFrame, QLayout, QMenu, QSizePolicy,
                                QStackedLayout, QGraphicsOpacityEffect, QMessageBox,
-                               QAbstractItemView, QLineEdit, QListWidgetItem, QDialog, QPushButton)
+                               QAbstractItemView, QLineEdit, QListWidgetItem, QDialog, QPushButton, QComboBox)
 
 try:
     from PySide6.QtDBus import (QDBusConnection, QDBusAbstractAdaptor, QDBusObjectPath,
@@ -57,10 +57,13 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.5.2"
+VERSION = "1.5.3"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
+# El ecualizador gráfico y "Afinar al oído" también están escritos pero desactivados mientras se pulen:
+# SIMPLEPLAY_ECUALIZADOR=1 python simpleplay.py
+EQ_GRAFICO = bool(os.environ.get("SIMPLEPLAY_ECUALIZADOR"))
 NARANJA = "#ff4e01"
 # Sombra alrededor de la tarjeta y de la barra: la ventana no tiene marco y el escritorio no le pone ninguna.
 # SIMPLEPLAY_SOMBRA=0 la apaga. Se dibuja en un margen transparente de la ventana (SOMBRA_MARGEN px por lado).
@@ -741,6 +744,53 @@ def circular(pix, d):
     p.drawPixmap((d - esc.width()) // 2, (d - esc.height()) // 2, esc)
     p.end()
     return out
+
+
+class Miniatura(QWidget):
+    """La carátula redonda y chica de la píldora. Al cambiar de tema se funde con la anterior, igual que la grande
+    (si venía oculta, aparece de a poco en vez de saltar)."""
+
+    def __init__(self, lado):
+        super().__init__()
+        self.setFixedSize(lado, lado)
+        self.actual = self.previa = None
+        self.mezcla = 1.0
+        self.anim = QVariantAnimation(self)
+        self.anim.setDuration(380)
+        self.anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.valueChanged.connect(self._mezclar)
+        self.anim.finished.connect(self._fin)
+
+    def _mezclar(self, v):
+        self.mezcla = v
+        self.update()
+
+    def _fin(self):
+        self.previa = None
+        self.update()
+
+    def setPixmap(self, pix):
+        nueva = pix if pix is not None and not pix.isNull() else None
+        self.previa = self.actual if self.isVisible() else None   # oculta: no hay nada de dónde fundir
+        self.actual = nueva
+        self.anim.stop()
+        if nueva is None:
+            self.mezcla = 1.0
+            self.update()
+        else:
+            self.mezcla = 0.0
+            self.anim.start()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        if self.previa is not None and self.mezcla < 1.0:
+            p.drawPixmap(0, 0, self.previa)
+        if self.actual is not None:
+            p.setOpacity(self.mezcla)
+            p.drawPixmap(0, 0, self.actual)
 
 
 class Menu(QMenu):
@@ -1498,7 +1548,9 @@ if HAY_DBUS:
 # Reproduce con miniaudio (float32 estéreo a 44,1 kHz): la posición, la pausa, el salto, el fin de pista
 # y las muestras para el espectro salen todos del mismo callback, así que no hay desfases entre ellos.
 FS = 44100          # frecuencia fija del dispositivo: miniaudio convierte los archivos que usen otra
-FADE = 220          # frames (5 ms) de los fundidos de pausa y de salto, para que no haya clicks
+FADE = 220          # frames (5 ms) de los fundidos de salto y de cambio de tema, para que no haya clicks
+FUNDIDO_SALIDA_S = 0.25   # al pausar, parar o cerrar el volumen baja en este tiempo (antes cortaba en 5 ms)
+FUNDIDO_ENTRADA_S = 0.15  # al reanudar sube en este tiempo
 # Qué casillas de la transformada entran en cada banda (se calcula una vez) y cuánto se compensa la caída natural de
 # los agudos en la música.
 _RES = FS / VENTANA
@@ -1635,6 +1687,106 @@ PRESETS = {
     "calido":    (3, 2.5, 2, 1, 0, -0.5, -1, -2, -2.5, -3),
 }
 PRESET_INICIAL = "vivo"
+NOMBRES_PRESETS = {"plano": ("Plano (sin ecualizar)", "Flat (no EQ)"), "vivo": ("Vivo", "Lively"),
+                   "graves": ("Más graves", "More bass"), "voces": ("Voces", "Vocals"),
+                   "brillante": ("Brillante", "Bright"), "calido": ("Cálido", "Warm")}
+LIM_BANDA_DB = 12.0          # el ecualizador gráfico va de -12 a +12 dB por banda
+
+# Cada eje del afinador mueve varias bandas a la vez con una forma suave (valor por banda de BANDAS_HZ): son pocos
+# ajustes que se entienden al oído (graves, cuerpo, presencia, brillo) y no diez botones sueltos.
+EJES_AFINADOR = {
+    "graves":    (1.0, 1.0, 0.8, 0.4, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0),
+    "cuerpo":    (0.0, 0.1, 0.5, 1.0, 0.8, 0.2, 0.0, 0.0, 0.0, 0.0),
+    "presencia": (0.0, 0.0, 0.0, 0.0, 0.2, 0.6, 1.0, 0.9, 0.2, 0.0),
+    "brillo":    (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.5, 1.0, 1.0),
+}
+
+
+class Afinador:
+    """Busca, por comparaciones A/B, la curva de ecualización que más le gusta a quien escucha.
+
+    Es una búsqueda por patrones (coordenada a coordenada): en cada eje (graves, cuerpo, presencia, brillo) prueba
+    un poco más y, si pierde, un poco menos; si algo gana, sigue en esa dirección hasta que deja de ganar. Se hacen
+    dos pasadas, la segunda con pasos más finos. Son pocas comparaciones (hasta 12) y siempre se puede
+    cortar y quedarse con lo mejor hasta ahí.
+
+    Las dos versiones se ofrecen en orden al azar (no se sabe cuál es la nueva) y quien llama debe oírlas a igual
+    volumen (`nivel_relativo_db`): si no, lo que suena más fuerte parecería mejor. "Igual" cuenta como que la nueva no
+    gana, así que la curva solo cambia con una preferencia clara.
+    """
+    PASOS_DB = (3.0, 1.5)
+    MAX_EJE_DB = 8.0
+    MAX_COMPARACIONES = 12
+
+    def __init__(self, inicial=None, azar=None):
+        self.base = [0.0] * len(BANDAS_HZ) if inicial is None else [float(x) for x in inicial]
+        self.ejes = {k: 0.0 for k in EJES_AFINADOR}
+        self._azar = azar or random.Random()
+        self.hechas = 0
+        self._reto_en_b = False
+        self._reto = None
+        self._gen = self._buscar()
+        self._siguiente_reto(None)
+
+    def _curva(self, ejes):
+        c = np.array(self.base, dtype=float)
+        for k, v in ejes.items():
+            c = c + v * np.array(EJES_AFINADOR[k])
+        return [round(float(max(-LIM_BANDA_DB, min(LIM_BANDA_DB, x))), 2) for x in c]
+
+    @property
+    def mejor(self):
+        """La curva que va ganando (10 valores en dB)."""
+        return self._curva(self.ejes)
+
+    @property
+    def terminado(self):
+        return self._reto is None
+
+    def _buscar(self):
+        for paso in self.PASOS_DB:
+            for eje in EJES_AFINADOR:
+                for signo in (1, -1):
+                    gano = False
+                    while True:
+                        if self.hechas >= self.MAX_COMPARACIONES:
+                            return
+                        nuevo = self.ejes[eje] + signo * paso
+                        if abs(nuevo) > self.MAX_EJE_DB + 1e-9:
+                            break
+                        gana = yield dict(self.ejes, **{eje: nuevo})
+                        if not gana:
+                            break
+                        self.ejes[eje] = nuevo
+                        gano = True
+                    if gano:
+                        break                                   # ya se sabe para qué lado: no hace falta probar el otro
+
+    def _siguiente_reto(self, gana):
+        try:
+            self._reto = next(self._gen) if gana is None else self._gen.send(gana)
+        except StopIteration:
+            self._reto = None
+        self._reto_en_b = self._azar.random() < 0.5
+
+    def par(self):
+        """(curva A, curva B) de la comparación actual, o None si ya terminó. Una es la mejor hasta ahora y la otra la que se prueba."""
+        if self._reto is None:
+            return None
+        actual, reto = self.mejor, self._curva(self._reto)
+        return (actual, reto) if self._reto_en_b else (reto, actual)
+
+    def responder(self, eleccion):
+        """'a', 'b' o 'igual'."""
+        if self._reto is None:
+            return
+        gana = (eleccion == "b" and self._reto_en_b) or (eleccion == "a" and not self._reto_en_b)
+        self.hechas += 1
+        self._siguiente_reto(bool(gana))
+
+    def resumen(self):
+        """Lo que se ajustó, por eje (dB)."""
+        return {k: round(v, 2) for k, v in self.ejes.items()}
 OBJETIVO_LUFS = -16.0        # sonoridad a la que se lleva cada tema
 GANANCIA_MAX_DB, GANANCIA_MIN_DB = 9.0, -12.0
 LIMITE_SUAVE = 0.85          # por encima de esto el limitador empieza a comprimir (nunca pasa de 1.0)
@@ -1685,10 +1837,11 @@ class Cadena:
         self._suave = suave
         self._gan_obj = 10 ** (max(GANANCIA_MIN_DB, min(GANANCIA_MAX_DB, db)) / 20)
 
-    def poner_eq(self, gan_db, freqs=None, makeup_db=0.0):
+    def poner_eq(self, gan_db, freqs=None, makeup_db=0.0, nivel_db=None):
         """gan_db: 10 valores en dB (BANDAS_HZ), o None / todo ceros para dejarlo plano. Con `freqs`, una tabla de
         ganancias en esas frecuencias (un perfil de auriculares); `makeup_db` sube el nivel general para compensar lo que
-        el perfil baja (ver `nivel_relativo_db`)."""
+        el perfil baja (ver `nivel_relativo_db`). Con `nivel_db` (el nivel relativo de la curva) el preamplificador la
+        deja a igual volumen que sin ecualizar: se usa al comparar curvas, para que la más fuerte no gane por serlo."""
         plano = gan_db is None or (not any(gan_db) and not makeup_db)
         with self._lock:
             if plano and self._h is None and self._pend is None:
@@ -1697,7 +1850,7 @@ class Cadena:
                 self._pend = ("bypass", None, 1.0)  # se funde de vuelta al audio tal cual y el filtro deja de correr
             else:
                 subida = max(0.0, max(gan_db))
-                pre_db = -0.5 * subida if freqs is None else makeup_db - subida
+                pre_db = -nivel_db if nivel_db is not None else (-0.5 * subida if freqs is None else makeup_db - subida)
                 self._pend = ("eq", _taps_ecualizador(gan_db, freqs), 10 ** (pre_db / 20))
 
     def _filtrar(self, ext, h):
@@ -1932,7 +2085,7 @@ class Motor(QObject):
     """Motor de audio: un dispositivo siempre abierto y un callback que decide, bloque a bloque, qué suena.
 
     - Posición = frames entregados menos la latencia del dispositivo (se interpola entre callbacks).
-    - Pausa y reanudar: fundido de 5 ms, el dispositivo sigue andando (entrega silencio).
+    - Pausa, parar y cerrar: el volumen baja en 250 ms; reanudar sube en 150 ms. El dispositivo sigue andando (entrega silencio).
     - Saltar y cambiar de tema: fundido cruzado de 5 ms entre el audio viejo y el nuevo.
     - Fin de pista: la señal `fin_de_pista` se emite una sola vez (es segura entre hilos).
     - `muestras(n)`: las últimas n muestras (mono) que están sonando, para el espectro.
@@ -1942,9 +2095,14 @@ class Motor(QObject):
     error_archivo = Signal(str, str)  # (ruta, motivo): el tema no se puede reproducir
     ANILLO = 32768
 
-    def __init__(self, buffer_ms=120, latencia_ms=None, backend=None, parent=None, vigilancia_s=1.0, umbral_s=None, reintento_s=3.0):
+    def __init__(self, buffer_ms=120, latencia_ms=None, backend=None, parent=None, vigilancia_s=1.0, umbral_s=None, reintento_s=3.0,
+                 fundido_salida_s=FUNDIDO_SALIDA_S, fundido_entrada_s=FUNDIDO_ENTRADA_S):
         super().__init__(parent)
         self.buffer_ms = buffer_ms
+        self.f_sal = max(round(fundido_salida_s * FS), FADE)     # frames de la bajada (pausa, parar, cerrar)
+        self.f_ent = max(round(fundido_entrada_s * FS), FADE)    # frames de la subida al reanudar
+        self._fade_in = FADE          # largo de la subida en curso: corto al arrancar un tema, largo al reanudar
+        self._gen = 0                 # cada orden nueva lo sube: cancela un parar() que estaba esperando su fundido
         # si el dispositivo deja de pedir audio durante tanto tiempo, se lo da por caído y se lo vuelve a abrir
         self.umbral = max(1.5, 8 * buffer_ms / 1000) if umbral_s is None else umbral_s
         self.reintento = reintento_s    # cada cuánto se reintenta abrir una placa que no estaba
@@ -2019,6 +2177,7 @@ class Motor(QObject):
             self._poner(None, 0)
             self.error_archivo.emit(ruta, str(e) or type(e).__name__)
             return False
+        self._gen += 1
         self.ruta = ruta
         self._terminada = False
         self.duracion = self._duracion(ruta)
@@ -2050,17 +2209,38 @@ class Motor(QObject):
         if self._dev is None:
             self._abrir_dispositivo()   # tal vez la placa volvió
         if self.activo and not self._terminada:
+            self._gen += 1
+            self._fade_in = self.f_ent
             self._quiere = True
 
     def parar(self):
+        """Frena. Si está sonando, el volumen baja en `fundido_salida` y recién después se corta; cargar o reanudar
+        en ese lapso lo cancela."""
+        if self._dev is not None and self._quiere and self.activo and self._gan > 0.001 and QCoreApplication.instance():
+            self._quiere = False
+            self._gen += 1
+            gen = self._gen
+            QTimer.singleShot(round(self.f_sal / FS * 1000) + self.buffer_ms,
+                              lambda: self._parar_ya() if gen == self._gen else None)
+            return
+        self._parar_ya()
+
+    def _parar_ya(self):
         self._quiere = False
         self.ruta = None
         self._terminada = False
         self._soltar_indice()
         self._poner(None, 0)
 
-    def cerrar(self):
-        """Detiene el dispositivo y libera lo abierto (al cerrar la aplicación)."""
+    def cerrar(self, fundido=True):
+        """Detiene el dispositivo y libera lo abierto (al cerrar la aplicación). Si suena, primero baja el volumen
+        (unos 0,4 s) en vez de cortar de golpe."""
+        if fundido and self._dev is not None and self.reproduciendo:
+            self._quiere = False
+            limite = time.perf_counter() + self.f_sal / FS + 0.3
+            while self._gan > 0.001 and time.perf_counter() < limite:
+                time.sleep(0.01)
+            time.sleep(self.buffer_ms / 1000)       # lo que ya está en el búfer de la placa termina de salir
         self._vigia.stop()
         self._soltar_indice(ya=True)
         if self._dev is not None:
@@ -2218,11 +2398,13 @@ class Motor(QObject):
                 log(f"motor: {e!r}")
             req = yield out
 
-    def _rampa(self, n, objetivo):
-        """Ganancia de cada uno de n frames: de la actual al objetivo en FADE frames."""
-        g = self._gan + (objetivo - self._gan) * np.minimum(np.arange(1, n + 1) / FADE, 1.0)
+    def _rampa(self, n, objetivo, fade=FADE):
+        """Ganancia de cada uno de n frames: de la actual al objetivo, a razón de 1/fade por frame (de 0 a 1 en `fade`
+        frames). Lo que se oye sigue una curva de coseno: arranca y llega sin quiebres."""
+        paso = np.arange(1, n + 1) / fade
+        g = np.minimum(self._gan + paso, objetivo) if objetivo > self._gan else np.maximum(self._gan - paso, objetivo)
         self._gan = float(g[-1])
-        return g.astype(np.float32)
+        return (0.5 - 0.5 * np.cos(np.pi * g)).astype(np.float32)
 
     def _bloque(self, req):
         """Arma los `req` frames que pide el dispositivo (corre en el hilo de audio)."""
@@ -2254,15 +2436,18 @@ class Motor(QObject):
                 self._gan = 0.0
             else:                                   # arranque desde silencio (o salto en pausa): entra con fundido
                 self._gan = 0.0
+            if nueva is not None:
+                self._fade_in = FADE                # un tema que empieza no se apaga: entra rápido, sin perder el ataque
         if self._fuente is not None and hecho < req:
             objetivo = 1.0 if self._quiere else 0.0
+            fade = self._fade_in if self._quiere else self.f_sal
             quedan = req - hecho
             if objetivo == 0.0:                     # pausando: solo hace falta el fundido de salida
-                quedan = min(quedan, int(round(self._gan * FADE)))
+                quedan = min(quedan, int(round(self._gan * fade)))
             if quedan > 0:
                 x = _leer(self._fuente, quedan)
                 if len(x):
-                    x = x * self._rampa(len(x), objetivo)[:, None]
+                    x = x * self._rampa(len(x), objetivo, fade)[:, None]
                     out[hecho:hecho + len(x)] = x
                     hecho += len(x)
                     self._ent_fuente += len(x)
@@ -2407,6 +2592,421 @@ class DialogoAuriculares(QDialog):
         self.player.descargar_perfil(nombre, fuente, ruta)
         self.accept()
 
+ESTILO_PANEL = """QDialog { background: transparent; } QLabel { color: #cfcfd4; background: transparent; }
+    QFrame#cuerpo { background: rgba(22,22,24,235); border-radius: 18px; }
+    QPushButton { background: rgba(255,255,255,40); color: white; border: none; border-radius: 12px; padding: 8px 16px; }
+    QPushButton:hover { background: rgba(255,255,255,75); } QPushButton:disabled { color: rgba(255,255,255,90); }
+    QPushButton#principal { background: #ff4e01; } QPushButton#principal:disabled { background: rgba(255,78,1,80); }
+    QPushButton:checked { background: #ff4e01; }
+    QComboBox { background: rgba(255,255,255,26); color: white; border: none; border-radius: 12px; padding: 6px 12px; }
+    QComboBox QAbstractItemView { background: #1e1e22; color: white; selection-background-color: #ff4e01; outline: 0; }
+    QSlider::groove:vertical { width: 3px; background: rgba(255,255,255,70); border-radius: 1px; }
+    QSlider::sub-page:vertical { background: rgba(255,255,255,70); border-radius: 1px; }
+    QSlider::add-page:vertical { background: #ff4e01; border-radius: 1px; }
+    QSlider::handle:vertical { background: white; height: 11px; width: 11px; margin: 0 -4px; border-radius: 5px; }"""
+HUECO_PANEL = 10          # separación entre la ventana y el panel pegado a su lado
+
+
+def lado_para_panel(pantalla, vent, ancho):
+    """Dónde poner un panel de `ancho` px pegado a una ventana: 'der' si entra a su derecha, si no 'izq', y si tampoco
+    entra a la izquierda, el lado donde sobra más lugar (el panel se corre para no salirse de la pantalla).
+    `pantalla` y `vent` son QRect: el área útil de la pantalla y la parte visible de la ventana."""
+    libre_der = pantalla.right() + 1 - vent.right() - 1 - HUECO_PANEL
+    libre_izq = vent.left() - HUECO_PANEL - pantalla.left()
+    if libre_der >= ancho:
+        return "der"
+    if libre_izq >= ancho:
+        return "izq"
+    return "der" if libre_der >= libre_izq else "izq"
+
+
+class PanelLateral(QDialog):
+    """Base de los paneles del sonido: una ventana sin marco, con el mismo vidrio oscuro, esquinas y sombra que el
+    reproductor. Se abre pegada al costado de la ventana (a la derecha si hay lugar, si no a la izquierda), la sigue
+    cuando se mueve. Con una ventana de tipo Dialog también se puede arrastrar de cualquier zona vacía (se despega)."""
+    RADIO = 18
+    # Tooltip (y no Dialog): en Wayland el sistema ignora la posición de una ventana común y la deja encima del
+    # reproductor; una de este tipo se ubica respecto de su ventana madre. A cambio no recibe el teclado ni se arrastra.
+    TIPO = Qt.ToolTip
+
+    def __init__(self, player):
+        super().__init__(player)
+        self.player = player
+        self._pegado = True
+        self.setWindowFlags(self.TIPO | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet(ESTILO_PANEL)
+        self.cuerpo = QFrame()
+        self.cuerpo.setObjectName("cuerpo")
+        self.lay = QVBoxLayout(self.cuerpo)
+        self.lay.setContentsMargins(18, 16, 18, 16)
+        self.lay.setSpacing(10)
+        raiz = QVBoxLayout(self)
+        raiz.setContentsMargins(SOMBRA_MARGEN, SOMBRA_MARGEN, SOMBRA_MARGEN, SOMBRA_MARGEN)
+        raiz.addWidget(self.cuerpo)
+        self.ef = QGraphicsOpacityEffect(self.cuerpo)
+        self.cuerpo.setGraphicsEffect(self.ef)
+        raiz.setSizeConstraint(QLayout.SetFixedSize)
+        player.installEventFilter(self)
+        self._lado = "der"
+        self._v = 0.0                          # cuánto está desplegado (0-1), como el panel de la lista de temas
+        self._cerrando = self._sin_anim = False
+        self._res = 0
+        self.despliegue = QVariantAnimation(self)
+        self.despliegue.setDuration(280)
+        self.despliegue.setEasingCurve(QEasingCurve.OutCubic)
+        self.despliegue.valueChanged.connect(self._desplegar)
+        self.despliegue.finished.connect(self._fin_despliegue)
+
+    def acoplar(self):
+        """Lo pega al costado de la ventana del reproductor (alineado arriba) sin salirse de la pantalla."""
+        if not self._pegado:
+            return
+        m = SOMBRA_MARGEN
+        g = self.player.frameGeometry().adjusted(m, m, -m, -m)       # la parte visible: sin el aire de la sombra
+        pant = (self.player.screen() or QApplication.primaryScreen()).availableGeometry()
+        w, h = self.width() - 2 * m, self.height() - 2 * m
+        self._lado = lado_para_panel(pant, g, w)
+        if self._lado == "der":
+            x = g.right() + 1 + HUECO_PANEL
+        else:
+            x = g.left() - HUECO_PANEL - w
+        x = max(pant.left(), min(x, pant.right() + 1 - w))
+        y = max(pant.top(), min(g.top(), pant.bottom() + 1 - h))
+        self.move(x - m, y - m)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.adjustSize()
+        self.acoplar()
+        QTimer.singleShot(0, self.acoplar)          # otra vez cuando el tamaño de ambas ventanas ya se asentó
+        self._cerrando = False
+        self._desplegar(0.0)
+        self.despliegue.stop()
+        self.despliegue.setStartValue(0.0)
+        self.despliegue.setEndValue(1.0)
+        self.despliegue.start()
+
+    def _desplegar(self, v):
+        """Sale desde detrás del reproductor: el cuerpo se va descubriendo desde el lado pegado a él, con un fundido.
+        Se hace con el widget (máscara y efecto de opacidad) y no con la ventana: Wayland no permite ni opacidad ni
+        máscara de ventana."""
+        self._v = float(v)
+        self.ef.setOpacity(self._v)
+        self.ef.setEnabled(self._v < 1.0)           # abierto del todo se dibuja directo, sin pasar por una imagen
+        c = self.cuerpo
+        if self._v >= 1.0:
+            c.clearMask()
+        else:
+            W, H = c.width(), c.height()
+            w = max(1, round(W * self._v))
+            c.setMask(QRegion(0, 0, w, H) if self._lado == "der" else QRegion(W - w, 0, w, H))
+        self.update()
+
+    def _fin_despliegue(self):
+        if self._cerrando:
+            self.player.removeEventFilter(self)
+            super().done(self._res)
+        else:
+            self.clearMask()
+
+    def eventFilter(self, obj, ev):
+        if obj is self.player and ev.type() in (QEvent.Move, QEvent.Resize) and self.isVisible():
+            self.acoplar()
+        return super().eventFilter(obj, ev)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.cuerpo.geometry())
+        if self._v < 1.0:                                   # la sombra acompaña a lo que ya se descubrió
+            w = r.width() * self._v
+            r = QRectF(r.x(), r.y(), w, r.height()) if self._lado == "der" else QRectF(r.right() - w, r.y(), w, r.height())
+        if r.width() > 2 * self.RADIO:
+            dibujar_sombra(p, r, self.RADIO, self._v)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and self.windowHandle() and self.TIPO != Qt.ToolTip:
+            self._pegado = False
+            self.windowHandle().startSystemMove()
+
+    def done(self, r):
+        """Se pliega de vuelta antes de cerrarse (salvo que haga falta cerrarlo ya, para abrir otro)."""
+        if not self.isVisible() or self._sin_anim:
+            self.despliegue.stop()
+            self._cerrando = False
+            self.player.removeEventFilter(self)
+            super().done(r)
+            return
+        if self._cerrando:
+            return
+        self._cerrando, self._res = True, r
+        self.despliegue.stop()
+        self.despliegue.setStartValue(self._v)
+        self.despliegue.setEndValue(0.0)
+        self.despliegue.start()
+
+    def cerrar_ya(self):
+        self._sin_anim = True
+        self.reject()
+
+
+def titulo_panel(texto):
+    t = QLabel(texto)
+    t.setStyleSheet("color: white; font-size: 15px; font-weight: 700;")
+    return t
+
+
+def fmt_db(v):
+    """+3,5 / -2 / 0 (con coma si el idioma es español)."""
+    t = f"{v:+.1f}".rstrip("0").rstrip(".") if v else "0"
+    return t.replace(".", ",") if tr("es", "en") == "es" else t
+
+
+def curva_de_preset(nombre, personal=None):
+    """Las 10 ganancias (dB) de un preset o de 'personal'; None si no es una curva de 10 bandas."""
+    if nombre == "personal" and personal:
+        return [float(x) for x in personal]
+    if nombre in PRESETS:
+        return [float(x) for x in PRESETS[nombre]]
+    return None
+
+
+class DialogoEcualizador(PanelLateral):
+    """Ecualizador gráfico de 10 bandas (31 Hz a 16 kHz, ±12 dB). Cada cambio suena enseguida y queda guardado como 'Mi sonido'."""
+    def __init__(self, player):
+        super().__init__(player)
+        self.player = player
+        self.setWindowTitle(tr("Ecualizador", "Equalizer"))
+        curva = player.curva_actual()
+        self.sliders, self.valores = [], []
+        cols = QHBoxLayout()
+        cols.setSpacing(6)
+        for hz, g in zip(BANDAS_HZ, curva):
+            col = QVBoxLayout()
+            col.setSpacing(4)
+            v = QLabel(fmt_db(g))
+            v.setAlignment(Qt.AlignHCenter)
+            v.setMinimumWidth(34)
+            sl = QSlider(Qt.Vertical)
+            sl.setRange(int(-LIM_BANDA_DB * 2), int(LIM_BANDA_DB * 2))       # pasos de 0,5 dB
+            sl.setValue(round(g * 2))
+            sl.setMinimumHeight(150)
+            sl.setTickPosition(QSlider.NoTicks)
+            f = QLabel(f"{hz // 1000}k" if hz >= 1000 else str(hz))
+            f.setAlignment(Qt.AlignHCenter)
+            col.addWidget(v)
+            col.addWidget(sl, 1, Qt.AlignHCenter)
+            col.addWidget(f)
+            cols.addLayout(col)
+            sl.valueChanged.connect(self._cambio)
+            sl.sliderPressed.connect(self._asentar)
+            self.sliders.append(sl)
+            self.valores.append(v)
+        self._destino = self._desde = [sl.value() for sl in self.sliders]
+        self.anim_barras = QVariantAnimation(self)
+        self.anim_barras.setDuration(420)
+        self.anim_barras.setEasingCurve(QEasingCurve.OutCubic)
+        self.anim_barras.valueChanged.connect(self._paso_barras)
+        self.partir = QComboBox()
+        self.partir.addItem(tr("Partir de…", "Start from…"), None)
+        for clave, (es, en) in NOMBRES_PRESETS.items():
+            self.partir.addItem(tr(es, en), clave)
+        self.partir.activated.connect(self._partir)
+        afinar = QPushButton(tr("Afinar al oído…", "Tune by ear…"))
+        afinar.clicked.connect(self._afinar)
+        listo = QPushButton(tr("Listo", "Done"))
+        listo.setObjectName("principal")
+        listo.clicked.connect(self.accept)
+        abajo = QHBoxLayout()
+        abajo.addWidget(self.partir)
+        abajo.addWidget(afinar)
+        abajo.addStretch(1)
+        abajo.addWidget(listo)
+        lay = self.lay
+        lay.addWidget(titulo_panel(tr("Ecualizador", "Equalizer")))
+        lay.addLayout(cols, 1)
+        lay.addLayout(abajo)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(40)                       # varias barras seguidas = un solo cambio al motor
+        self._timer.timeout.connect(self._aplicar)
+
+    def curva(self):
+        return [sl.value() / 2 for sl in self.sliders]
+
+    def _cambio(self):
+        for sl, v in zip(self.sliders, self.valores):
+            v.setText(fmt_db(sl.value() / 2))
+        self._timer.start()
+
+    def _aplicar(self):
+        self.player.poner_curva_personal(self.curva())
+
+    def poner_curva(self, curva, animar=False):
+        """Lleva las barras a una curva y la aplica. Con `animar` el sonido cambia enseguida y las barras se deslizan
+        hasta su lugar (subiendo o bajando según lo que haya que mover)."""
+        self._asentar()
+        destino = [round(max(-LIM_BANDA_DB, min(LIM_BANDA_DB, float(g))) * 2) for g in curva]
+        self._destino = destino
+        self._timer.stop()
+        self.player.poner_curva_personal([d / 2 for d in destino])
+        if not animar:
+            self._mover_barras(destino)
+            return
+        self._desde = [sl.value() for sl in self.sliders]
+        self.anim_barras.stop()
+        self.anim_barras.setStartValue(0.0)
+        self.anim_barras.setEndValue(1.0)
+        self.anim_barras.start()
+
+    def _mover_barras(self, valores):
+        for sl, v in zip(self.sliders, valores):
+            sl.blockSignals(True)
+            sl.setValue(int(round(v)))
+            sl.blockSignals(False)
+        for sl, lbl in zip(self.sliders, self.valores):
+            lbl.setText(fmt_db(sl.value() / 2))
+
+    def _paso_barras(self, t):
+        self._mover_barras([a + (b - a) * float(t) for a, b in zip(self._desde, self._destino)])
+
+    def _asentar(self):
+        """Si las barras estaban a medio camino, las deja en su destino (por ejemplo, al tocar una a mano)."""
+        if self.anim_barras.state() == QVariantAnimation.Running:
+            self.anim_barras.stop()
+            self._mover_barras(self._destino)
+
+    def _partir(self, i):
+        clave = self.partir.itemData(i)
+        if clave:
+            self.poner_curva(curva_de_preset(clave), animar=True)
+        self.partir.setCurrentIndex(0)
+
+    def _afinar(self):
+        self._timer.stop()
+        self._aplicar()
+        self.accept()
+        self.player.afinar_al_oido()
+
+
+class DialogoAfinar(PanelLateral):
+    """'Afinar al oído': mientras suena un tema se comparan dos versiones del sonido (A y B, a igual volumen y sin saber
+    cuál es cuál) y se elige la que gusta más. Con unas 12 comparaciones queda una curva a tu gusto (ver `Afinador`)."""
+    def __init__(self, player, azar=None):
+        super().__init__(player)
+        self.player = player
+        self.afinador = Afinador(player.curva_actual(), azar=azar)
+        self.resultado = None
+        self.setWindowTitle(tr("Afinar al oído", "Tune by ear"))
+        self.cuerpo.setMinimumWidth(380)
+        self.texto = QLabel(tr("Mientras suena la música, elegí cuál de las dos versiones te gusta más. No hay respuestas "
+                               "correctas: suenan igual de fuerte para que el volumen no te engañe.",
+                               "While the music plays, pick which of the two versions you like more. There are no right "
+                               "answers: both are the same loudness so volume does not fool you."))
+        self.texto.setWordWrap(True)
+        self.avance = QLabel()
+        self.avance.setAlignment(Qt.AlignCenter)
+        self.btn_a = QPushButton("A")
+        self.btn_b = QPushButton("B")
+        for b in (self.btn_a, self.btn_b):
+            b.setCheckable(True)
+            b.setMinimumHeight(64)
+            b.setStyleSheet("font-size: 22px; font-weight: 700;")
+        self.btn_a.clicked.connect(lambda: self._escuchar(0))
+        self.btn_b.clicked.connect(lambda: self._escuchar(1))
+        self.pref_a = QPushButton(tr("Prefiero A", "I prefer A"))
+        self.pref_b = QPushButton(tr("Prefiero B", "I prefer B"))
+        self.igual = QPushButton(tr("Suenan igual", "Sound the same"))
+        self.pref_a.clicked.connect(lambda: self._responder("a"))
+        self.pref_b.clicked.connect(lambda: self._responder("b"))
+        self.igual.clicked.connect(lambda: self._responder("igual"))
+        self.guardar = QPushButton(tr("Guardar como Mi sonido", "Save as My sound"))
+        self.guardar.setObjectName("principal")
+        self.guardar.clicked.connect(self._guardar)
+        self.cortar = QPushButton(tr("Quedarme con lo mejor hasta acá", "Keep the best so far"))
+        self.cortar.clicked.connect(self._terminar)
+        cancelar = QPushButton(tr("Cancelar", "Cancel"))
+        cancelar.clicked.connect(self.reject)
+        ab = QHBoxLayout()
+        ab.addWidget(self.btn_a)
+        ab.addWidget(self.btn_b)
+        votos = QHBoxLayout()
+        votos.addWidget(self.pref_a)
+        votos.addWidget(self.igual)
+        votos.addWidget(self.pref_b)
+        pie = QHBoxLayout()
+        pie.addWidget(cancelar)
+        pie.addStretch(1)
+        pie.addWidget(self.cortar)
+        pie.addWidget(self.guardar)
+        lay = self.lay
+        lay.addWidget(titulo_panel(tr("Afinar al oído", "Tune by ear")))
+        for w in (self.texto, self.avance):
+            lay.addWidget(w)
+        lay.addLayout(ab)
+        lay.addLayout(votos)
+        lay.addLayout(pie)
+        self.guardar.hide()
+        if not player.pistas:
+            self.texto.setText(tr("Agregá música primero: el afinado se hace escuchando un tema.",
+                                  "Add some music first: tuning is done by listening to a track."))
+            for w in (self.btn_a, self.btn_b, self.pref_a, self.pref_b, self.igual, self.cortar):
+                w.setEnabled(False)
+            return
+        if player.actual < 0 or player.pausado:
+            player.play_pausa()
+        self._mostrar()
+
+    def _mostrar(self):
+        par = self.afinador.par()
+        if par is None:
+            self._terminar()
+            return
+        self.par = par
+        n = self.afinador.hechas + 1
+        self.avance.setText(tr(f"Comparación {n} de hasta {Afinador.MAX_COMPARACIONES}", f"Comparison {n} of up to {Afinador.MAX_COMPARACIONES}"))
+        self._escuchar(0)
+
+    def _escuchar(self, i):
+        self.btn_a.setChecked(i == 0)
+        self.btn_b.setChecked(i == 1)
+        self.player.escuchar_curva(self.par[i])
+
+    def _responder(self, eleccion):
+        self.afinador.responder(eleccion)
+        self._mostrar()
+
+    def _terminar(self):
+        self.resultado = self.afinador.mejor
+        r = self.afinador.resumen()
+        nombres = {"graves": tr("graves", "bass"), "cuerpo": tr("cuerpo", "body"),
+                   "presencia": tr("presencia", "presence"), "brillo": tr("brillo", "treble")}
+        partes = "  ·  ".join(f"{nombres[k]} {fmt_db(v)} dB" for k, v in r.items())
+        self.avance.setText(tr("Listo. ", "Done. ") + partes)
+        self.texto.setText(tr("Así queda tu sonido. Escuchá cómo suena y, si te gusta, guardalo: queda en el menú Sonido como "
+                              "Mi sonido, y lo podés retocar en el ecualizador.",
+                              "This is your sound. Listen and, if you like it, save it: it stays in the Sound menu as My "
+                              "sound, and you can tweak it in the equalizer."))
+        for w in (self.btn_b, self.pref_a, self.pref_b, self.igual, self.cortar):
+            w.hide()
+        self.btn_a.setText(tr("Tu sonido", "Your sound"))
+        self.btn_a.setChecked(True)
+        self.btn_a.setEnabled(True)
+        self.btn_a.clicked.disconnect()
+        self.btn_a.clicked.connect(lambda: self.player.escuchar_curva(self.resultado))
+        self.player.escuchar_curva(self.resultado)
+        self.guardar.show()
+
+    def _guardar(self):
+        self.player.poner_curva_personal(self.resultado)
+        self.accept()
+
+    def done(self, r):
+        if self.resultado is None or r != QDialog.Accepted:
+            self.player._aplicar_eq()                    # sin guardar: vuelve al sonido de antes
+        super().done(r)
+
 
 class Player(QWidget):
     perfil_listo = Signal(str, str)   # (perfil instalado, error): lo emite el hilo que baja un perfil
@@ -2423,6 +3023,8 @@ class Player(QWidget):
         self._fallos = 0   # temas seguidos que no se pudieron reproducir (para no dar vueltas sin fin)
         self.normalizar = True
         self.preset = PRESET_INICIAL
+        self._panel = None                 # el panel del sonido abierto (ecualizador o afinado)
+        self.eq_personal = None            # 'Mi sonido': 10 ganancias en dB, del ecualizador gráfico o del afinado
         self._midiendo = set()     # medidas de sonoridad en curso (clave de caché)
         self._sonoridades = None   # caché de sonoridad por archivo (se lee del disco la primera vez que se usa)
         self._aplicar_eq()
@@ -2446,6 +3048,7 @@ class Player(QWidget):
         self.mpris = None
         self.datos = {}              # ruta -> datos_lista(ruta): nombre, artista, título, álbum, pista
         self._ya_sonaron = set()     # shuffle: rutas que ya sonaron en la ronda actual
+        self._sig_azar = None        # shuffle: (ruta, empieza_ronda_nueva) del tema que sigue, sorteado de antemano
         self._historial = []         # shuffle: rutas en el orden en que sonaron (para el botón "anterior")
         self._atras = False          # reproducir() lo marca al volver atrás, para no anotarlo dos veces
         self.orden_original = []     # orden en que se agregaron (para volver con "Orden en que se agregaron")
@@ -2460,8 +3063,7 @@ class Player(QWidget):
 
         # --- tarjeta ---
         self.card = Card()
-        self.thumb = QLabel()
-        self.thumb.setFixedSize(28, 28)
+        self.thumb = Miniatura(28)
         self.titulo = Marquee(12, "white", QFont.DemiBold)
         self.titulo.set_text(tr("Sin pista", "No track"))
         self.artista = Marquee(10, QColor(255, 255, 255, 170))
@@ -2599,12 +3201,22 @@ class Player(QWidget):
         self.btn_abrir = IconButton("plus", 32)
         self.btn_abrir.setToolTip(tr("Agregar archivos o una carpeta", "Add files or a folder"))
         self.btn_abrir.clicked.connect(self._menu_agregar)
+        self.cuenta = QLabel()
+        self.cuenta.setStyleSheet("font-size: 11px; font-weight: 500; color: rgba(255,255,255,150);")
+        self._t_cuenta = QTimer(self)          # junta los cambios (agregar 5000 temas no recuenta 5000 veces)
+        self._t_cuenta.setSingleShot(True)
+        self._t_cuenta.setInterval(0)
+        self._t_cuenta.timeout.connect(self._actualizar_cuenta)
+        for senal in (self.lista.model().rowsInserted, self.lista.model().rowsRemoved, self.lista.model().modelReset):
+            senal.connect(self._pedir_cuenta)
+        self._actualizar_cuenta()
         abajo = QHBoxLayout()
         abajo.setSpacing(8)
         abajo.addWidget(self.btn_orden, 0, Qt.AlignVCenter)
         if ESCOBA:
             self.btn_escoba.setFixedSize(28, 28)
             abajo.addWidget(self.btn_escoba, 0, Qt.AlignVCenter)
+        abajo.addWidget(self.cuenta, 0, Qt.AlignVCenter)
         abajo.addStretch()
         abajo.addWidget(self.btn_guardar, 0, Qt.AlignVCenter)
         abajo.addWidget(self.btn_quitar, 0, Qt.AlignVCenter)
@@ -2926,6 +3538,22 @@ class Player(QWidget):
         return sorted(i for i in filas if 0 <= i < len(self.pistas))
 
     # --- buscar, ordenar y reordenar ---
+    def _pedir_cuenta(self, *_):
+        try:
+            self._t_cuenta.start()
+        except RuntimeError:       # la ventana se está destruyendo
+            pass
+
+    def _actualizar_cuenta(self):
+        """Cuántos temas tiene la lista; con una búsqueda activa, cuántos se ven ("3 de 12")."""
+        total = self.lista.count()
+        visibles = sum(1 for i in range(total) if not self.lista.item(i).isHidden())
+        if visibles != total:
+            txt = tr(f"{visibles} de {total}", f"{visibles} of {total}")
+        else:
+            txt = tr("1 tema", "1 track") if total == 1 else tr(f"{total} temas", f"{total} tracks")
+        self.cuenta.setText(txt)
+
     def _filtrar(self, texto):
         """Muestra solo los temas que contienen todas las palabras buscadas (sin acentos ni mayúsculas)."""
         palabras = _norm(texto).split()
@@ -2936,6 +3564,7 @@ class Player(QWidget):
             item.setHidden(bool(palabras) and not all(w in pajar for w in palabras))
         # con una búsqueda activa no se arrastra: las posiciones visibles no son las reales
         self.lista.setDragDropMode(QAbstractItemView.NoDragDrop if palabras else QAbstractItemView.InternalMove)
+        self._t_cuenta.start()
 
     def _reproducir_primero(self):
         for i in range(self.lista.count()):
@@ -3229,10 +3858,55 @@ class Player(QWidget):
                 self.motor.cadena.poner_eq(gan, freqs=freqs, makeup_db=comp)
                 return
             self.preset = "plano"                                    # el perfil ya no está guardado
+        if self.preset == "personal" and self.eq_personal:
+            self.escuchar_curva(self.eq_personal)
+            return
+        if self.preset == "personal":
+            self.preset = "plano"                                    # no hay 'Mi sonido' guardado
         self.motor.cadena.poner_eq(PRESETS.get(self.preset, PRESETS["plano"]))
 
+    def escuchar_curva(self, curva):
+        """Aplica una curva de 10 bandas a igual volumen que sin ecualizar (así dos curvas se comparan por cómo suenan y no por
+        cuál es más fuerte)."""
+        self.motor.cadena.poner_eq(list(curva), nivel_db=nivel_relativo_db(BANDAS_HZ, curva))
+
+    def curva_actual(self):
+        """Las 10 ganancias (dB) que suenan ahora: las del preset, las de Mi sonido o, con un perfil de auriculares, esa
+        corrección vista en las 10 bandas."""
+        c = curva_de_preset(self.preset, self.eq_personal)
+        if c is not None:
+            return c
+        if self.preset.startswith("perfil:"):
+            p = self._cargar_perfil(self.preset[7:])
+            if p is not None:
+                v = np.interp(np.log10(BANDAS_HZ), np.log10(p[0]), p[1])
+                return [round(float(max(-LIM_BANDA_DB, min(LIM_BANDA_DB, x))) * 2) / 2 for x in v]
+        return [0.0] * len(BANDAS_HZ)
+
+    def poner_curva_personal(self, curva):
+        """Guarda una curva como 'Mi sonido' y la deja puesta."""
+        self.eq_personal = [round(max(-LIM_BANDA_DB, min(LIM_BANDA_DB, float(x))) * 2) / 2 for x in curva][:len(BANDAS_HZ)]
+        self.preset = "personal"
+        self._aplicar_eq()
+        self.guardar_estado()
+
+    def _abrir_panel(self, clase):
+        """Abre un panel del sonido al costado de la ventana (uno solo a la vez; la música y la ventana siguen libres)."""
+        if self._panel is not None and self._panel.isVisible():
+            self._panel.cerrar_ya()
+        self._panel = clase(self)
+        self._panel.show()
+        return self._panel
+
+    def ecualizador(self):
+        return self._abrir_panel(DialogoEcualizador)
+
+    def afinar_al_oido(self):
+        return self._abrir_panel(DialogoAfinar)
+
     def poner_preset(self, nombre):
-        existe = nombre in PRESETS or (nombre.startswith("perfil:") and self._cargar_perfil(nombre[7:]) is not None)
+        existe = (nombre in PRESETS or (nombre == "personal" and bool(self.eq_personal))
+                  or (nombre.startswith("perfil:") and self._cargar_perfil(nombre[7:]) is not None))
         self.preset = nombre if existe else "plano"
         self._aplicar_eq()
         self.guardar_estado()
@@ -3349,8 +4023,13 @@ class Player(QWidget):
 
     def _premedir_siguiente(self):
         """Mientras suena un tema, mide el que sigue (en orden): así empieza ya normalizado, sin el salto de la primera vez."""
-        i = self.actual + 1
-        if not self.normalizar or self.btn_shuffle.isChecked() or not 0 <= i < len(self.pistas):
+        if not self.normalizar:
+            return
+        if self.btn_shuffle.isChecked():
+            i = self._sortear_siguiente()          # en shuffle el que sigue se decide ahora y es el que va a sonar
+        else:
+            i = self.actual + 1
+        if not 0 <= i < len(self.pistas):
             return
         ruta = self.pistas[i]
         if leer_replaygain(ruta) is not None:
@@ -3363,6 +4042,21 @@ class Player(QWidget):
         if clave not in self._cache_sonoridad():
             self._medir_en_fondo(ruta, clave)
 
+    def _sortear_siguiente(self):
+        """Shuffle: el tema que va a seguir, sorteado de antemano (así se lo puede medir antes de que suene y empieza ya
+        normalizado). `siguiente` usa este mismo sorteo; se descarta si dejó de valer (la lista o la ronda cambiaron)."""
+        if len(self.pistas) < 2:
+            return -1
+        ruta_actual = self._ruta_actual()
+        sig = self._sig_azar
+        if sig is not None:
+            ruta, nueva = sig
+            if ruta in self.pistas and ruta != ruta_actual and (nueva or ruta not in self._ya_sonaron):
+                return self.pistas.index(ruta)
+        i, nueva = elegir_al_azar(self.pistas, self._ya_sonaron, ruta_actual)
+        self._sig_azar = (self.pistas[i], nueva)
+        return i
+
     def _menu_sonido(self, menu, anidado=True):
         sub = menu.addMenu(tr("Sonido", "Sound")) if anidado else menu
         a = sub.addAction(tr("Normalizar el volumen", "Normalize volume"))
@@ -3370,14 +4064,20 @@ class Player(QWidget):
         a.setChecked(self.normalizar)
         a.toggled.connect(self.poner_normalizar)
         sub.addSeparator()
-        nombres = {"plano": ("Plano (sin ecualizar)", "Flat (no EQ)"), "vivo": ("Vivo", "Lively"),
-                   "graves": ("Más graves", "More bass"), "voces": ("Voces", "Vocals"),
-                   "brillante": ("Brillante", "Bright"), "calido": ("Cálido", "Warm")}
-        for clave, (es, en) in nombres.items():
+        for clave, (es, en) in NOMBRES_PRESETS.items():
             b = sub.addAction(tr(es, en))
             b.setCheckable(True)
             b.setChecked(self.preset == clave)
             b.triggered.connect(lambda _=False, c=clave: self.poner_preset(c))
+        if EQ_GRAFICO:
+            if self.eq_personal:
+                b = sub.addAction(tr("Mi sonido", "My sound"))
+                b.setCheckable(True)
+                b.setChecked(self.preset == "personal")
+                b.triggered.connect(lambda _=False: self.poner_preset("personal"))
+            sub.addSeparator()
+            sub.addAction(tr("Ecualizador gráfico…", "Graphic equalizer…"), self.ecualizador)
+            sub.addAction(tr("Afinar al oído…", "Tune by ear…"), self.afinar_al_oido)
         # los perfiles de auriculares: una corrección medida para cada modelo, que se baja una vez y queda guardada
         sub.addSeparator()
         aur = sub.addMenu(tr("Auriculares", "Headphones")) if anidado else sub
@@ -3420,7 +4120,8 @@ class Player(QWidget):
                  "shuffle_ya": sorted(self._ya_sonaron),
                  "carpeta": self.carpeta_musica, "carpeta_listas": self.carpeta_listas,
                  "lista_actual": self.lista_actual, "orden_original": self.orden_original,
-                 "compacto": self.compacto, "normalizar": self.normalizar, "preset": self.preset}
+                 "compacto": self.compacto, "normalizar": self.normalizar, "preset": self.preset,
+                 "eq_personal": self.eq_personal}
         try:
             ESTADO.parent.mkdir(parents=True, exist_ok=True)
             tmp = ESTADO.with_suffix(".tmp")
@@ -3441,8 +4142,12 @@ class Player(QWidget):
             if isinstance(ya, list):
                 self._ya_sonaron = {r for r in ya if isinstance(r, str)}
         self.normalizar = bool(d.get("normalizar", True))
+        ep = d.get("eq_personal")
+        if EQ_GRAFICO and isinstance(ep, list) and len(ep) == len(BANDAS_HZ) and all(isinstance(x, (int, float)) for x in ep):
+            self.eq_personal = [max(-LIM_BANDA_DB, min(LIM_BANDA_DB, float(x))) for x in ep]
         p = d.get("preset", PRESET_INICIAL)
-        self.preset = p if p in PRESETS or (isinstance(p, str) and p.startswith("perfil:")) else PRESET_INICIAL
+        self.preset = (p if p in PRESETS or (p == "personal" and self.eq_personal)
+                       or (isinstance(p, str) and p.startswith("perfil:")) else PRESET_INICIAL)
         self._aplicar_eq()
         self.poner_repetir(d.get("repetir", "off"))
         self.carpeta_musica = d.get("carpeta", "")
@@ -3469,6 +4174,9 @@ class Player(QWidget):
 
     def closeEvent(self, e):
         self.guardar_estado()
+        if self.motor.reproduciendo:       # la ventana se va enseguida; el sonido baja de a poco en vez de cortarse
+            self.hide()
+            QApplication.processEvents(QEventLoop.ExcludeUserInputEvents)
         self.motor.cerrar()
         if self.mpris:
             self.mpris.cerrar()
@@ -3773,7 +4481,9 @@ class Player(QWidget):
         if not self.pistas:
             return
         if self.btn_shuffle.isChecked() and len(self.pistas) > 1:
-            i, nueva = elegir_al_azar(self.pistas, self._ya_sonaron, self._ruta_actual())
+            i = self._sortear_siguiente()
+            nueva = self._sig_azar[1]
+            self._sig_azar = None
             if nueva:
                 self._ya_sonaron.clear()
             self.reproducir(i)
@@ -3793,6 +4503,9 @@ class Player(QWidget):
         ruta = self._ruta_actual()
         self._ya_sonaron = {ruta} if ruta else set()
         self._historial = [ruta] if ruta else []
+        self._sig_azar = None
+        if self.btn_shuffle.isChecked():
+            self._premedir_siguiente()             # recién prendido: que el que sigue ya esté medido
 
     def _anotar_sonado(self, ruta):
         if not self.btn_shuffle.isChecked():

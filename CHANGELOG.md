@@ -5,6 +5,24 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-10-21
+
+### Fixed
+- **Volume jump with shuffle.** The next track is measured for normalization while the current one plays, but with
+  shuffle on it was skipped because the next track was only picked when you pressed next, so it started at its own
+  level and jumped when the measurement finished. Now the next track is picked in advance, measured, and that is the
+  one that plays. Turning shuffle on also measures the upcoming track right away.
+
+### Changed
+- **Soft stop, pause and close.** Pause used to cut the sound in 5 ms and Stop cut it to zero at once. Now the volume
+  goes down over about 250 ms when you pause, stop or close the player (closing hides the window right away and lets the
+  sound fade out), and goes back up over about 150 ms when you resume. A track that starts, a skip and a track change keep
+  the short fade so the attack of the first note is not lost.
+- **Track counter in the list.** The list panel shows how many tracks it has ("12 tracks"), and "3 of 12" while a search
+  filter is active.
+- **The small cover in the pill cross-fades too** when the track changes (the big cover already did), and fades in
+  instead of popping up when the track has a cover and the previous one had none.
+
 ## [1.5.2] - 2026-10-20
 
 ### Fixed

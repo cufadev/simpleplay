@@ -204,6 +204,78 @@ class TestSaltos(Base):
         self.assertLess(float(np.abs(self.audio(n)).max()), 1e-6)
 
 
+class TestFundidos(Base):
+    """Pausa, parar y cerrar bajan el volumen de a poco (~250 ms) y reanudar lo sube (~150 ms): antes cortaban en 5 ms."""
+
+    @staticmethod
+    def envolvente(x, ventana=441):
+        """Pico de cada 10 ms."""
+        n = len(x) // ventana
+        return np.abs(x[:n * ventana]).reshape(n, ventana).max(axis=1)
+
+    def test_pausa_baja_de_a_poco(self):
+        self.m.cargar(str(CORPUS / "tono_44k.mp3"))
+        espera(1.0)
+        n = len(self.bloques)
+        self.m.pausar()
+        espera(0.9)
+        env = self.envolvente(self.audio(n))
+        sonando_ms = int((env > 0.02).sum()) * 10
+        self.assertGreater(sonando_ms, 180)            # la bajada dura ~250 ms (más lo que ya estaba en el bloque)
+        self.assertLess(sonando_ms, 600)
+        self.assertLess(float(np.abs(np.diff(env)).max()), 0.15)   # y no hay un escalón: cada 10 ms cae poco
+        self.assertLess(float(env[-10:].max()), 1e-6)
+
+    def test_reanudar_sube_de_a_poco(self):
+        self.m.cargar(str(CORPUS / "tono_44k.mp3"))
+        espera(0.8)
+        self.m.pausar()
+        espera(0.8)
+        n = len(self.bloques)
+        self.m.reanudar()
+        espera(0.8)
+        env = self.envolvente(self.audio(n))
+        tope = float(env.max())
+        i0 = int(np.argmax(env > 0.02))                # dónde empieza a oírse
+        i90 = int(np.argmax(env > 0.9 * tope))
+        self.assertGreater((i90 - i0) * 10, 80)        # tarda en llegar al volumen (~150 ms), no es un golpe
+        self.assertLess(float(np.abs(np.diff(env)).max()), 0.15)
+
+    def test_parar_baja_de_a_poco_y_despues_deja_todo_en_cero(self):
+        self.m.cargar(str(CORPUS / "tono_44k.mp3"))
+        espera(1.0)
+        n = len(self.bloques)
+        self.m.parar()
+        self.assertFalse(self.m.reproduciendo)         # para quien mira, ya está parado
+        self.assertTrue(espera(1.5, lambda: not self.m.activo))
+        espera(0.3)
+        env = self.envolvente(self.audio(n))
+        self.assertGreater(int((env > 0.02).sum()) * 10, 180)
+        self.assertLess(float(np.abs(np.diff(env)).max()), 0.15)
+        self.assertEqual(self.m.posicion(), 0.0)
+
+    def test_cargar_cancela_un_parar_que_esperaba(self):
+        self.m.cargar(str(CORPUS / "tono_44k.mp3"))
+        espera(0.8)
+        self.m.parar()
+        self.m.cargar(str(CORPUS / "tono_44k.mp3"))
+        espera(1.0)
+        self.assertTrue(self.m.reproduciendo)
+        self.assertTrue(self.m.activo)
+
+    def test_cerrar_baja_el_volumen_antes_de_cortar(self):
+        self.m.cargar(str(CORPUS / "tono_44k.mp3"))
+        espera(1.0)
+        n = len(self.bloques)
+        t = time.time()
+        self.m.cerrar()
+        dt = time.time() - t
+        self.assertGreater(dt, 0.2)                    # esperó el fundido
+        self.assertLess(dt, 1.0)
+        fin = self.audio(n)
+        self.assertLess(float(np.abs(fin[-2000:]).max()), 0.02)    # lo último que salió ya es casi silencio
+
+
 class TestParar(Base):
     def test_parar_deja_todo_en_cero(self):
         self.m.cargar(str(CORPUS / "tono_44k.mp3"))
