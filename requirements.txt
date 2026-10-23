@@ -10,6 +10,7 @@ mutagen>=1.47      # leer y escribir las etiquetas del mp3 (título, artista, po
 numpy>=2.0         # análisis del espectro (FFT) y mezcla del audio
 miniaudio>=1.60    # motor de audio: decodifica y reproduce (no hace falta ffmpeg ni SDL)
 certifi>=2024.0    # certificados HTTPS de respaldo para la escoba (MusicBrainz)
+qrcode>=7.4        # el código QR de Mosquito (control remoto desde el celular); sin él se muestra solo el enlace
 
 # Solo para armar el ejecutable (no hace falta para usarlo):
 #   pip install pyinstaller

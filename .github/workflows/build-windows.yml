@@ -35,8 +35,8 @@ jobs:
         shell: pwsh
         run: |
           pyinstaller --noconfirm --clean --onedir --windowed --name simpleplay `
-            --icon icon\simpleplay.ico --add-data "icon\simpleplay-256.png;icon" `
-            --hidden-import miniaudio --hidden-import _cffi_backend --collect-data certifi `
+            --icon icon\simpleplay.ico --add-data "icon\simpleplay-256.png;icon" --add-data "icon\simpleplay-512.png;icon" `
+            --hidden-import simpleplay_mosquito --hidden-import qrcode --hidden-import miniaudio --hidden-import _cffi_backend --collect-data certifi `
             --exclude-module tkinter --exclude-module PIL simpleplay.py
 
       - name: Smoke test - the audio decoder works inside the build

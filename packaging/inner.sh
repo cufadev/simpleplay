@@ -16,7 +16,7 @@ python3 -m venv /tmp/uvenv
 /tmp/uvenv/bin/pip install -q uv
 /tmp/uvenv/bin/uv venv -q --python 3.13 /tmp/venv
 /tmp/uvenv/bin/uv pip install -q --python /tmp/venv/bin/python \
-    pyinstaller PySide6 mutagen numpy miniaudio certifi
+    pyinstaller PySide6 mutagen numpy miniaudio certifi qrcode
 # YouTube Music (función en prueba, solo si se arma con BUILD_YOUTUBE=1; ver requirements-youtube.txt)
 YT_ARGS=()
 if [ "${BUILD_YOUTUBE:-0}" = 1 ]; then
@@ -28,8 +28,8 @@ fi
 cd /src
 /tmp/venv/bin/pyinstaller --noconfirm --clean --onedir --name simpleplay \
     --distpath /out --workpath /tmp/work --specpath /tmp/work \
-    --add-data "/src/icon/simpleplay-256.png:icon" \
-    --hidden-import _cffi_backend --hidden-import miniaudio \
+    --add-data "/src/icon/simpleplay-256.png:icon" --add-data "/src/icon/simpleplay-512.png:icon" \
+    --hidden-import _cffi_backend --hidden-import miniaudio --hidden-import simpleplay_mosquito --hidden-import qrcode \
     --collect-data certifi \
     "${YT_ARGS[@]}" \
     --exclude-module tkinter --exclude-module PIL \

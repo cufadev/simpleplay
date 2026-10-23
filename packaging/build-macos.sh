@@ -28,9 +28,9 @@ fi
 
 rm -rf dist/simpleplay.app dist/simpleplay build/simpleplay
 .venv-build/bin/pyinstaller --noconfirm --clean --onedir --windowed --name simpleplay \
-    --icon icon/simpleplay.icns --add-data "icon/simpleplay-256.png:icon" \
+    --icon icon/simpleplay.icns --add-data "icon/simpleplay-256.png:icon" --add-data "icon/simpleplay-512.png:icon" \
     --osx-bundle-identifier xyz.cufadev.simpleplay \
-    --hidden-import miniaudio --hidden-import _cffi_backend --collect-data certifi \
+    --hidden-import simpleplay_mosquito --hidden-import qrcode --hidden-import miniaudio --hidden-import _cffi_backend --collect-data certifi \
     --exclude-module tkinter --exclude-module PIL \
     --exclude-module PySide6.QtNetwork --exclude-module PySide6.QtSvg \
     simpleplay.py

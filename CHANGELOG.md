@@ -5,6 +5,18 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
 
 ## [Unreleased]
 
+## [1.7] - 2026-10-23
+
+### Added
+- **Mosquito: control the player from your phone.** Right click > Mosquito (or Ctrl+Shift+M) shows a QR next to the player;
+  scan it with the phone (same network) and a remote opens in the browser or in the Mosquito app: cover with a blurred
+  background, seek bar, play/pause, previous/next, system volume, and the track list that you pull up from the bottom with a
+  finger. "Remember this phone" keeps the link so there is nothing to scan again. Double tap (or press and hold) on the
+  volume button mutes only the player, not the whole computer, and it cuts at once. The page shows a connection light
+  (green, amber, red). Only devices on your private network can connect, the key travels in the link and is compared in
+  constant time, and nothing leaves your network. Needs the `qrcode` package to draw the QR (the AppImage already has it).
+  Turn it off with `SIMPLEPLAY_MOSQUITO=0`.
+
 ## [1.6] - 2026-10-22
 
 ### Fixed

@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QSlider, QAbstractButton, QListWidget,
                                QFileDialog, QFrame, QLayout, QMenu, QSizePolicy,
                                QStackedLayout, QGraphicsOpacityEffect, QMessageBox,
-                               QAbstractItemView, QLineEdit, QListWidgetItem, QDialog, QPushButton, QComboBox)
+                               QAbstractItemView, QLineEdit, QListWidgetItem, QDialog, QPushButton, QComboBox, QCheckBox)
 
 try:
     from PySide6.QtDBus import (QDBusConnection, QDBusAbstractAdaptor, QDBusObjectPath,
@@ -58,7 +58,7 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.6"
+VERSION = "1.7"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
@@ -69,6 +69,8 @@ EQ_GRAFICO = os.environ.get("SIMPLEPLAY_ECUALIZADOR", "1") != "0"
 # convierten a mp3 en una caché). Hace falta pip install -r requirements-youtube.txt y el módulo simpleplay_youtube.py al lado.
 # SIMPLEPLAY_YOUTUBE=1 python simpleplay.py
 YOUTUBE = bool(os.environ.get("SIMPLEPLAY_YOUTUBE"))
+# Mosquito (control remoto desde el celular): activo por defecto; SIMPLEPLAY_MOSQUITO=0 python simpleplay.py lo quita del menú
+MOSQUITO = os.environ.get("SIMPLEPLAY_MOSQUITO", "1") != "0"
 URL_APOYO = "https://buymeacoffee.com/cufadev"   # donación voluntaria: el mismo enlace de la web y del README
 NARANJA = "#ff4e01"
 # Colores de acento a elegir (botón activo, selección, volumen del panel). Todos se leen bien con texto blanco encima.
@@ -3234,6 +3236,54 @@ class DialogoAfinar(PanelLateral):
         super().done(r)
 
 
+class DialogoMosquito(PanelLateral):
+    """El QR de Mosquito, en un panel al costado del reproductor (como los del sonido). Cerrarlo NO apaga el control
+    remoto: sigue andando mientras el reproductor esté abierto; para cortarlo está «Apagar Mosquito»."""
+    def __init__(self, player, mosquito, pixmap_qr):
+        super().__init__(player)
+        self.mosquito = mosquito
+        self.setWindowTitle("Mosquito")
+        self.cuerpo.setMinimumWidth(300)
+        self.lay.addWidget(titulo_panel("Mosquito"))
+        texto = QLabel(tr("Escaneá el código con el celular (en el mismo wifi). Podés cerrar este panel: el control "
+                          "sigue andando mientras el reproductor esté abierto.",
+                          "Scan the code with your phone (same wifi). You can close this panel: the remote keeps "
+                          "working while the player is open."))
+        texto.setWordWrap(True)
+        self.lay.addWidget(texto)
+        if pixmap_qr is not None:
+            q = QLabel()
+            q.setPixmap(pixmap_qr)
+            q.setAlignment(Qt.AlignCenter)
+            self.lay.addWidget(q)
+        else:
+            self.lay.addWidget(QLabel(tr("Para ver el QR: pip install qrcode", "To show the QR: pip install qrcode")))
+        self.recordar = QCheckBox(tr("Recordar este celular", "Remember this phone"))
+        self.recordar.setToolTip(tr("La clave no cambia y Mosquito arranca solo con el reproductor: no hay que escanear de nuevo.",
+                                    "The key stays the same and Mosquito starts with the player: no need to scan again."))
+        self.recordar.setStyleSheet("QCheckBox { color: #cfcfd4; spacing: 8px; }")
+        self.recordar.setChecked(mosquito.recordado)
+        self.recordar.toggled.connect(mosquito.recordar)
+        self.lay.addWidget(self.recordar)
+        enlace = QLabel(mosquito.url)
+        enlace.setWordWrap(True)
+        enlace.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        enlace.setStyleSheet("color: rgba(255,255,255,120); font-size: 11px;")
+        self.lay.addWidget(enlace)
+        cerrar = QPushButton(tr("Cerrar (sigue activo)", "Close (stays on)"))
+        cerrar.setObjectName("principal")
+        cerrar.clicked.connect(self.reject)
+        apagar = QPushButton(tr("Apagar Mosquito", "Turn Mosquito off"))
+        apagar.clicked.connect(self._apagar)
+        self.lay.addWidget(cerrar)
+        self.lay.addWidget(apagar)
+        self.apagado = False
+
+    def _apagar(self):
+        self.apagado = True
+        self.reject()
+
+
 class Player(QWidget):
     perfil_listo = Signal(str, str)   # (perfil instalado, error): lo emite el hilo que baja un perfil
 
@@ -3555,6 +3605,9 @@ class Player(QWidget):
 
         if HAY_DBUS and not os.environ.get("SIMPLEPLAY_NO_MPRIS"):
             self.mpris = Mpris(self)
+        if MOSQUITO:
+            QTimer.singleShot(0, self._mosquito_auto)
+            QShortcut(QKeySequence("Ctrl+Shift+M"), self).activated.connect(self.abrir_mosquito)
 
     # --- teclas multimedia (MPRIS) ---
     def mpris_cambio(self, *claves):
@@ -3643,6 +3696,40 @@ class Player(QWidget):
         menu.addAction(tr("Guardar lista como…", "Save playlist as…"),
                        lambda: self.guardar_lista()).setEnabled(bool(self.pistas))
         menu.exec(self.btn_abrir.mapToGlobal(QPoint(0, self.btn_abrir.height())))
+
+    def _servidor_mosquito(self):
+        """El servidor de Mosquito (lo crea y lo arranca si no está). None si no se pudo cargar."""
+        if getattr(self, "_mosquito", None) is None:
+            try:
+                import simpleplay_mosquito
+            except ImportError as e:
+                self._aviso(tr("No se pudo cargar Mosquito", "Could not load Mosquito"), 5000)
+                log("mosquito:", e)
+                return None
+            self._mosquito = simpleplay_mosquito.Mosquito(self, leer_meta, ESTADO.parent)
+            self._mosquito.iniciar()
+        return self._mosquito
+
+    def _mosquito_auto(self):
+        """Con «Recordar este celular» activado, Mosquito arranca solo con el reproductor."""
+        if (ESTADO.parent / "mosquito.json").exists():
+            self._servidor_mosquito()
+
+    def abrir_mosquito(self):
+        """Control remoto desde el navegador del celular. El servidor vive con el reproductor: cerrar el panel del QR no
+        lo apaga (se apaga con su botón o al cerrar el reproductor)."""
+        mosquito = self._servidor_mosquito()
+        if mosquito is None:
+            return
+        import simpleplay_mosquito
+        qr = simpleplay_mosquito.pixmap_qr(mosquito.url, 232)
+        panel = self._abrir_panel(lambda p: DialogoMosquito(p, mosquito, qr))
+
+        def cerrado(*_):
+            if panel.apagado and getattr(self, "_mosquito", None) is mosquito:
+                mosquito.detener()
+                self._mosquito = None     # apagado a propósito (si está «recordado», vuelve a arrancar la próxima vez)
+        panel.finished.connect(cerrado)
 
     def abrir_youtube(self):
         try:
@@ -4438,6 +4525,8 @@ class Player(QWidget):
         if self.motor.reproduciendo:       # la ventana se va enseguida; el sonido baja de a poco en vez de cortarse
             self.hide()
             QApplication.processEvents(QEventLoop.ExcludeUserInputEvents)
+        if getattr(self, "_mosquito", None) is not None:
+            self._mosquito.detener()
         self.motor.cerrar()
         if self.mpris:
             self.mpris.cerrar()
@@ -4928,6 +5017,10 @@ class Player(QWidget):
         menu.addAction(tr("Abrir carpeta…", "Open folder…"), self.abrir_carpeta)
         menu.addAction(tr("Modo normal", "Normal mode") if self.compacto else tr("Modo compacto", "Compact mode"),
                        lambda: self.poner_compacto(not self.compacto))
+        if MOSQUITO:
+            menu.addAction(tr("Mosquito (control remoto)…", "Mosquito (remote control)…") +
+                           (tr(" · activo", " · on") if getattr(self, "_mosquito", None) is not None else ""),
+                           self.abrir_mosquito, QKeySequence("Ctrl+Shift+M"))
         col = menu.addMenu(tr("Color de acento", "Accent color"))
         for clave, (es, en, hexa) in ACENTOS.items():
             b = col.addAction(_cubo(hexa), tr(es, en))
