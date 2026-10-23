@@ -2,6 +2,40 @@
 
 Ideas for future versions. What is already done is in [CHANGELOG.md](CHANGELOG.md).
 
+## Priorities (2026-10-23)
+
+The sections below keep the detail of each idea; this is the order to do them in.
+
+**Before the next release (1.7)**
+1. **macOS.** The build script and the manual GitHub Actions workflow exist but were never run. Test the `.dmg` on a real Intel
+   Mac, note the macOS version, then bring back the `release: published` trigger and enable the button on the website.
+   Apple Silicon is untested; signing and notarization are still to decide.
+2. **Import playlists from other players** (`.m3u`, `.pls`, `.xspf`; iTunes/Music and Rhythmbox libraries) and, from a
+   Spotify/YouTube Music CSV export, a list that matches each title against the user's own folders and says which ones are
+   missing. Metadata only, never audio from a streaming service. First check what the Spotify API still allows for playlists.
+3. **Dither** on the float→16-bit conversion (item 4 of the audio list below). Exclusive / bit-perfect output stays last.
+4. **Website clean-up.** Remove the `?idioma=` language-switch test modes (`cascada`, `barrido`, `cruce`), keeping the
+   letter-by-letter one.
+
+**Next (1.8 or later)**
+5. **Connect to a server the user owns** (Navidrome, Jellyfin, any Subsonic-compatible one).
+6. **Weigh shuffle by artist** so two tracks of the same artist rarely play back to back.
+7. **The broom** (fill in track info from inside the player): understand why it recognised nothing on the user's machine
+   before switching it on again; second stage with an audio fingerprint (needs a free AcoustID key).
+8. **Rename and domain.** The new name (Tarab, `playtarab`) needs the domain, then a full rename: repository, download
+   file names, icon, texts and links. Best done together with 2.0.
+
+**2.0**
+9. **Split `simpleplay.py` into modules** (plan below). Never mixed with feature work.
+
+**Separate tracks (not tied to a release)**
+- **Pocket player** (ESP32-S3; parts and phases below). The simulator already runs and nothing sounds yet; the enclosure
+  designs are a first draft still to improve.
+- **Touch kiosk variant** (private): make the touch input permanent, start on boot, rows with small covers.
+- **YouTube Music** stays a development-only build (it downloads with `yt-dlp`, which goes against YouTube's terms and breaks
+  often). Notes are kept out of the repository.
+- **CD ripping**, for a later, bigger version.
+
 ## The broom: fill in track info from inside the player (written, switched off)
 
 A button next to the controls that looks the selected tracks up on MusicBrainz and writes title,

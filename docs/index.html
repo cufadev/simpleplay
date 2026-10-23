@@ -76,6 +76,9 @@ body {
   font-family: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 1.0625rem; line-height: 1.65; text-rendering: optimizeLegibility; overflow-x: clip;
 }
+/* sin barra de scroll a un costado: la página se sigue desplazando igual (rueda, teclado, táctil) */
+html { scrollbar-width: none; }
+html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; }
 img, video { display: block; max-width: 100%; height: auto; }
 a { color: inherit; }
 h1, h2, h3, p, ol, ul, figure { margin: 0; padding: 0; }
@@ -627,8 +630,8 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
       <h2 class="grande-titulo revela"><span class="es">Todo empezó con una carpeta de mp3.</span><span class="en">It all started with a folder of mp3s.</span></h2>
       <div class="doble">
         <div class="prosa revela" style="--i:1">
-          <p class="es inicial">tarab player nació de querer algo muy simple: abrir esa carpeta y escuchar. Sin iniciar sesión, y sin que nadie me ofrezca otra cosa mientras suena.</p>
-          <p class="en inicial">tarab player started from wanting something very simple: open that folder and listen. No sign-in, and nobody offering me something else while it plays.</p>
+          <p class="es inicial">tarab player (antes simpleplay) nació de una idea simple y de tener gigas de música guardados: abrir esa carpeta y escuchar. Sin iniciar sesión, y sin que nadie me ofrezca otra cosa mientras suena.</p>
+          <p class="en inicial">tarab player (formerly simpleplay) started from a simple idea and from having gigabytes of music stored away: open that folder and listen. No sign-in, and nobody offering me something else while it plays.</p>
           <p class="es">La primera versión fue un script en Tkinter, con una lista gris y unos pocos botones. Funcionaba. Después le di la forma que quería: una tarjeta con la portada, unas barras de espectro que son un guiño a Winamp y una lista que se abre solo cuando la necesito.</p>
           <p class="en">The first version was a Tkinter script with a grey list and a few buttons. It worked. Then I gave it the shape I wanted: a card with the cover art, spectrum bars as a nod to Winamp, and a list that opens only when I need it.</p>
           <p class="es">Lo publiqué el 18 de octubre de 2026 y desde entonces fue creciendo con lo que yo mismo le fui pidiendo.</p>
