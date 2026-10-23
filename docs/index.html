@@ -6,6 +6,8 @@
 <title>simpleplay: música offline, sin ruido</title>
 <meta name="description" content="simpleplay es un reproductor de mp3 gratis y de código abierto para Linux y Windows. Sin internet, sin cuentas, sin avisos.">
 <meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://cufadev.github.io/simpleplay/">
+<meta property="og:url" content="https://cufadev.github.io/simpleplay/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="simpleplay: música offline, sin ruido">
 <meta property="og:description" content="Un reproductor de mp3 sin internet, sin cuentas y sin avisos. Gratis y de código abierto.">
@@ -60,7 +62,8 @@
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 /* Lenis (scroll suave con inercia): cuando está activo reemplaza al scroll-behavior nativo */
 html.lenis { scroll-behavior: auto !important; }
 html.lenis, html.lenis body { height: auto; }
@@ -85,8 +88,17 @@ html[lang="es"] .en, html[lang="en"] .es { display: none !important; }
   html.idioma-entra main, html.idioma-entra footer, html.idioma-entra .barra .enlace { animation: idioma-entra .38s var(--ease-out, ease) both; }
   @keyframes idioma-entra { from { opacity: 0; } to { opacity: 1; } }
 }
+/* Transiciones de página con View Transitions (Chrome, Edge, Safari y Firefox recientes; sin soporte se usan las de arriba).
+   Tema: la pantalla nueva se abre en círculo desde el botón. Idioma: un cruce suave con un leve desenfoque. */
+html.vt-tema::view-transition-old(root), html.vt-tema::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+html.vt-tema::view-transition-new(root) { z-index: 2; }
+html.vt-idioma::view-transition-old(root), html.vt-idioma::view-transition-new(root) { mix-blend-mode: normal; }
+html.vt-idioma::view-transition-old(root) { animation: vt-sale .26s ease both; }
+html.vt-idioma::view-transition-new(root) { animation: vt-entra .5s var(--ease-out, ease) both; }
+@keyframes vt-sale { to { opacity: 0; filter: blur(6px); } }
+@keyframes vt-entra { from { opacity: 0; filter: blur(8px); } }
 .ic { width: 1.25em; height: 1.25em; fill: currentColor; flex: none; }
-:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; border-radius: 6px; }
+:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; }
 .saltar { position: absolute; left: 12px; top: -60px; background: var(--accent); color: var(--on-accent); padding: 10px 16px; border-radius: 999px; font-weight: 600; z-index: 60; }
 .saltar:focus { top: 12px; }
 .cont { width: var(--ancho); margin-inline: auto; }
@@ -155,8 +167,11 @@ html.cue-fuera .cue { opacity: 0; translate: 0 40%; }
 .acciones { position: absolute; left: 0; bottom: 0; display: flex; flex-wrap: wrap; gap: 12px; opacity: 0; }
 .texto { grid-template-rows: auto auto; align-content: center; }
 .titular-caja { display: grid; }
-.reproductor { justify-self: center; width: min(100%, 400px); border-radius: var(--radio); overflow: hidden; background: #15161a; border: 1px solid var(--line); box-shadow: var(--shadow); opacity: 0; }
-.reproductor video { width: 100%; max-height: min(66dvh, 600px); object-fit: contain; margin-inline: auto; aspect-ratio: 720 / 1096; }
+.reproductor { justify-self: center; width: min(100%, 400px); opacity: 0; }
+.demo-tarjetas { position: relative; width: 100%; aspect-ratio: 1; }
+.demo-tarjetas img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transform: scale(1.04); filter: blur(6px); transition: opacity .55s ease, transform .7s var(--ease-out), filter .55s ease; }
+.demo-tarjetas img.activa { opacity: 1; transform: none; filter: none; }
+@media (prefers-reduced-motion: reduce) { .demo-tarjetas img { transition: none; filter: none; transform: none; } }
 
 /* los avisos: ruido. Entran al cargar, flotan, y se van con el scroll */
 .avisos { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
@@ -190,7 +205,6 @@ html.final-directo .calor { opacity: .5; }
   .titular { font-size: clamp(2.4rem, 11vw, 3.6rem); }
   .cola { min-height: 150px; }
   .reproductor { width: min(52vw, 220px); margin-top: 8px; }
-  .reproductor video { max-height: none; }
   .chip { font-size: .85rem; padding: 8px 14px 8px 10px; }
   .aviso:nth-child(n+8) { display: none; }
 }
@@ -206,14 +220,14 @@ html.final-directo .calor { opacity: .5; }
 .historia figcaption { margin-top: 18px; font-size: .9rem; color: var(--muted); }
 .versiones { position: relative; margin-top: clamp(64px, 9vw, 140px); padding-left: clamp(26px, 3.4vw, 48px); display: grid; gap: clamp(30px, 5.2vw, 72px); }
 .versiones li { display: grid; grid-template-columns: clamp(110px, 18vw, 260px) 1fr; align-items: center; gap: 18px; }
-.versiones .v { font-family: "Bebas Neue", "Geist", sans-serif; font-size: clamp(3.4rem, 9vw, 8rem); line-height: .86; color: color-mix(in srgb, var(--text) 22%, transparent); letter-spacing: .01em; transition: color .3s ease; }
+.versiones .v { font-family: "Bebas Neue", "Geist", sans-serif; font-size: clamp(3.4rem, 9vw, 8rem); line-height: .86; color: color-mix(in srgb, var(--text) 55%, transparent); letter-spacing: .01em; transition: color .3s ease; }
 .versiones .t { font-size: clamp(1.1rem, 2vw, 1.6rem); line-height: 1.35; letter-spacing: -.015em; font-weight: 550; max-width: 36ch; transition: opacity .35s ease; }
 .versiones li:last-child .v { color: var(--accent); }
 /* riel con una bolita, como el slider del reproductor: avanza con el scroll y va iluminando las versiones que pasa */
 .versiones .riel { position: absolute; left: 0; width: 2px; border-radius: 2px; background: var(--line); pointer-events: none; }
 .versiones .relleno { position: absolute; inset: 0 0 auto 0; height: 0; border-radius: 2px; background: var(--accent); }
 .versiones .bola { position: absolute; left: 1px; top: 0; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); }
-html.js .versiones li:not(.pasada) .t { opacity: .45; }
+html.js .versiones li:not(.pasada) .t { opacity: .7; }
 html.js .versiones li.pasada .v, html.js .versiones li.actual .v { color: var(--accent); }   /* las que ya pasó la bolita se pintan de naranja; la actual, además, crece */
 @media (prefers-reduced-motion: no-preference) {
   html.js .versiones li .v { transition: color .35s ease, transform .35s var(--ease-out); transform-origin: left center; }
@@ -230,7 +244,7 @@ html.js .versiones li.pasada .v, html.js .versiones li.actual .v { color: var(--
 .muestra .intro { margin-top: 24px; max-width: 44ch; color: var(--muted); font-size: 1.15rem; }
 .muestra .cuerpo { margin-top: clamp(32px, 6vw, 80px); display: grid; grid-template-columns: 5fr 6fr; gap: clamp(32px, 7vw, 120px); align-items: start; }
 .pasos { display: grid; }
-.paso { min-height: 72dvh; display: flex; flex-direction: column; justify-content: center; gap: 14px; opacity: .38; transition: opacity .4s var(--ease-out); }
+.paso { min-height: 72dvh; display: flex; flex-direction: column; justify-content: center; gap: 14px; opacity: .78; transition: opacity .4s var(--ease-out); }
 .paso.activo { opacity: 1; }
 .paso h3 { font-size: clamp(1.6rem, 2.8vw, 2.4rem); line-height: 1.18; letter-spacing: -.03em; font-weight: 650; text-wrap: balance; }
 .paso p { color: var(--muted); max-width: 38ch; font-size: 1.1rem; }
@@ -249,11 +263,11 @@ html.js .versiones li.pasada .v, html.js .versiones li.actual .v { color: var(--
 .gran { font-family: "Bebas Neue", "Geist", sans-serif; line-height: 1; font-size: clamp(5rem, 12vw, 10rem); color: var(--accent-text); }
 .dato-pie { margin-top: 16px; color: var(--muted); font-size: 1.05rem; }
 .medida { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: center; gap: 8px 22px; font-family: "Bebas Neue", "Geist", sans-serif; line-height: 1; }
-.medida .viejo { font-size: clamp(2.4rem, 5vw, 4rem); opacity: .55; }
+.medida .viejo { font-size: clamp(2.4rem, 5vw, 4rem); opacity: .62; }
 .medida .nuevo { font-size: clamp(5rem, 12vw, 10rem); }
 .medida .flecha { font-size: clamp(2rem, 4vw, 3.2rem); opacity: .7; }
 .medida .u { font-family: "Geist", ui-sans-serif, system-ui, sans-serif; font-weight: 600; letter-spacing: -.02em; font-size: .36em; margin-left: .16em; }
-.medida-pie { margin-top: 18px; font-size: .95rem; text-align: center; color: color-mix(in srgb, var(--on-accent) 80%, transparent); }
+.medida-pie { margin-top: 18px; font-size: .95rem; text-align: center; color: color-mix(in srgb, var(--on-accent) 95%, transparent); }
 @media (max-width: 880px) {
   .muestra .cuerpo { grid-template-columns: 1fr; }
   .vitrina { display: none; }
@@ -328,6 +342,40 @@ html.js .versiones li.pasada .v, html.js .versiones li.actual .v { color: var(--
 .pie small { display: block; color: var(--muted); font-size: .88rem; line-height: 1.6; max-width: 62ch; }
 .pie .nombre { margin-top: clamp(24px, 4vw, 56px); font-size: clamp(4rem, 20vw, 21rem); line-height: .74; letter-spacing: -.07em; font-weight: 650; color: color-mix(in srgb, var(--text) 7%, transparent); white-space: nowrap; text-align: center; user-select: none; margin-bottom: -.1em; }
 
+/* =====================================================================
+   CIERRE: la invitación final. Portadas inclinadas que corren en filas opuestas detrás del título y los botones.
+   La caja es siempre oscura (en tema claro también) para que el texto se lea sobre las portadas.
+   ===================================================================== */
+.cierre { padding-block: clamp(8px, 2vw, 24px) clamp(40px, 5vw, 72px); }
+.cierre-caja {
+  --text: #f4f4f6; --muted: #c9ccd3; --line: rgba(255, 255, 255, .22); --accent-text: #ff6a2b;
+  position: relative; isolation: isolate; overflow: hidden; display: grid; place-items: center; text-align: center;
+  min-height: clamp(400px, 46vw, 560px); padding: clamp(40px, 6vw, 88px) clamp(20px, 4vw, 56px);
+  border-radius: calc(var(--radio) + 12px); background: #0b0c0e; color: var(--text); border: 1px solid var(--line);
+}
+.cierre-fondo { position: absolute; inset: 0; z-index: -2; overflow: hidden; }
+.cierre-rot { position: absolute; inset: -35% -25%; display: flex; flex-direction: column; justify-content: center; gap: 14px; rotate: -24deg; }
+.cierre-fila { display: flex; width: max-content; animation: cierre-ida var(--t, 90s) linear infinite; animation-play-state: paused; }
+.cierre-fila:nth-child(even) { animation-direction: reverse; }
+.cierre-fila:nth-child(1) { --t: 95s; margin-left: -40px; }
+.cierre-fila:nth-child(2) { --t: 80s; margin-left: -150px; }
+.cierre-fila:nth-child(3) { --t: 110s; margin-left: -90px; }
+.cierre-fila:nth-child(4) { --t: 85s; margin-left: -210px; }
+.cierre-fila:nth-child(5) { --t: 100s; margin-left: -20px; }
+.cierre-juego { display: flex; gap: 14px; padding-right: 14px; flex: none; }
+.cierre-juego img { width: clamp(112px, 13vw, 176px); height: auto; aspect-ratio: 1; border-radius: 14px; flex: none; object-fit: cover; }
+.cierre-caja.viva .cierre-fila { animation-play-state: running; will-change: transform; }
+@keyframes cierre-ida { to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .cierre-fila { animation: none; } }
+.cierre-vela { position: absolute; inset: 0; z-index: -1; background:
+  radial-gradient(60% 60% at 50% 50%, rgba(11, 12, 14, .55), transparent 75%),
+  rgba(11, 12, 14, .7); }
+.cierre .grande-titulo { font-size: clamp(2.8rem, 8vw, 6.6rem); letter-spacing: -.05em; color: #fff; }
+.cierre-sub { margin-top: 14px; color: var(--muted); font-size: 1.1rem; }
+.cierre .botones { margin-top: clamp(24px, 3vw, 36px); display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.cierre .boton.secundario { background: rgba(255, 255, 255, .08); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+@media (hover: hover) and (pointer: fine) { .cierre .boton.secundario:hover { background: rgba(255, 255, 255, .16); } }
+
 
 /* =====================================================================
    ATAJOS: hojas tipo "chuleta" (acción a la izquierda, teclas a la derecha). Se iluminan al apretar la tecla.
@@ -363,6 +411,69 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   html.js .revela { opacity: 0; transform: translateY(18px); transition: opacity .6s var(--ease-out), transform .6s var(--ease-out); transition-delay: calc(var(--i, 0) * 80ms); }
   html.js .revela.dentro { opacity: 1; transform: none; }
 }
+/* ---------- portadas: el color de la portada tiñe el fondo y las tarjetas pasan solas ---------- */
+.portadas { padding-block:clamp(64px,8vw,120px); overflow:clip; }
+.escenario { position:relative; margin-top:clamp(28px,5vw,64px); height:clamp(380px,52vw,520px); border-radius:28px;
+  border:1px solid var(--line); background:var(--surface); outline-offset:6px; touch-action:pan-y; user-select:none; -webkit-user-select:none; }
+.fondo { position:absolute; inset:0; border-radius:inherit; overflow:hidden; pointer-events:none; }
+.brillo { position:absolute; left:50%; top:52%; width:min(820px,130%); aspect-ratio:1; translate:-50% -50%; border-radius:50%; opacity:0;
+  background:radial-gradient(closest-side, color-mix(in srgb, var(--c) 78%, transparent) 0%, color-mix(in srgb, var(--c) 32%, transparent) 52%, transparent 100%); transition:opacity .9s ease; }
+.brillo.on { opacity:.9; }
+.tarjetas { position:absolute; inset:0; perspective:1400px; }
+.tarj { --o:0; position:absolute; left:50%; top:50%; width:clamp(230px,30vw,372px); aspect-ratio:1; margin:0;
+  translate:-50% -50%; cursor:pointer;
+  transform:translateX(calc(var(--o) * 56%)) translateZ(calc(var(--a,0) * -90px)) rotateY(calc(var(--o) * -9deg)) scale(calc(1 - var(--a,0) * .12));
+  opacity:calc(1 - var(--a,0) * .28); z-index:calc(10 - var(--a,0));
+  transition:transform .55s var(--ease-out), opacity .4s ease; }
+.tarj img { width:100%; height:100%; object-fit:contain; pointer-events:none; filter:drop-shadow(0 22px 30px rgba(0,0,0,.28)); }
+.tarj.fuera { opacity:0; pointer-events:none; }
+.tarj.activa { cursor:default; }
+.tarj:not(.activa) img { filter:drop-shadow(0 14px 20px rgba(0,0,0,.2)) saturate(.85); }
+.mando { position:absolute; inset:auto 0 18px 0; display:flex; align-items:center; justify-content:center; gap:14px; z-index:20; }
+.mando button { display:grid; place-items:center; width:44px; height:44px; border-radius:999px; border:1px solid var(--line); background:color-mix(in srgb,var(--surface) 80%,transparent);
+  color:var(--text); cursor:pointer; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); transition:background .15s ease, transform .15s ease; }
+.mando button:hover { background:var(--accent); color:var(--on-accent); }
+.mando button:active { transform:scale(.94); }
+.pausa .i-play { display:none; } .pausa[aria-pressed="true"] .i-play { display:block; } .pausa[aria-pressed="true"] .i-pausa { display:none; }
+@media (prefers-reduced-motion: reduce) { .tarj, .brillo { transition:none; } }
+@media (max-width:640px) { .tarj { transform:translateX(calc(var(--o) * 46%)) translateZ(calc(var(--a,0) * -90px)) rotateY(calc(var(--o) * -9deg)) scale(calc(1 - var(--a,0) * .12)); } }
+/* ---------- sonido: los seis ajustes del ecualizador, dibujados como barras de 10 bandas ---------- */
+.sonido { padding-block: clamp(64px, 8vw, 120px); }
+.sonido .grande-titulo { font-size: clamp(2.4rem, 6.4vw, 5.6rem); max-width: 12ch; }
+.sonido .intro { margin-top: 24px; max-width: 46ch; color: var(--muted); font-size: 1.15rem; }
+.sonido .cuerpo { margin-top: clamp(28px, 5vw, 64px); display: grid; grid-template-columns: 5fr 6fr; gap: clamp(28px, 6vw, 96px); align-items: center; }
+.ajustes { display: flex; flex-wrap: wrap; gap: 10px; }
+.ajustes button { font: inherit; font-size: .95rem; font-weight: 600; color: var(--text); background: none; border: 1px solid var(--line); border-radius: 999px; padding: 10px 18px; min-height: 44px; cursor: pointer; transition: background .15s ease, color .15s ease, border-color .15s ease; }
+.ajustes button:hover { border-color: var(--text); }
+.ajustes button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.sonido .nota { margin-top: 22px; color: var(--muted); font-size: .98rem; max-width: 44ch; }
+/* el panel replica el del reproductor: siempre oscuro, sliders verticales con perilla blanca y relleno naranja desde abajo */
+.ecu { justify-self: center; width: min(100%, 440px); border-radius: 18px; background: #161618; color: #fff; padding: 22px 22px 20px; box-shadow: var(--shadow); border: 1px solid rgba(255,255,255,.08); }
+.ecu-titulo { font-size: 1rem; font-weight: 700; margin: 0 0 14px; }
+.ecu-cols { display: grid; grid-template-columns: repeat(10, 1fr); gap: 0; text-align: center; font-size: .78rem; font-variant-numeric: tabular-nums; }
+.ecu-col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.ecu-db { color: rgba(255,255,255,.82); min-height: 1.2em; }
+.ecu-hz { color: rgba(255,255,255,.82); }
+.ecu-pista { position: relative; width: 3px; height: clamp(150px, 20vw, 190px); background: rgba(255,255,255,.3); border-radius: 2px; margin-block: 4px; }
+.ecu-pista::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: calc((1 - var(--p, .5)) * 100%); background: var(--accent); border-radius: 2px; transition: height .7s var(--ease-out); }
+.ecu-pista::after { content: ""; position: absolute; left: 50%; top: calc(var(--p, .5) * 100%); width: 17px; height: 17px; margin: -8.5px 0 0 -8.5px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.4); transition: top .7s var(--ease-out); }
+.ecu-pie { display: flex; gap: 10px; margin-top: 18px; align-items: center; }
+.ecu-pie > span { display: inline-block; border-radius: 12px; padding: 9px 16px; font-size: .82rem; font-weight: 500; background: rgba(255,255,255,.16); color: #fff; white-space: nowrap; }
+.ecu-pie > .listo { margin-left: auto; background: var(--accent); color: #fff; font-weight: 600; }
+@media (max-width: 880px) { .sonido .cuerpo { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .ecu-pista::before, .ecu-pista::after { transition: none; } }
+
+/* tarjetas de fondo: las mismas capturas, a un costado y tenues, que se desplazan a distinto ritmo con el scroll */
+.hay-flota { position: relative; }
+.flota-caja { position: absolute; inset: 0; overflow: clip; pointer-events: none; z-index: 0; }
+.flota { position: absolute; left: var(--x, auto); right: var(--xr, auto); top: var(--y); width: clamp(140px, var(--w, 18vw), 280px); aspect-ratio: 1; rotate: var(--r, 0deg);
+  opacity: var(--op, .3); filter: drop-shadow(0 18px 24px rgba(0,0,0,.25)); }
+.hay-flota.viva .flota { will-change: translate; }
+.hay-flota > .cont { position: relative; z-index: 1; }
+@media (max-width: 880px) { .flota { opacity: calc(var(--op, .3) * .6); width: clamp(96px, 26vw, 160px); } }
+
+.portadas .grande-titulo { font-size: clamp(2.4rem, 6.4vw, 5.6rem); max-width: 12ch; }
+.portadas .intro { margin-top: 24px; max-width: 46ch; color: var(--muted); font-size: 1.15rem; }
 </style>
 </head>
 <body>
@@ -431,17 +542,38 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
             </div>
           </div>
           <figure class="reproductor" style="margin:0">
-            <video id="demo" autoplay muted loop playsinline preload="metadata" poster="img/poster.webp" width="720" height="1096" aria-label="simpleplay reproduciendo un tema: tarjeta con la portada, barras de espectro, barra compacta y lista de reproducción">
-              <source src="demo.mp4" type="video/mp4">
-            </video>
-          </figure>
+          <div class="demo-tarjetas" id="demo" role="img" aria-label="simpleplay reproduciendo un tema tras otro: la tarjeta cambia con la portada de cada uno" data-es="simpleplay reproduciendo un tema tras otro: la tarjeta cambia con la portada de cada uno" data-en="simpleplay playing one track after another: the card changes with each cover">
+            <img data-n="01" alt="" width="372" height="372" decoding="async">
+            <img data-n="02" alt="" width="372" height="372" decoding="async">
+            <img data-n="03" alt="" width="372" height="372" decoding="async">
+            <img data-n="04" alt="" width="372" height="372" decoding="async">
+            <img data-n="05" alt="" width="372" height="372" decoding="async">
+            <img data-n="06" alt="" width="372" height="372" decoding="async">
+            <img data-n="07" alt="" width="372" height="372" decoding="async">
+            <img data-n="08" alt="" width="372" height="372" decoding="async">
+            <img data-n="09" alt="" width="372" height="372" decoding="async" src="img/portadas/09.webp" class="activa" data-primera fetchpriority="high">
+            <img data-n="10" alt="" width="372" height="372" decoding="async">
+            <img data-n="11" alt="" width="372" height="372" decoding="async">
+            <img data-n="12" alt="" width="372" height="372" decoding="async">
+            <img data-n="13" alt="" width="372" height="372" decoding="async">
+            <img data-n="14" alt="" width="372" height="372" decoding="async">
+            <img data-n="15" alt="" width="372" height="372" decoding="async">
+            <img data-n="16" alt="" width="372" height="372" decoding="async">
+          </div>
+        </figure>
         </div>
       </div>
     </div>
   </section>
 
   <!-- 2. cómo nació -->
-  <section class="historia" id="historia">
+  <section class="historia hay-flota" id="historia">
+      <div class="flota-caja" aria-hidden="true">
+        <img class="flota" src="img/portadas/12.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--xr:-6%;--y:8%;--w:19vw;--r:7deg;--op:.30;--v:-.12" data-v="-.12">
+        <img class="flota" src="img/portadas/08.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--x:-7%;--y:62%;--w:16vw;--r:-6deg;--op:.26;--v:.16" data-v=".16">
+        <img class="flota" src="img/portadas/05.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--x:-9%;--y:30%;--w:13vw;--r:5deg;--op:.24;--v:-.2" data-v="-.2">
+        <img class="flota" src="img/portadas/09.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--xr:-8%;--y:84%;--w:14vw;--r:-6deg;--op:.24;--v:.1" data-v=".1">
+      </div>
     <div class="cont">
       <h2 class="grande-titulo revela"><span class="es">Todo empezó con una carpeta de mp3.</span><span class="en">It all started with a folder of mp3s.</span></h2>
       <div class="doble">
@@ -469,6 +601,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
         <li class="revela"><span class="v">1.5.1</span><span class="t"><span class="es">El normalizador se acomoda de a poco y mide el tema que sigue, sin saltos de volumen.</span><span class="en">The normalizer settles gradually and measures the next track ahead, with no sudden volume jumps.</span></span></li>
         <li class="revela"><span class="v">1.5.2</span><span class="t"><span class="es">Un shuffle que no repite temas hasta que suenan todos, y un icono nuevo.</span><span class="en">A shuffle that never repeats a track until all have played, and a new icon.</span></span></li>
         <li class="revela"><span class="v">1.5.3</span><span class="t"><span class="es">Fundidos suaves al pausar y cerrar, un contador en la lista y sin saltos de volumen con shuffle.</span><span class="en">Soft fades when pausing and closing, a counter in the list and no volume jumps with shuffle.</span></span></li>
+        <li class="revela"><span class="v">1.6</span><span class="t"><span class="es">Ecualizador gráfico de 10 bandas con graves precisos, mejor sonido en archivos de 48 y 96 kHz, un limitador que no distorsiona, controles que se esconden solos, y seis colores de acento.</span><span class="en">A 10-band graphic equalizer with accurate bass, better sound for 48 and 96 kHz files, a limiter that does not distort, controls that hide by themselves, and six accent colors.</span></span></li>
       </ol>
     </div>
   </section>
@@ -483,22 +616,22 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
           <article class="paso activo" data-i="0">
             <h3><span class="es">Una tarjeta con la portada</span><span class="en">A card with the cover art</span></h3>
             <p><span class="es">Sin menús ni barra de título. La portada, el tema y los controles, y nada más.</span><span class="en">No menus, no title bar. The cover, the track and the controls, nothing else.</span></p>
-            <figure class="fig-movil"><img src="screenshots/player.png" width="744" height="744" loading="lazy" alt="La tarjeta de simpleplay con la portada de un tema" data-alt-es="La tarjeta de simpleplay con la portada de un tema" data-alt-en="The simpleplay card with a track's cover art"></figure>
+            <figure class="fig-movil"><img src="img/player.webp" width="744" height="744" loading="lazy" alt="La tarjeta de simpleplay con la portada de un tema" data-alt-es="La tarjeta de simpleplay con la portada de un tema" data-alt-en="The simpleplay card with a track's cover art"></figure>
           </article>
           <article class="paso" data-i="1">
             <h3><span class="es">Barras que escuchan lo mismo que vos</span><span class="en">Bars that hear what you hear</span></h3>
             <p><span class="es">El espectro estilo Winamp lee el audio que sale por tus parlantes, cuadro por cuadro.</span><span class="en">The Winamp-style spectrum reads the audio going to your speakers, frame by frame.</span></p>
-            <figure class="fig-movil"><img src="screenshots/spectrum.png" width="744" height="744" loading="lazy" alt="La tarjeta con las barras de espectro verdes y amarillas arriba" data-alt-es="La tarjeta con las barras de espectro verdes y amarillas arriba" data-alt-en="The card with green and yellow spectrum bars at the top"></figure>
+            <figure class="fig-movil"><img src="img/spectrum.webp" width="744" height="744" loading="lazy" alt="La tarjeta con las barras de espectro verdes y amarillas arriba" data-alt-es="La tarjeta con las barras de espectro verdes y amarillas arriba" data-alt-en="The card with green and yellow spectrum bars at the top"></figure>
           </article>
           <article class="paso" data-i="2">
             <h3><span class="es">Se achica a una barra</span><span class="en">It shrinks to a bar</span></h3>
             <p><span class="es">Una transición suave pasa de la tarjeta a una barra compacta. La música no se corta.</span><span class="en">A smooth transition turns the card into a compact bar. The music keeps playing.</span></p>
-            <figure class="fig-movil"><img src="screenshots/compact.png" width="864" height="216" loading="lazy" alt="La barra compacta con los botones anterior, pausa y siguiente" data-alt-es="La barra compacta con los botones anterior, pausa y siguiente" data-alt-en="The compact bar with previous, pause and next buttons"></figure>
+            <figure class="fig-movil"><img src="img/compact.webp" width="864" height="216" loading="lazy" alt="La barra compacta con los botones anterior, pausa y siguiente" data-alt-es="La barra compacta con los botones anterior, pausa y siguiente" data-alt-en="The compact bar with previous, pause and next buttons"></figure>
           </article>
           <article class="paso" data-i="3">
             <h3><span class="es">Una lista que se abre cuando hace falta</span><span class="en">A list that opens when needed</span></h3>
             <p><span class="es">Buscá, ordená, arrastrá y agregá carpetas enteras.</span><span class="en">Search, sort, drag, and add whole folders.</span></p>
-            <figure class="fig-movil"><img src="screenshots/playlist.png" width="744" height="1302" loading="lazy" alt="El panel de la lista de reproducción con un buscador" data-alt-es="El panel de la lista de reproducción con un buscador" data-alt-en="The playlist panel with a search box"></figure>
+            <figure class="fig-movil"><img src="img/playlist.webp" width="744" height="1302" loading="lazy" alt="El panel de la lista de reproducción con un buscador" data-alt-es="El panel de la lista de reproducción con un buscador" data-alt-en="The playlist panel with a search box"></figure>
           </article>
           <article class="paso" data-i="4">
             <h3><span class="es">Un motor de audio propio</span><span class="en">Its own audio engine</span></h3>
@@ -525,7 +658,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
           </article>
         </div>
         <div class="vitrina" aria-hidden="true" id="vitrina">
-          <figure class="v0 activa"><picture><source srcset="img/player.webp" type="image/webp"><img src="screenshots/player.png" width="744" height="744" alt=""></picture></figure>
+          <figure class="v0 activa"><picture><source srcset="img/player.webp" type="image/webp"><img src="screenshots/player.png" width="744" height="744" alt="" loading="lazy" decoding="async"></picture></figure>
           <figure class="v1"><picture><source srcset="img/spectrum.webp" type="image/webp"><img src="screenshots/spectrum.png" width="744" height="744" alt="" loading="lazy"></picture></figure>
           <figure class="v2"><picture><source srcset="img/compact.webp" type="image/webp"><img src="screenshots/compact.png" width="864" height="216" alt="" loading="lazy"></picture></figure>
           <figure class="v3"><picture><source srcset="img/playlist.webp" type="image/webp"><img src="screenshots/playlist.png" width="744" height="1302" alt="" loading="lazy"></picture></figure>
@@ -543,8 +676,71 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     </div>
   </section>
 
+  <!-- portadas -->
+  <section class="portadas" id="portadas">
+    <div class="cont">
+      <h2 class="grande-titulo revela"><span class="es">La portada manda.</span><span class="en">The cover leads.</span></h2>
+      <p class="intro revela" style="--i:1"><span class="es">Cada tema llega con su arte, y la tarjeta lo muestra grande. Pasan solas; tocá una para elegirla.</span><span class="en">Every track brings its artwork, and the card shows it big. They move on their own; tap one to pick it.</span></p>
+      <div class="escenario revela" style="--i:2" id="escenario" tabindex="0" role="group" aria-roledescription="carrusel" aria-label="Capturas del reproductor con distintas portadas" data-es="Capturas del reproductor con distintas portadas" data-en="Player screenshots with different cover art">
+        <div class="fondo"><i class="brillo"></i><i class="brillo"></i></div>
+        <ul class="tarjetas" id="tarjetas">
+          <li class="tarj" data-c="#924926"><img src="img/portadas/01.webp" width="372" height="372" alt="" loading="eager" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#a0a0a0"><img src="img/portadas/02.webp" width="372" height="372" alt="" loading="eager" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#0e3269"><img src="img/portadas/03.webp" width="372" height="372" alt="" loading="eager" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#7c384a"><img src="img/portadas/04.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#705a3a"><img src="img/portadas/05.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#858e5d"><img src="img/portadas/06.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#3e492e"><img src="img/portadas/07.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#851f20"><img src="img/portadas/08.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#999999"><img src="img/portadas/09.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#7c5133"><img src="img/portadas/10.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#825b43"><img src="img/portadas/11.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#6e4146"><img src="img/portadas/12.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#758cb7"><img src="img/portadas/13.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#32686d"><img src="img/portadas/14.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#4a4744"><img src="img/portadas/15.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+          <li class="tarj" data-c="#8e1b20"><img src="img/portadas/16.webp" width="372" height="372" alt="" loading="lazy" decoding="async" draggable="false"></li>
+        </ul>
+                        <div class="mando">
+          <button type="button" class="pausa" id="pausa" aria-pressed="false" data-es="Pausar el avance automático" data-en="Pause autoplay" data-es-on="Reanudar el avance automático" data-en-on="Resume autoplay" aria-label="Pausar el avance automático"><svg class="i-pausa" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><svg class="i-play" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10-6.5a1 1 0 0 0 0-1.72l-10-6.5A1 1 0 0 0 8 5.5z"/></svg></button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sonido" id="sonido">
+    <div class="cont">
+      <h2 class="grande-titulo revela"><span class="es">Suena como querés.</span><span class="en">Sounds the way you want.</span></h2>
+      <p class="intro revela" style="--i:1"><span class="es">Un ecualizador de 10 bandas con seis ajustes listos para elegir, y un normalizador para que todos los temas suenen parejos.</span><span class="en">A 10-band equalizer with six settings ready to pick, and a normalizer so every track sounds even.</span></p>
+      <div class="cuerpo">
+        <div class="revela" style="--i:2">
+          <div class="ajustes" id="ajustes" role="group" aria-label="Ajustes de ecualizador" data-es="Ajustes de ecualizador" data-en="Equalizer settings">
+            <button type="button" data-k="plano" aria-pressed="false"><span class="es">Plano</span><span class="en">Flat</span></button>
+            <button type="button" data-k="vivo" aria-pressed="true"><span class="es">Vivo</span><span class="en">Lively</span></button>
+            <button type="button" data-k="graves" aria-pressed="false"><span class="es">Más graves</span><span class="en">More bass</span></button>
+            <button type="button" data-k="voces" aria-pressed="false"><span class="es">Voces</span><span class="en">Vocals</span></button>
+            <button type="button" data-k="brillante" aria-pressed="false"><span class="es">Brillante</span><span class="en">Bright</span></button>
+            <button type="button" data-k="calido" aria-pressed="false"><span class="es">Cálido</span><span class="en">Warm</span></button>
+          </div>
+          <p class="nota"><span class="es">Además, una base de perfiles para corregir unos ~800 modelos de auriculares: se baja una vez y después anda sin internet.</span><span class="en">Plus a library of profiles to correct about 800 headphone models: you download one once and it works offline afterwards.</span></p>
+        </div>
+        <div class="ecu revela" style="--i:3" id="ecu" role="img" aria-label="Ecualizador de 10 bandas" data-es="Ecualizador de 10 bandas" data-en="10-band equalizer">
+          <p class="ecu-titulo" aria-hidden="true"><span class="es">Ecualizador</span><span class="en">Equalizer</span></p>
+          <div class="ecu-cols" id="ecu-cols" aria-hidden="true"><div class="ecu-col"><span class="ecu-db"></span><div class="ecu-pista"></div><span class="ecu-hz">31</span></div><div class="ecu-col"><span class="ecu-db"></span><div class="ecu-pista"></div><span class="ecu-hz">62</span></div><div class="ecu-col"><span class="ecu-db"></span><div class="ecu-pista"></div><span class="ecu-hz">125</span></div><div class="ecu-col"><span class="ecu-db"></span><div class="ecu-pista"></div><span class="ecu-hz">250</span></div><div class="ecu-col"><span class="ecu-db"></span><div class="ecu-pista"></div><span class="ecu-hz">500</span></div><div class="ecu-col"><span class="ecu-db"></span><div class="ecu-pista"></div><span class="ecu-hz">1k</span></div><div class="ecu-col"><span class="ecu-db"></span><div class="ecu-pista"></div><span class="ecu-hz">2k</span></div><div class="ecu-col"><span class="ecu-db"></span><div class="ecu-pista"></div><span class="ecu-hz">4k</span></div><div class="ecu-col"><span class="ecu-db"></span><div class="ecu-pista"></div><span class="ecu-hz">8k</span></div><div class="ecu-col"><span class="ecu-db"></span><div class="ecu-pista"></div><span class="ecu-hz">16k</span></div></div>
+          <div class="ecu-pie" aria-hidden="true"><span><span class="es">Partir de…</span><span class="en">Start from…</span></span><span><span class="es">Afinar al oído…</span><span class="en">Tune by ear…</span></span><span class="listo"><span class="es">Listo</span><span class="en">Done</span></span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- atajos -->
-  <section class="atajos" id="atajos">
+  <section class="atajos hay-flota" id="atajos">
+      <div class="flota-caja" aria-hidden="true">
+        <img class="flota" src="img/portadas/04.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--x:-11%;--y:6%;--w:16vw;--r:-8deg;--op:.28;--v:.14" data-v=".14">
+        <img class="flota" src="img/portadas/14.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--xr:-5%;--y:58%;--w:20vw;--r:5deg;--op:.30;--v:-.1" data-v="-.1">
+        <img class="flota" src="img/portadas/01.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--xr:-8%;--y:4%;--w:13vw;--r:-5deg;--op:.24;--v:.2" data-v=".2">
+        <img class="flota" src="img/portadas/07.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--x:-8%;--y:84%;--w:14vw;--r:7deg;--op:.24;--v:-.1" data-v="-.1">
+      </div>
     <div class="cont">
       <h2 class="grande-titulo revela"><span class="es">Se maneja con el teclado.</span><span class="en">It runs on the keyboard.</span></h2>
       <p class="intro revela" style="--i:1"><span class="es">Todo lo importante tiene su tecla. Probalas acá: se iluminan al apretarlas. Aquí no suena nada, el reproductor responde a las mismas teclas.</span><span class="en">Everything important has a key. Try them here: they light up when you press them. Nothing plays on this page, the player answers to the same keys.</span></p>
@@ -629,33 +825,33 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   <section class="descarga" id="descargar">
     <div class="cont">
       <h2 class="grande-titulo revela"><span class="es">Descargar</span><span class="en">Download</span></h2>
-      <p class="sub-d revela" style="--i:1"><span class="es">Versión 1.5.3. Gratis y sin registro.</span><span class="en">Version 1.5.3. Free, no sign-up.</span></p>
+      <p class="sub-d revela" style="--i:1"><span class="es">Versión 1.6. Gratis y sin registro.</span><span class="en">Version 1.6. Free, no sign-up.</span></p>
       <div class="filas">
         <article class="fila revela">
           <div class="so"><svg class="ic" aria-hidden="true"><use href="#i-linux-logo"/></svg><div>Linux<span class="peso">AppImage, 75 MB</span></div></div>
           <div>
             <p class="es">Descargalo, dale permiso de ejecución y abrilo. Necesita glibc 2.35 o más nuevo (Ubuntu 22.04, Debian 12 o posteriores).</p>
             <p class="en">Download it, make it executable and run it. It needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or later).</p>
-            <code>chmod +x simpleplay-1.5.3-x86_64.AppImage</code>
+            <code>chmod +x simpleplay-1.6-x86_64.AppImage</code>
           </div>
-          <a class="boton principal" href="https://github.com/cufadev/simpleplay/releases/download/v1.5.3/simpleplay-1.5.3-x86_64.AppImage"><span class="es">Descargar para Linux</span><span class="en">Download for Linux</span></a>
+          <a class="boton principal" href="https://github.com/cufadev/simpleplay/releases/download/v1.6/simpleplay-1.6-x86_64.AppImage"><span class="es">Descargar para Linux</span><span class="en">Download for Linux</span></a>
         </article>
         <article class="fila revela">
-          <div class="so"><svg class="ic" aria-hidden="true"><use href="#i-windows-logo"/></svg><div>Windows<span class="peso">ZIP, 56 MB</span></div></div>
+          <div class="so"><svg class="ic" aria-hidden="true"><use href="#i-windows-logo"/></svg><div>Windows<span class="peso">ZIP, 54 MB</span></div></div>
           <div>
             <p class="es">Descomprimí y abrí simpleplay.exe. Como no está firmado, Windows va a avisar: tocá Más información y Ejecutar de todas formas. Todavía lo probé en pocas PC: si algo falla, avisame.</p>
             <p class="en">Unzip it and open simpleplay.exe. It is not signed, so Windows will warn you: click More info, then Run anyway. I have tried it on few PCs so far: if something fails, let me know.</p>
           </div>
-          <a class="boton principal" href="https://github.com/cufadev/simpleplay/releases/download/v1.5.3/simpleplay-1.5.3-windows-x64.zip"><span class="es">Descargar para Windows</span><span class="en">Download for Windows</span></a>
+          <a class="boton principal" href="https://github.com/cufadev/simpleplay/releases/download/v1.6/simpleplay-1.6-windows-x64.zip"><span class="es">Descargar para Windows</span><span class="en">Download for Windows</span></a>
         </article>
         <article class="fila revela">
           <div class="so"><svg class="ic" aria-hidden="true"><use href="#i-apple-logo"/></svg><div>macOS<span class="peso"><span class="es">Versión para Mac</span><span class="en">Mac version</span></span></div></div>
           <div>
-            <p class="es">La versión para Mac está en camino. Si querés enterarte cuando salga, seguí el repositorio en GitHub y elegí avisos de nuevas versiones.</p>
-            <p class="en">The Mac version is on its way. To hear about it when it is out, follow the repository on GitHub and choose release notifications.</p>
+            <p class="es">La versión para Mac ya está armada y se está probando: todavía no la publiqué. Si querés enterarte cuando salga, seguí el repositorio en GitHub y elegí avisos de nuevas versiones.</p>
+            <p class="en">The Mac version is built and being tested: it is not published yet. To hear about it when it is out, follow the repository on GitHub and choose release notifications.</p>
             <a class="seguir" href="https://github.com/cufadev/simpleplay"><span class="es">Seguir en GitHub</span><span class="en">Follow on GitHub</span></a>
           </div>
-          <span class="boton secundario deshabilitado" aria-disabled="true"><span class="es">En breve</span><span class="en">Coming soon</span></span>
+          <span class="boton secundario deshabilitado" aria-disabled="true"><span class="es">En pruebas</span><span class="en">Being tested</span></span>
         </article>
       </div>
       <p class="todas revela"><a href="https://github.com/cufadev/simpleplay/releases"><span class="es">Ver todas las versiones</span><span class="en">See all versions</span></a></p>
@@ -687,6 +883,23 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
       </div>
     </div>
   </section>
+  <!-- 7. cierre: la invitación final (mismos enlaces que "Descargar") -->
+  <section class="cierre" id="cierre" aria-labelledby="cierre-t">
+    <div class="cont">
+      <div class="cierre-caja">
+        <div class="cierre-fondo" aria-hidden="true"><div class="cierre-rot"><div class="cierre-fila"></div><div class="cierre-fila"></div><div class="cierre-fila"></div><div class="cierre-fila"></div><div class="cierre-fila"></div></div></div>
+        <div class="cierre-vela" aria-hidden="true"></div>
+        <div>
+          <h2 class="grande-titulo revela" id="cierre-t"><span class="es">Poné play.</span><span class="en">Hit play.</span></h2>
+          <p class="cierre-sub revela" style="--i:1"><span class="es">Gratis, sin registro y sin internet. Versión 1.6.</span><span class="en">Free, no sign-up and no internet needed. Version 1.6.</span></p>
+          <div class="botones revela" style="--i:2">
+            <a class="boton principal" href="https://github.com/cufadev/simpleplay/releases/download/v1.6/simpleplay-1.6-x86_64.AppImage"><svg class="ic" aria-hidden="true"><use href="#i-linux-logo"/></svg><span class="es">Descargar para Linux</span><span class="en">Download for Linux</span></a>
+            <a class="boton secundario" href="https://github.com/cufadev/simpleplay/releases/download/v1.6/simpleplay-1.6-windows-x64.zip"><svg class="ic" aria-hidden="true"><use href="#i-windows-logo"/></svg><span class="es">Descargar para Windows</span><span class="en">Download for Windows</span></a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
 </main>
 
@@ -694,8 +907,8 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   <div class="cont">
     <a class="firma" href="https://cufadev.xyz">cufa</a>
     <small>
-      <span class="es">&copy; 2026 Facundo González. GPL-3.0-or-later. Hecho con PySide6 y miniaudio. Tipografías Geist y Bebas Neue (SIL OFL). Las capturas usan &laquo;Tu Cuerpo&raquo;, de Luciano D'Andrea.</span>
-      <span class="en">&copy; 2026 Facundo González. GPL-3.0-or-later. Built with PySide6 and miniaudio. Typefaces Geist and Bebas Neue (SIL OFL). The screenshots use &ldquo;Tu Cuerpo&rdquo; by Luciano D'Andrea.</span>
+      <span class="es">&copy; 2026 Facundo González. GPL-3.0-or-later. Hecho con PySide6 y miniaudio. Tipografías Geist y Bebas Neue (SIL OFL).</span>
+      <span class="en">&copy; 2026 Facundo González. GPL-3.0-or-later. Built with PySide6 and miniaudio. Typefaces Geist and Bebas Neue (SIL OFL).</span>
     </small>
   </div>
   <div class="nombre" aria-hidden="true">simpleplay</div>
@@ -736,6 +949,12 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     if (l === html.lang || cambiandoIdioma) return;
     if (reducir.matches) { ponerIdioma(l); return; }
     cambiandoIdioma = true;
+    if (document.startViewTransition) {
+      html.classList.add('vt-idioma');
+      const t = document.startViewTransition(() => { ponerIdioma(l); dispatchEvent(new Event('resize')); });
+      t.finished.finally(() => { html.classList.remove('vt-idioma'); cambiandoIdioma = false; });
+      return;
+    }
     html.classList.add('idioma-sale');
     setTimeout(() => {
       ponerIdioma(l);
@@ -750,16 +969,51 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   const sistema = matchMedia('(prefers-color-scheme: dark)');
   const guardado = memoria.leer('sp-tema');
   if (guardado) html.dataset.theme = guardado;
-  document.querySelector('#tema').addEventListener('click', () => {
+  let cambiandoTema = false;
+  document.querySelector('#tema').addEventListener('click', (e) => {
     const actual = html.dataset.theme || (sistema.matches ? 'dark' : 'light');
     const nuevo = actual === 'dark' ? 'light' : 'dark';
-    html.dataset.theme = nuevo;
-    memoria.guardar('sp-tema', nuevo);
+    const aplicar = () => { html.dataset.theme = nuevo; memoria.guardar('sp-tema', nuevo); };
+    if (!document.startViewTransition || reducir.matches || cambiandoTema) { aplicar(); return; }
+    // el tema nuevo se abre en círculo desde el centro del botón (el sol o la luna) hasta cubrir toda la pantalla
+    const r = e.currentTarget.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+    const radio = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+    cambiandoTema = true;
+    html.classList.add('vt-tema');
+    const t = document.startViewTransition(aplicar);
+    t.ready.then(() => html.animate(
+      { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radio}px at ${x}px ${y}px)`] },
+      { duration: 750, easing: 'cubic-bezier(0.23, 1, 0.32, 1)', pseudoElement: '::view-transition-new(root)' }
+    )).catch(() => {});
+    t.finished.finally(() => { html.classList.remove('vt-tema'); cambiandoTema = false; });
   });
 
-  // Con "reducir movimiento" el video queda en su póster
-  const video = document.querySelector('#demo');
-  if (video && reducir.matches) { video.removeAttribute('autoplay'); video.pause(); }
+  // Reproductor del héroe: la tarjeta cambia de portada cada pocos segundos. La primera es la de Luciano y el resto va al azar;
+  // con "reducir movimiento" queda quieta en la primera.
+  (() => {
+    const caja = document.querySelector('#demo');
+    if (!caja) return;
+    const todas = [...caja.querySelectorAll('img')], primera = caja.querySelector('[data-primera]');
+    const resto = todas.filter((im) => im !== primera);
+    for (let k = resto.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [resto[k], resto[j]] = [resto[j], resto[k]]; }
+    const orden = [primera, ...resto];
+    orden.forEach((im) => caja.appendChild(im));
+    const poner = () => { const en = document.documentElement.lang === 'en'; caja.setAttribute('aria-label', caja.dataset[en ? 'en' : 'es']); };
+    new MutationObserver(poner).observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+    if (reducir.matches) return;
+    // las demás portadas se piden recién cuando la página terminó de cargar, para no competir con lo primero que se ve
+    const cargar = () => orden.forEach((im) => { if (!im.src) im.src = 'img/portadas/' + im.dataset.n + '.webp'; });
+    if (document.readyState === 'complete') cargar(); else addEventListener('load', cargar, { once: true });
+    let i = 0, t = null, visible = false, enPantalla = false;
+    const siguiente = () => {
+      let k = (i + 1) % orden.length;
+      for (let n = 0; n < orden.length && !(orden[k].complete && orden[k].naturalWidth); n++) k = (k + 1) % orden.length;   // salta las que aún no llegaron
+      orden[i].classList.remove('activa'); i = k; orden[i].classList.add('activa');
+    };
+    const programar = () => { clearInterval(t); if (visible) t = setInterval(siguiente, 2800); };
+    if ('IntersectionObserver' in window) new IntersectionObserver((e) => { enPantalla = e[0].isIntersecting; visible = enPantalla && !document.hidden; programar(); }).observe(caja);
+    document.addEventListener('visibilitychange', () => { visible = enPantalla && !document.hidden; programar(); });
+  })();
 
   // El cartel de scroll se va apenas se empieza a bajar
   const cima = document.querySelector('#cima');
@@ -894,6 +1148,163 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     }, { rootMargin: '-42% 0px -42% 0px' });
     pasos.forEach((p) => ojoP.observe(p));
   }
+})();
+</script>
+<script>
+// Carrusel de portadas: pasa solo (se puede pausar), se detiene fuera de pantalla y con "reducir movimiento"
+(() => {
+  const esc = document.getElementById('escenario'), ul = document.getElementById('tarjetas');
+  // el orden es al azar por completo en cada visita
+  const mezclar = (a) => { for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } return a; };
+  mezclar([...ul.children]).forEach((li) => ul.appendChild(li));
+  const lis = [...ul.children];
+  lis.slice(0, 3).forEach((li) => { li.firstElementChild.loading = 'eager'; });
+  const bPausa = document.getElementById('pausa');
+  const brillos = [...esc.querySelectorAll('.brillo')];
+  const N = lis.length, T = 2300, quieto = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let i = 0, capa = 0, timer = null, enPantalla = false, visible = false, pausado = quieto, arrastro = false;
+
+  // etiquetas de accesibilidad en el idioma de la página
+  const etiquetar = () => {
+    const en = document.documentElement.lang === 'en', pon = (el, k) => { const t = el.dataset[k]; if (t) el.setAttribute('aria-label', t); };
+    pon(esc, en ? 'en' : 'es');
+    pon(bPausa, (en ? 'en' : 'es') + (pausado ? 'On' : ''));
+  };
+  new MutationObserver(etiquetar).observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+
+  function pintar() {
+    lis.forEach((li, k) => {
+      let o = k - i; if (o > N / 2) o -= N; if (o < -N / 2) o += N;
+      li.style.setProperty('--o', o); li.style.setProperty('--a', Math.min(Math.abs(o), 3));
+      li.classList.toggle('activa', o === 0); li.classList.toggle('fuera', Math.abs(o) > 2);
+      li.setAttribute('aria-hidden', o === 0 ? 'false' : 'true');
+    });
+    // el resplandor cruza dos capas con opacidad (barato de pintar) en vez de animar un desenfoque
+    const prox = brillos[capa ^ 1];
+    prox.style.setProperty('--c', lis[i].dataset.c);
+    prox.classList.add('on'); brillos[capa].classList.remove('on'); capa ^= 1;
+  }
+  function ir(k) { i = (k + N) % N; pintar(); programar(); }
+  function programar() {
+    clearTimeout(timer);
+    if (pausado || !visible) return;
+    timer = setTimeout(() => ir(i + 1), T);
+  }
+  function poner(p) {
+    pausado = p;
+    bPausa.setAttribute('aria-pressed', String(p));
+    etiquetar(); programar();
+  }
+  bPausa.addEventListener('click', () => poner(!pausado));
+  lis.forEach((li, k) => li.addEventListener('click', () => { if (!arrastro) ir(k); }));
+  esc.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') { ir(i + 1); e.preventDefault(); } else if (e.key === 'ArrowLeft') { ir(i - 1); e.preventDefault(); }
+  });
+  // deslizar con el dedo o el mouse (una deslizada no cuenta además como clic)
+  let x0 = null;
+  esc.addEventListener('pointerdown', (e) => { x0 = e.clientX; });
+  esc.addEventListener('pointercancel', () => { x0 = null; });
+  addEventListener('pointerup', (e) => {
+    if (x0 === null) return; const d = e.clientX - x0; x0 = null;
+    if (Math.abs(d) > 40) { arrastro = true; setTimeout(() => { arrastro = false; }, 60); ir(i + (d < 0 ? 1 : -1)); }
+  });
+  // solo corre cuando se ve en pantalla y la pestaña está activa
+  new IntersectionObserver((en) => { enPantalla = en[0].isIntersecting; visible = enPantalla && !document.hidden; programar(); }, { threshold: .35 }).observe(esc);
+  document.addEventListener('visibilitychange', () => { visible = enPantalla && !document.hidden; programar(); });
+  if (quieto) bPausa.hidden = true;
+  pintar(); etiquetar();
+})();
+</script>
+<script>
+// Tarjetas de fondo: se desplazan a distinto ritmo según el scroll (solo las de secciones a la vista; quietas con "reducir movimiento")
+(() => {
+  const cajas = [...document.querySelectorAll('.hay-flota')];
+  // la primera tarjeta suelta es la de Luciano; las demás salen al azar entre las portadas, sin repetirse
+  const sueltas = [...document.querySelectorAll('.flota')];
+  if (sueltas.length) {
+    const pool = Array.from({ length: 16 }, (_, k) => k + 1).filter((n) => n !== 9);
+    for (let k = pool.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [pool[k], pool[j]] = [pool[j], pool[k]]; }
+    sueltas.forEach((img, k) => { img.src = 'img/portadas/' + String(k === 0 ? 9 : pool[k - 1]).padStart(2, '0') + '.webp'; });
+  }
+  if (!cajas.length || matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) return;
+  const tarjetas = new Map(cajas.map((c) => [c, [...c.querySelectorAll('.flota')].map((el) => [el, parseFloat(el.dataset.v)])]));
+  const vivas = new Set();
+  let pendiente = false;
+  const mover = () => {
+    pendiente = false;
+    const lecturas = [...vivas].map((sec) => { const r = sec.getBoundingClientRect(); return [sec, r.top + r.height / 2 - innerHeight / 2]; });   // primero se lee todo
+    lecturas.forEach(([sec, c]) => tarjetas.get(sec).forEach(([el, v]) => { el.style.translate = '0 ' + (c * v).toFixed(1) + 'px'; }));     // y después se escribe
+  };
+  const pedir = () => { if (!pendiente) { pendiente = true; requestAnimationFrame(mover); } };
+  const ojo = new IntersectionObserver((en) => {
+    en.forEach((e) => { e.target.classList.toggle('viva', e.isIntersecting); if (e.isIntersecting) vivas.add(e.target); else vivas.delete(e.target); });
+    pedir();
+  }, { rootMargin: '20% 0px' });
+  cajas.forEach((c) => ojo.observe(c));
+  addEventListener('scroll', pedir, { passive: true });
+  addEventListener('resize', pedir);
+})();
+</script>
+<script>
+// Sonido: el panel muestra las ganancias reales de cada ajuste (dB por banda, de -12 a +12); pasan solas y también se pueden elegir
+(() => {
+  const pistas = [...document.querySelectorAll('#ecu-cols .ecu-pista')], dbs = [...document.querySelectorAll('#ecu-cols .ecu-db')], caja = document.getElementById('ecu'), grupo = document.getElementById('ajustes');
+  if (!pistas.length) return;
+  const AJUSTES = {
+    plano: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], vivo: [4, 3.5, 2, 0, -0.5, 0, 0.5, 2, 3.5, 3], graves: [6, 5, 3.5, 1.5, 0, 0, 0, 0, 0, 0],
+    voces: [-2, -1.5, -1, 0, 1, 2.5, 3, 1.5, 0, -1], brillante: [-1, -0.5, 0, 0, 0, 0.5, 2, 3.5, 4.5, 4], calido: [3, 2.5, 2, 1, 0, -0.5, -1, -2, -2.5, -3],
+  };
+  const claves = Object.keys(AJUSTES), botones = [...grupo.querySelectorAll('button')];
+  const quieto = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let k = claves.indexOf('vivo'), t = null, enPantalla = false, visible = false;
+  const mostrar = (n) => {
+    k = n; const g = AJUSTES[claves[k]];
+    const en = document.documentElement.lang === 'en';
+    pistas.forEach((el, j) => {
+      el.style.setProperty('--p', (1 - (g[j] + 12) / 24).toFixed(4));                                    // -12 dB abajo, +12 dB arriba, como en la app
+      const txt = (g[j] > 0 ? '+' : '') + String(g[j]);
+      dbs[j].textContent = en ? txt : txt.replace('.', ',');
+    });
+    botones.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.k === claves[k])));
+  };
+  const programar = () => { clearInterval(t); if (!quieto && visible) t = setInterval(() => mostrar((k + 1) % claves.length), 3200); };
+  botones.forEach((b) => b.addEventListener('click', () => { mostrar(claves.indexOf(b.dataset.k)); programar(); }));
+  const etiquetas = () => { const en = document.documentElement.lang === 'en'; [caja, grupo].forEach((el) => el.setAttribute('aria-label', el.dataset[en ? 'en' : 'es'])); };
+  new MutationObserver(() => { etiquetas(); mostrar(k); }).observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+  if ('IntersectionObserver' in window) new IntersectionObserver((e) => { enPantalla = e[0].isIntersecting; visible = enPantalla && !document.hidden; programar(); }, { threshold: .3 }).observe(caja);
+  document.addEventListener('visibilitychange', () => { visible = enPantalla && !document.hidden; programar(); });
+  mostrar(k);
+})();
+</script>
+<script>
+// Cierre: las portadas se arman recién cuando el banner está cerca (no pesan en la carga) y corren solo mientras se ve
+(() => {
+  const caja = document.querySelector('.cierre-caja');
+  if (!caja || !('IntersectionObserver' in window)) return;
+  const mezclar = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const nums = Array.from({ length: 16 }, (_, i) => String(i + 1).padStart(2, '0'));
+  let armado = false;
+  const armar = () => {
+    armado = true;
+    const orden = mezclar(nums.slice());                             // un solo orden al azar: cada fila arranca 5 lugares más allá, así no se repite ninguna cerca
+    caja.querySelectorAll('.cierre-fila').forEach((fila, r) => {
+      const elegidas = Array.from({ length: 12 }, (_, k) => orden[(k + 5 * r) % 16]);   // 12 por fila, dos juegos iguales para el bucle
+      for (let k = 0; k < 2; k++) {
+        const juego = document.createElement('div');
+        juego.className = 'cierre-juego';
+        elegidas.forEach((n) => {
+          const im = new Image(176, 176);
+          im.alt = ''; im.decoding = 'async'; im.src = 'img/portadas/' + n + '.webp';
+          juego.appendChild(im);
+        });
+        fila.appendChild(juego);
+      }
+    });
+  };
+  new IntersectionObserver((e) => {
+    if (e[0].isIntersecting && !armado) armar();
+    caja.classList.toggle('viva', e[0].isIntersecting);
+  }, { rootMargin: '300px 0px' }).observe(caja);
 })();
 </script>
 </body>
