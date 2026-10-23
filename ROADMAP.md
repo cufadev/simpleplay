@@ -27,6 +27,9 @@ The sections below keep the detail of each idea; this is the order to do them in
 
 **2.0**
 9. **Split `simpleplay.py` into modules** (plan below). Never mixed with feature work.
+10. **Connect to a server (Navidrome / Subsonic, then Jellyfin)** as a music source (item 5 above). Wanted for 2.0 (decided 2026-10-23); reference: Rufin.
+
+11. **Mosquito** (Tarab Player's tiny phone remote). Off by default; opens a small server only on the home wifi, shows a QR with a one-time key, and the phone's browser becomes a remote (play/pause, next, volume, cover, now playing). No app to install, no internet, no accounts. Added 2026-10-23; could later grow into list and search, and the same idea could drive the Pocket.
 
 **Separate tracks (not tied to a release)**
 - **Pocket player** (ESP32-S3; parts and phases below). The simulator already runs and nothing sounds yet; the enclosure
