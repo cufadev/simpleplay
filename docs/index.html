@@ -92,11 +92,30 @@ html[lang="es"] .en, html[lang="en"] .es { display: none !important; }
    Tema: la pantalla nueva se abre en círculo desde el botón. Idioma: un cruce suave con un leve desenfoque. */
 html.vt-tema::view-transition-old(root), html.vt-tema::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 html.vt-tema::view-transition-new(root) { z-index: 2; }
+/* el botón es lo primero que cambia: sale a su propio plano, con el ícono y el fondo del tema nuevo, y recién después se abre el círculo desde él */
+html.vt-tema #tema { view-transition-name: boton-tema; background: var(--bg); }
+html.vt-tema::view-transition-group(boton-tema) { animation: none; }
+html.vt-tema::view-transition-old(boton-tema) { display: none; }
+html.vt-tema::view-transition-new(boton-tema) { animation: tema-boton .5s cubic-bezier(.34, 1.56, .64, 1) both; mix-blend-mode: normal; }
+@keyframes tema-boton { from { transform: scale(.55) rotate(-120deg); opacity: .4; } to { transform: scale(1) rotate(0); opacity: 1; } }
+/* mientras el círculo se abre, el resto de las animaciones de la página se pausa: menos trabajo por cuadro, más fluidez */
+html.vt-tema *, html.vt-tema *::before, html.vt-tema *::after { animation-play-state: paused !important; }
 html.vt-idioma::view-transition-old(root), html.vt-idioma::view-transition-new(root) { mix-blend-mode: normal; }
 html.vt-idioma::view-transition-old(root) { animation: vt-sale .26s ease both; }
 html.vt-idioma::view-transition-new(root) { animation: vt-entra .5s var(--ease-out, ease) both; }
 @keyframes vt-sale { to { opacity: 0; filter: blur(6px); } }
 @keyframes vt-entra { from { opacity: 0; filter: blur(8px); } }
+/* variante "barrido": la pantalla nueva entra con un borde suave que cruza de lado a lado, hacia donde está el idioma elegido */
+@property --barre { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+html.vt-barrido::view-transition-old(root), html.vt-barrido::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+html.vt-barrido::view-transition-new(root) { z-index: 2; mask-image: linear-gradient(var(--dir, 90deg), #000 calc(var(--barre) - 14%), transparent var(--barre)); -webkit-mask-image: linear-gradient(var(--dir, 90deg), #000 calc(var(--barre) - 14%), transparent var(--barre)); animation: vt-barre .85s cubic-bezier(.65, 0, .35, 1) both; }
+@keyframes vt-barre { from { --barre: 0%; } to { --barre: 114%; } }
+/* variante "cascada": los textos se apagan un instante y vuelven a aparecer de arriba hacia abajo, uno tras otro */
+@media (prefers-reduced-motion: no-preference) {
+  html.casc-sale .es, html.casc-sale .en { opacity: 0; transition: opacity .14s ease; }
+  .casc-entra { animation: casc-entra .6s var(--ease-out, ease) both; animation-delay: var(--dl, 0ms); }
+  @keyframes casc-entra { from { opacity: 0; filter: blur(5px); } to { opacity: 1; filter: blur(0); } }
+}
 .ic { width: 1.25em; height: 1.25em; fill: currentColor; flex: none; }
 :focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; }
 .saltar { position: absolute; left: 12px; top: -60px; background: var(--accent); color: var(--on-accent); padding: 10px 16px; border-radius: 999px; font-weight: 600; z-index: 60; }
@@ -110,21 +129,39 @@ h2 { font-size: clamp(1.9rem, 3.8vw, 3.2rem); line-height: 1.06; letter-spacing:
 /* ---------- barra superior fija, una sola línea ---------- */
 .barra { position: fixed; inset: 0 0 auto 0; z-index: 50; background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
 .barra-in { position: relative; width: var(--ancho); margin-inline: auto; height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.marca { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 650; letter-spacing: -.02em; font-size: 1.125rem; }
-.marca img { width: 28px; height: 28px; border-radius: 8px; }
+.marca { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 650; letter-spacing: -.02em; font-size: 1.125rem; padding: 5px 18px 5px 5px; border-radius: 999px; background: color-mix(in srgb, var(--text) 9%, transparent); border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); }   /* píldora como la del reproductor */
+/* al tocar la píldora, el nombre se cambia por las barras de sonido un rato y después vuelve */
+.marca-texto { position: relative; display: inline-block; }
+.marca .mt { transition: opacity .3s ease; }
+.marca-barras { position: absolute; left: 0; top: 2px; width: 100%; height: calc(100% - 4px); opacity: 0; transition: opacity .3s ease; pointer-events: none; color: var(--muted); }
+.marca.suena .mt { opacity: 0; }
+.marca.suena .marca-barras { opacity: 1; }
+.marca img { width: 30px; height: 30px; border-radius: 50%; }
 .menu { display: flex; align-items: center; gap: clamp(10px, 2.4vw, 26px); }
 .menu a.enlace { text-decoration: none; color: var(--muted); font-size: .95rem; padding: 8px 2px; transition: color .15s ease; }
 .herr { display: flex; align-items: center; gap: 6px; }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.seg { position: relative; display: inline-grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+/* el fondo del selector es una pieza que se desliza de un idioma al otro (solo se anima después de la carga, para que no se mueva al abrir la página) */
+/* la pieza del selector es líquida: dos gotas (una adelantada y otra rezagada) que un filtro "goo" une con un cuello mientras se separan, y se funden en una sola al llegar */
+.seg .gota { position: absolute; inset: 3px; filter: url(#goo); pointer-events: none; }
+.seg .gota i { position: absolute; top: 0; bottom: 0; left: 0; right: 50%; border-radius: 999px; background: var(--text); }
+html[data-seg="en"] .seg .gota i { left: 50%; right: 0; }
+html.seg-anima .seg .gota i:nth-child(1) { transition: left .42s cubic-bezier(.3, 1.35, .45, 1), right .42s cubic-bezier(.3, 1.35, .45, 1); }
+html.seg-anima .seg .gota i:nth-child(2) { transition: left .7s cubic-bezier(.6, 0, .25, 1) .06s, right .7s cubic-bezier(.6, 0, .25, 1) .06s; }
+.seg button { position: relative; z-index: 1; text-align: center; }
 .seg button { font: inherit; font-size: .8rem; font-weight: 600; letter-spacing: .02em; color: var(--muted); background: none; border: 0; padding: 5px 11px; border-radius: 999px; cursor: pointer; min-height: 32px; }
-.seg button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+html[data-seg="es"] .seg [data-lang="es"], html[data-seg="en"] .seg [data-lang="en"] { color: var(--bg); }
+/* los colores cambian de a poco, siguiendo a la gota: la letra que se apaga se queda clara mientras la gota todavía pasa por debajo (así nunca queda todo oscuro), y la que se enciende cambia cuando la gota llega */
+html.seg-anima .seg button { transition: color .4s ease .5s; }
+html[data-seg="es"].seg-anima .seg [data-lang="es"], html[data-seg="en"].seg-anima .seg [data-lang="en"] { transition: color .3s ease .08s; }
+@media (prefers-reduced-motion: reduce) { html.seg-anima .seg .gota i, html.seg-anima .seg button { transition: none !important; } }
 .icono-btn { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 999px; border: 1px solid var(--line); background: none; color: var(--text); cursor: pointer; }
 .icono-btn .sol { display: none; }
 :root[data-theme="dark"] .icono-btn .sol { display: block; }
 :root[data-theme="dark"] .icono-btn .luna { display: none; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme]) .icono-btn .sol { display: block; } :root:not([data-theme]) .icono-btn .luna { display: none; } }
 @media (max-width: 640px) { .menu a.enlace { display: none; } }
-@media (hover: hover) and (pointer: fine) { .menu a.enlace:hover { color: var(--text); } .icono-btn:hover, .seg button:hover { background: var(--surface-2); } .seg button[aria-pressed="true"]:hover { background: var(--text); } }
+@media (hover: hover) and (pointer: fine) { .menu a.enlace:hover { color: var(--text); } .icono-btn:hover { background: var(--surface-2); } }
 
 /* cartel de scroll: se ve al principio y desaparece apenas se empieza a bajar */
 .cue { position: fixed; right: clamp(16px, 3vw, 40px); bottom: clamp(16px, 3vw, 32px); z-index: 40; display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 16px; border: 1px solid var(--line); border-radius: 999px; font-size: .88rem; font-weight: 600; letter-spacing: .02em; color: var(--text); background: color-mix(in srgb, var(--surface) 70%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); pointer-events: none; transition: opacity .3s var(--ease-out), translate .3s var(--ease-out); }
@@ -137,7 +174,7 @@ html.cue-fuera .cue { opacity: 0; translate: 0 40%; }
 @media (max-width: 640px) {
   .cue { padding: 5px 11px 5px 13px; font-size: .8rem; }
 }
-@media (max-width: 430px) { .marca-texto { display: none; } }
+@media (max-width: 430px) { .marca-texto { display: none; } .marca { padding: 5px; } }
 
 /* ---------- botones ---------- */
 .boton { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 0 24px; border-radius: 999px; font-weight: 600; font-size: 1rem; text-decoration: none; white-space: nowrap; border: 1px solid transparent; cursor: pointer; transition: transform .12s var(--ease-out), background-color .15s ease; }
@@ -252,13 +289,13 @@ html.js .versiones li.pasada .v, html.js .versiones li.actual .v { color: var(--
 .vitrina { --pad: clamp(20px, 3vw, 44px); position: sticky; top: 14dvh; height: 72dvh; border-radius: calc(var(--radio) + 8px); border: 1px solid var(--line); background: var(--surface); overflow: hidden; }
 .vitrina figure { position: absolute; inset: 0; display: grid; place-items: center; padding: var(--pad); opacity: 0; transition: opacity .45s var(--ease-out), transform .45s var(--ease-out); transform: scale(.97); }
 .vitrina figure.activa { opacity: 1; transform: none; }
-.vitrina figure.v0 { background: radial-gradient(90% 70% at 50% 0%, color-mix(in srgb, var(--accent) 16%, var(--surface)), var(--surface) 70%); }
-.vitrina figure.v1 { background: var(--surface-2); }
+.vitrina figure.v0, .vitrina figure.v1, .vitrina figure.v5 { background: radial-gradient(90% 70% at 50% 0%, color-mix(in srgb, var(--accent) 16%, var(--surface)), var(--surface) 70%); }
+.vitrina figure.v2 { background: var(--surface-2); }
 .vitrina picture { display: contents; }
 .vitrina img { max-height: calc(72dvh - 2 * var(--pad)); width: auto; max-width: 100%; object-fit: contain; }
-.vitrina figure.v2 img { width: min(100%, 460px); }
-.vitrina figure.v2 { background: #eceef2; }   /* fondo claro fijo: la barra compacta es oscura y en modo oscuro se perdía */
-.vitrina figure.v4 { background: var(--accent); color: var(--on-accent); }
+.vitrina figure.v3 img { width: min(100%, 460px); }
+.vitrina figure.v3 { background: var(--accent); }   /* la barra compacta es oscura: sobre el naranja de la marca se ve igual en tema claro y oscuro */
+.vitrina figure.v6 { background: var(--accent); color: var(--on-accent); }
 .vitrina figure.dato { background: var(--surface-2); text-align: center; }
 .gran { font-family: "Bebas Neue", "Geist", sans-serif; line-height: 1; font-size: clamp(5rem, 12vw, 10rem); color: var(--accent-text); }
 .dato-pie { margin-top: 16px; color: var(--muted); font-size: 1.05rem; }
@@ -339,8 +376,10 @@ html.js .versiones li.pasada .v, html.js .versiones li.actual .v { color: var(--
 .pie .cont { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px 40px; position: relative; z-index: 2; }
 .firma { font-family: "Bebas Neue", "Geist", sans-serif; font-size: 2rem; line-height: 1; letter-spacing: .04em; color: #ff4e01; text-decoration: none; }
 .firma:hover, .firma:visited, .firma:focus { color: #ff4e01; text-decoration: none; }
+.pie .redes { display: flex; gap: 16px; color: var(--muted); opacity: .6; pointer-events: none; user-select: none; -webkit-user-select: none; }
+.pie .redes svg { display: block; width: 22px; height: 22px; }
 .pie small { display: block; color: var(--muted); font-size: .88rem; line-height: 1.6; max-width: 62ch; }
-.pie .nombre { margin-top: clamp(24px, 4vw, 56px); font-size: clamp(4rem, 20vw, 21rem); line-height: .74; letter-spacing: -.07em; font-weight: 650; color: color-mix(in srgb, var(--text) 7%, transparent); white-space: nowrap; text-align: center; user-select: none; margin-bottom: -.1em; }
+.pie .nombre { margin-top: clamp(24px, 4vw, 56px); font-size: clamp(4rem, 20vw, 21rem); line-height: .74; letter-spacing: -.07em; font-weight: 650; color: color-mix(in srgb, var(--text) 7%, transparent); white-space: nowrap; text-align: right; user-select: none; margin-bottom: -.1em; }
 
 /* =====================================================================
    CIERRE: la invitación final. Portadas inclinadas que corren en filas opuestas detrás del título y los botones.
@@ -470,6 +509,13 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   opacity: var(--op, .3); filter: drop-shadow(0 18px 24px rgba(0,0,0,.25)); }
 .hay-flota.viva .flota { will-change: translate; }
 .hay-flota > .cont { position: relative; z-index: 1; }
+@keyframes flota-suave { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+.flota { animation: flota-suave var(--d, 9s) ease-in-out var(--dl, 0s) infinite; animation-play-state: paused; }
+.hay-flota.viva .flota { animation-play-state: running; }
+.flota:nth-child(3n+2) { --d: 11s; --dl: -3s; }
+.flota:nth-child(3n) { --d: 13s; --dl: -7s; }
+.flota:nth-child(4n+1) { --dl: -5s; }
+@media (prefers-reduced-motion: reduce) { .flota { animation: none; } }
 @media (max-width: 880px) { .flota { opacity: calc(var(--op, .3) * .6); width: clamp(96px, 26vw, 160px); } }
 
 .portadas .grande-titulo { font-size: clamp(2.4rem, 6.4vw, 5.6rem); max-width: 12ch; }
@@ -478,18 +524,21 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
 </head>
 <body>
 <i class="cima" id="cima" aria-hidden="true"></i>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="i-linux-logo" viewBox="0 0 256 256"><path d="M229,214.25A8,8,0,0,1,217.76,213C216.39,211.27,184,169.86,184,88A56,56,0,0,0,72,88c0,81.86-32.37,123.27-33.75,125a8,8,0,0,1-12.51-10c.15-.2,7.69-9.9,15.13-28.74C47.77,156.8,56,127.64,56,88a72,72,0,0,1,144,0c0,39.64,8.23,68.8,15.13,86.28,7.48,18.94,15.06,28.64,15.14,28.74A8,8,0,0,1,229,214.25ZM100,88a12,12,0,1,0,12,12A12,12,0,0,0,100,88Zm68,12a12,12,0,1,0-12,12A12,12,0,0,0,168,100ZM99.58,128.84a8,8,0,0,0-7.15,14.31l32,16a7.94,7.94,0,0,0,7.15,0l32-16a8,8,0,0,0-7.16-14.31L128,143.05ZM128,176a54.07,54.07,0,0,0-47,28.11,8,8,0,1,0,14,7.78,37.35,37.35,0,0,1,66,0,8,8,0,0,0,14-7.78A54.07,54.07,0,0,0,128,176Z"/></symbol><symbol id="i-windows-logo" viewBox="0 0 256 256"><path d="M208,136H128a8,8,0,0,0-8,8v57.45a8,8,0,0,0,6.57,7.88l80,14.54A7.61,7.61,0,0,0,208,224a8,8,0,0,0,8-8V144A8,8,0,0,0,208,136Zm-8,70.41-64-11.63V152h64ZM96,136H32a8,8,0,0,0-8,8v40a8,8,0,0,0,6.57,7.87l64,11.64a8.54,8.54,0,0,0,1.43.13,8,8,0,0,0,8-8V144A8,8,0,0,0,96,136Zm-8,50.05-48-8.73V152H88ZM213.13,33.86a8,8,0,0,0-6.56-1.73l-80,14.55A8,8,0,0,0,120,54.55V112a8,8,0,0,0,8,8h80a8,8,0,0,0,8-8V40A8,8,0,0,0,213.13,33.86ZM200,104H136V61.22l64-11.63ZM101.13,54.22a8,8,0,0,0-6.56-1.73l-64,11.64A8,8,0,0,0,24,72v40a8,8,0,0,0,8,8H96a8,8,0,0,0,8-8V60.36A8,8,0,0,0,101.13,54.22ZM88,104H40V78.68L88,70Z"/></symbol><symbol id="i-github-logo" viewBox="0 0 256 256"><path d="M208.31,75.68A59.78,59.78,0,0,0,202.93,28,8,8,0,0,0,196,24a59.75,59.75,0,0,0-48,24H124A59.75,59.75,0,0,0,76,24a8,8,0,0,0-6.93,4,59.78,59.78,0,0,0-5.38,47.68A58.14,58.14,0,0,0,56,104v8a56.06,56.06,0,0,0,48.44,55.47A39.8,39.8,0,0,0,96,192v8H72a24,24,0,0,1-24-24A40,40,0,0,0,8,136a8,8,0,0,0,0,16,24,24,0,0,1,24,24,40,40,0,0,0,40,40H96v16a8,8,0,0,0,16,0V192a24,24,0,0,1,48,0v40a8,8,0,0,0,16,0V192a39.8,39.8,0,0,0-8.44-24.53A56.06,56.06,0,0,0,216,112v-8A58.14,58.14,0,0,0,208.31,75.68ZM200,112a40,40,0,0,1-40,40H112a40,40,0,0,1-40-40v-8a41.74,41.74,0,0,1,6.9-22.48A8,8,0,0,0,80,73.83a43.81,43.81,0,0,1,.79-33.58,43.88,43.88,0,0,1,32.32,20.06A8,8,0,0,0,119.82,64h32.35a8,8,0,0,0,6.74-3.69,43.87,43.87,0,0,1,32.32-20.06A43.81,43.81,0,0,1,192,73.83a8.09,8.09,0,0,0,1,7.65A41.72,41.72,0,0,1,200,104Z"/></symbol><symbol id="i-coffee" viewBox="0 0 256 256"><path d="M80,56V24a8,8,0,0,1,16,0V56a8,8,0,0,1-16,0Zm40,8a8,8,0,0,0,8-8V24a8,8,0,0,0-16,0V56A8,8,0,0,0,120,64Zm32,0a8,8,0,0,0,8-8V24a8,8,0,0,0-16,0V56A8,8,0,0,0,152,64Zm96,56v8a40,40,0,0,1-37.51,39.91,96.59,96.59,0,0,1-27,40.09H208a8,8,0,0,1,0,16H32a8,8,0,0,1,0-16H56.54A96.3,96.3,0,0,1,24,136V88a8,8,0,0,1,8-8H208A40,40,0,0,1,248,120ZM200,96H40v40a80.27,80.27,0,0,0,45.12,72h69.76A80.27,80.27,0,0,0,200,136Zm32,24a24,24,0,0,0-16-22.62V136a95.78,95.78,0,0,1-1.2,15A24,24,0,0,0,232,128Z"/></symbol><symbol id="i-sun" viewBox="0 0 256 256"><path d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></symbol><symbol id="i-moon" viewBox="0 0 256 256"><path d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.34A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.34Z"/></symbol><symbol id="i-bell-ringing" viewBox="0 0 256 256"><path d="M224,71.1a8,8,0,0,1-10.78-3.42,94.13,94.13,0,0,0-33.46-36.91,8,8,0,1,1,8.54-13.54,111.46,111.46,0,0,1,39.12,43.09A8,8,0,0,1,224,71.1ZM35.71,72a8,8,0,0,0,7.1-4.32A94.13,94.13,0,0,1,76.27,30.77a8,8,0,1,0-8.54-13.54A111.46,111.46,0,0,0,28.61,60.32,8,8,0,0,0,35.71,72Zm186.1,103.94A16,16,0,0,1,208,200H167.2a40,40,0,0,1-78.4,0H48a16,16,0,0,1-13.79-24.06C43.22,160.39,48,138.28,48,112a80,80,0,0,1,160,0C208,138.27,212.78,160.38,221.81,175.94ZM150.62,200H105.38a24,24,0,0,0,45.24,0ZM208,184c-10.64-18.27-16-42.49-16-72a64,64,0,0,0-128,0c0,29.52-5.38,53.74-16,72Z"/></symbol><symbol id="i-megaphone-simple" viewBox="0 0 256 256"><path d="M228.54,86.66l-176.06-54A16,16,0,0,0,32,48V192a16,16,0,0,0,16,16,16,16,0,0,0,4.52-.65L136,181.73V192a16,16,0,0,0,16,16h32a16,16,0,0,0,16-16v-29.9l28.54-8.75A16.09,16.09,0,0,0,240,138V102A16.09,16.09,0,0,0,228.54,86.66ZM136,165,48,192V48l88,27Zm48,27H152V176.82L184,167Zm40-54-.11,0L152,160.08V79.92l71.89,22,.11,0v36Z"/></symbol><symbol id="i-lock-simple" viewBox="0 0 256 256"><path d="M208,80H176V56a48,48,0,0,0-96,0V80H48A16,16,0,0,0,32,96V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V96A16,16,0,0,0,208,80ZM96,56a32,32,0,0,1,64,0V80H96ZM208,208H48V96H208V208Z"/></symbol><symbol id="i-cookie" viewBox="0 0 256 256"><path d="M164.49,163.51a12,12,0,1,1-17,0A12,12,0,0,1,164.49,163.51Zm-81-8a12,12,0,1,0,17,0A12,12,0,0,0,83.51,155.51Zm9-39a12,12,0,1,0-17,0A12,12,0,0,0,92.49,116.49Zm48-1a12,12,0,1,0,0,17A12,12,0,0,0,140.49,115.51ZM232,128A104,104,0,1,1,128,24a8,8,0,0,1,8,8,40,40,0,0,0,40,40,8,8,0,0,1,8,8,40,40,0,0,0,40,40A8,8,0,0,1,232,128Zm-16.31,7.39A56.13,56.13,0,0,1,168.5,87.5a56.13,56.13,0,0,1-47.89-47.19,88,88,0,1,0,95.08,95.08Z"/></symbol><symbol id="i-wifi-slash" viewBox="0 0 256 256"><path d="M213.92,210.62a8,8,0,1,1-11.84,10.76l-52-57.15a60,60,0,0,0-57.41,7.24,8,8,0,1,1-9.42-12.93A75.43,75.43,0,0,1,128,144c1.28,0,2.55,0,3.82.1L104.9,114.49A108,108,0,0,0,61,135.31,8,8,0,0,1,49.73,134,8,8,0,0,1,51,122.77a124.27,124.27,0,0,1,41.71-21.66L69.37,75.4a155.43,155.43,0,0,0-40.29,24A8,8,0,0,1,18.92,87,171.87,171.87,0,0,1,58,62.86L42.08,45.38A8,8,0,1,1,53.92,34.62ZM128,192a12,12,0,1,0,12,12A12,12,0,0,0,128,192ZM237.08,87A172.3,172.3,0,0,0,106,49.4a8,8,0,1,0,2,15.87A158.33,158.33,0,0,1,128,64a156.25,156.25,0,0,1,98.92,35.37A8,8,0,0,0,237.08,87ZM195,135.31a8,8,0,0,0,11.24-1.3,8,8,0,0,0-1.3-11.24,124.25,124.25,0,0,0-51.73-24.2A8,8,0,1,0,150,114.24,108.12,108.12,0,0,1,195,135.31Z"/></symbol><symbol id="i-crown-simple" viewBox="0 0 256 256"><path d="M230.9,73.6A15.85,15.85,0,0,0,212,77.39l-33.67,36.29-35.8-80.29a1,1,0,0,1,0-.1,16,16,0,0,0-29.06,0,1,1,0,0,1,0,.1l-35.8,80.29L44,77.39A16,16,0,0,0,16.25,90.81c0,.11,0,.21.07.32L39,195a16,16,0,0,0,15.72,13H201.29A16,16,0,0,0,217,195L239.68,91.13c0-.11,0-.21.07-.32A15.85,15.85,0,0,0,230.9,73.6ZM201.35,191.68l-.06.32H54.71l-.06-.32L32,88l.14.16,42,45.24a8,8,0,0,0,13.18-2.18L128,40l40.69,91.25a8,8,0,0,0,13.18,2.18l42-45.24L224,88Z"/></symbol><symbol id="i-warning-circle" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></symbol><symbol id="i-sparkle" viewBox="0 0 256 256"><path d="M197.58,129.06,146,110l-19-51.62a15.92,15.92,0,0,0-29.88,0L78,110l-51.62,19a15.92,15.92,0,0,0,0,29.88L78,178l19,51.62a15.92,15.92,0,0,0,29.88,0L146,178l51.62-19a15.92,15.92,0,0,0,0-29.88ZM137,164.22a8,8,0,0,0-4.74,4.74L112,223.85,91.78,169A8,8,0,0,0,87,164.22L32.15,144,87,123.78A8,8,0,0,0,91.78,119L112,64.15,132.22,119a8,8,0,0,0,4.74,4.74L191.85,144ZM144,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H184V64a8,8,0,0,1-16,0V48H152A8,8,0,0,1,144,40ZM248,88a8,8,0,0,1-8,8h-8v8a8,8,0,0,1-16,0V96h-8a8,8,0,0,1,0-16h8V72a8,8,0,0,1,16,0v8h8A8,8,0,0,1,248,88Z"/></symbol><symbol id="i-heart" viewBox="0 0 256 256"><path d="M178,40c-20.65,0-38.73,8.88-50,23.89C116.73,48.88,98.65,40,78,40a62.07,62.07,0,0,0-62,62c0,70,103.79,126.66,108.21,129a8,8,0,0,0,7.58,0C136.21,228.66,240,172,240,102A62.07,62.07,0,0,0,178,40ZM128,214.8C109.74,204.16,32,155.69,32,102A46.06,46.06,0,0,1,78,56c19.45,0,35.78,10.36,42.6,27a8,8,0,0,0,14.8,0c6.82-16.67,23.15-27,42.6-27a46.06,46.06,0,0,1,46,46C224,155.61,146.24,204.15,128,214.8Z"/></symbol><symbol id="i-arrow-down" viewBox="0 0 256 256"><path d="M205.66,149.66l-72,72a8,8,0,0,1-11.32,0l-72-72a8,8,0,0,1,11.32-11.32L120,196.69V40a8,8,0,0,1,16,0V196.69l58.34-58.35a8,8,0,0,1,11.32,11.32Z"/></symbol><symbol id="i-apple-logo" viewBox="0 0 256 256"><path d="M223.3,169.59a8.07,8.07,0,0,0-2.8-3.4C203.53,154.53,200,134.64,200,120c0-17.67,13.47-33.06,21.5-40.67a8,8,0,0,0,0-11.62C208.82,55.74,187.82,48,168,48a72.2,72.2,0,0,0-40,12.13,71.56,71.56,0,0,0-90.71,9.09A74.63,74.63,0,0,0,16,123.4a127.06,127.06,0,0,0,40.14,89.73A39.8,39.8,0,0,0,83.59,224h87.68a39.84,39.84,0,0,0,29.12-12.57,125,125,0,0,0,17.82-24.6C225.23,174,224.33,172,223.3,169.59Zm-34.63,30.94a23.76,23.76,0,0,1-17.4,7.47H83.59a23.82,23.82,0,0,1-16.44-6.51A111.14,111.14,0,0,1,32,123,58.5,58.5,0,0,1,48.65,80.47,54.81,54.81,0,0,1,88,64h.78A55.45,55.45,0,0,1,123,76.28a8,8,0,0,0,10,0A55.44,55.44,0,0,1,168,64a70.64,70.64,0,0,1,36,10.35c-13,14.52-20,30.47-20,45.65,0,23.77,7.64,42.73,22.18,55.3A105.82,105.82,0,0,1,188.67,200.53ZM128.23,30A40,40,0,0,1,167,0h1a8,8,0,0,1,0,16h-1a24,24,0,0,0-23.24,18,8,8,0,1,1-15.5-4Z"/></symbol></svg>
+<!-- logos de Windows y macOS: Bootstrap Icons 1.11 (MIT); logo de Linux: Simple Icons (CC0) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="i-linux-logo" viewBox="0 0 24 24"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/></symbol><symbol id="i-windows-logo" viewBox="0 0 16 16"><path d="M6.555 1.375 0 2.237v5.45h6.555zM0 13.795l6.555.933V8.313H0zm7.278-5.4.026 6.378L16 16V8.395zM16 0 7.33 1.244v6.414H16z"/></symbol><symbol id="i-github-logo" viewBox="0 0 256 256"><path d="M208.31,75.68A59.78,59.78,0,0,0,202.93,28,8,8,0,0,0,196,24a59.75,59.75,0,0,0-48,24H124A59.75,59.75,0,0,0,76,24a8,8,0,0,0-6.93,4,59.78,59.78,0,0,0-5.38,47.68A58.14,58.14,0,0,0,56,104v8a56.06,56.06,0,0,0,48.44,55.47A39.8,39.8,0,0,0,96,192v8H72a24,24,0,0,1-24-24A40,40,0,0,0,8,136a8,8,0,0,0,0,16,24,24,0,0,1,24,24,40,40,0,0,0,40,40H96v16a8,8,0,0,0,16,0V192a24,24,0,0,1,48,0v40a8,8,0,0,0,16,0V192a39.8,39.8,0,0,0-8.44-24.53A56.06,56.06,0,0,0,216,112v-8A58.14,58.14,0,0,0,208.31,75.68ZM200,112a40,40,0,0,1-40,40H112a40,40,0,0,1-40-40v-8a41.74,41.74,0,0,1,6.9-22.48A8,8,0,0,0,80,73.83a43.81,43.81,0,0,1,.79-33.58,43.88,43.88,0,0,1,32.32,20.06A8,8,0,0,0,119.82,64h32.35a8,8,0,0,0,6.74-3.69,43.87,43.87,0,0,1,32.32-20.06A43.81,43.81,0,0,1,192,73.83a8.09,8.09,0,0,0,1,7.65A41.72,41.72,0,0,1,200,104Z"/></symbol><symbol id="i-coffee" viewBox="0 0 256 256"><path d="M80,56V24a8,8,0,0,1,16,0V56a8,8,0,0,1-16,0Zm40,8a8,8,0,0,0,8-8V24a8,8,0,0,0-16,0V56A8,8,0,0,0,120,64Zm32,0a8,8,0,0,0,8-8V24a8,8,0,0,0-16,0V56A8,8,0,0,0,152,64Zm96,56v8a40,40,0,0,1-37.51,39.91,96.59,96.59,0,0,1-27,40.09H208a8,8,0,0,1,0,16H32a8,8,0,0,1,0-16H56.54A96.3,96.3,0,0,1,24,136V88a8,8,0,0,1,8-8H208A40,40,0,0,1,248,120ZM200,96H40v40a80.27,80.27,0,0,0,45.12,72h69.76A80.27,80.27,0,0,0,200,136Zm32,24a24,24,0,0,0-16-22.62V136a95.78,95.78,0,0,1-1.2,15A24,24,0,0,0,232,128Z"/></symbol><symbol id="i-sun" viewBox="0 0 256 256"><path d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></symbol><symbol id="i-moon" viewBox="0 0 256 256"><path d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.34A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.34Z"/></symbol><symbol id="i-bell-ringing" viewBox="0 0 256 256"><path d="M224,71.1a8,8,0,0,1-10.78-3.42,94.13,94.13,0,0,0-33.46-36.91,8,8,0,1,1,8.54-13.54,111.46,111.46,0,0,1,39.12,43.09A8,8,0,0,1,224,71.1ZM35.71,72a8,8,0,0,0,7.1-4.32A94.13,94.13,0,0,1,76.27,30.77a8,8,0,1,0-8.54-13.54A111.46,111.46,0,0,0,28.61,60.32,8,8,0,0,0,35.71,72Zm186.1,103.94A16,16,0,0,1,208,200H167.2a40,40,0,0,1-78.4,0H48a16,16,0,0,1-13.79-24.06C43.22,160.39,48,138.28,48,112a80,80,0,0,1,160,0C208,138.27,212.78,160.38,221.81,175.94ZM150.62,200H105.38a24,24,0,0,0,45.24,0ZM208,184c-10.64-18.27-16-42.49-16-72a64,64,0,0,0-128,0c0,29.52-5.38,53.74-16,72Z"/></symbol><symbol id="i-megaphone-simple" viewBox="0 0 256 256"><path d="M228.54,86.66l-176.06-54A16,16,0,0,0,32,48V192a16,16,0,0,0,16,16,16,16,0,0,0,4.52-.65L136,181.73V192a16,16,0,0,0,16,16h32a16,16,0,0,0,16-16v-29.9l28.54-8.75A16.09,16.09,0,0,0,240,138V102A16.09,16.09,0,0,0,228.54,86.66ZM136,165,48,192V48l88,27Zm48,27H152V176.82L184,167Zm40-54-.11,0L152,160.08V79.92l71.89,22,.11,0v36Z"/></symbol><symbol id="i-lock-simple" viewBox="0 0 256 256"><path d="M208,80H176V56a48,48,0,0,0-96,0V80H48A16,16,0,0,0,32,96V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V96A16,16,0,0,0,208,80ZM96,56a32,32,0,0,1,64,0V80H96ZM208,208H48V96H208V208Z"/></symbol><symbol id="i-cookie" viewBox="0 0 256 256"><path d="M164.49,163.51a12,12,0,1,1-17,0A12,12,0,0,1,164.49,163.51Zm-81-8a12,12,0,1,0,17,0A12,12,0,0,0,83.51,155.51Zm9-39a12,12,0,1,0-17,0A12,12,0,0,0,92.49,116.49Zm48-1a12,12,0,1,0,0,17A12,12,0,0,0,140.49,115.51ZM232,128A104,104,0,1,1,128,24a8,8,0,0,1,8,8,40,40,0,0,0,40,40,8,8,0,0,1,8,8,40,40,0,0,0,40,40A8,8,0,0,1,232,128Zm-16.31,7.39A56.13,56.13,0,0,1,168.5,87.5a56.13,56.13,0,0,1-47.89-47.19,88,88,0,1,0,95.08,95.08Z"/></symbol><symbol id="i-wifi-slash" viewBox="0 0 256 256"><path d="M213.92,210.62a8,8,0,1,1-11.84,10.76l-52-57.15a60,60,0,0,0-57.41,7.24,8,8,0,1,1-9.42-12.93A75.43,75.43,0,0,1,128,144c1.28,0,2.55,0,3.82.1L104.9,114.49A108,108,0,0,0,61,135.31,8,8,0,0,1,49.73,134,8,8,0,0,1,51,122.77a124.27,124.27,0,0,1,41.71-21.66L69.37,75.4a155.43,155.43,0,0,0-40.29,24A8,8,0,0,1,18.92,87,171.87,171.87,0,0,1,58,62.86L42.08,45.38A8,8,0,1,1,53.92,34.62ZM128,192a12,12,0,1,0,12,12A12,12,0,0,0,128,192ZM237.08,87A172.3,172.3,0,0,0,106,49.4a8,8,0,1,0,2,15.87A158.33,158.33,0,0,1,128,64a156.25,156.25,0,0,1,98.92,35.37A8,8,0,0,0,237.08,87ZM195,135.31a8,8,0,0,0,11.24-1.3,8,8,0,0,0-1.3-11.24,124.25,124.25,0,0,0-51.73-24.2A8,8,0,1,0,150,114.24,108.12,108.12,0,0,1,195,135.31Z"/></symbol><symbol id="i-crown-simple" viewBox="0 0 256 256"><path d="M230.9,73.6A15.85,15.85,0,0,0,212,77.39l-33.67,36.29-35.8-80.29a1,1,0,0,1,0-.1,16,16,0,0,0-29.06,0,1,1,0,0,1,0,.1l-35.8,80.29L44,77.39A16,16,0,0,0,16.25,90.81c0,.11,0,.21.07.32L39,195a16,16,0,0,0,15.72,13H201.29A16,16,0,0,0,217,195L239.68,91.13c0-.11,0-.21.07-.32A15.85,15.85,0,0,0,230.9,73.6ZM201.35,191.68l-.06.32H54.71l-.06-.32L32,88l.14.16,42,45.24a8,8,0,0,0,13.18-2.18L128,40l40.69,91.25a8,8,0,0,0,13.18,2.18l42-45.24L224,88Z"/></symbol><symbol id="i-warning-circle" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></symbol><symbol id="i-sparkle" viewBox="0 0 256 256"><path d="M197.58,129.06,146,110l-19-51.62a15.92,15.92,0,0,0-29.88,0L78,110l-51.62,19a15.92,15.92,0,0,0,0,29.88L78,178l19,51.62a15.92,15.92,0,0,0,29.88,0L146,178l51.62-19a15.92,15.92,0,0,0,0-29.88ZM137,164.22a8,8,0,0,0-4.74,4.74L112,223.85,91.78,169A8,8,0,0,0,87,164.22L32.15,144,87,123.78A8,8,0,0,0,91.78,119L112,64.15,132.22,119a8,8,0,0,0,4.74,4.74L191.85,144ZM144,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H184V64a8,8,0,0,1-16,0V48H152A8,8,0,0,1,144,40ZM248,88a8,8,0,0,1-8,8h-8v8a8,8,0,0,1-16,0V96h-8a8,8,0,0,1,0-16h8V72a8,8,0,0,1,16,0v8h8A8,8,0,0,1,248,88Z"/></symbol><symbol id="i-heart" viewBox="0 0 256 256"><path d="M178,40c-20.65,0-38.73,8.88-50,23.89C116.73,48.88,98.65,40,78,40a62.07,62.07,0,0,0-62,62c0,70,103.79,126.66,108.21,129a8,8,0,0,0,7.58,0C136.21,228.66,240,172,240,102A62.07,62.07,0,0,0,178,40ZM128,214.8C109.74,204.16,32,155.69,32,102A46.06,46.06,0,0,1,78,56c19.45,0,35.78,10.36,42.6,27a8,8,0,0,0,14.8,0c6.82-16.67,23.15-27,42.6-27a46.06,46.06,0,0,1,46,46C224,155.61,146.24,204.15,128,214.8Z"/></symbol><symbol id="i-arrow-down" viewBox="0 0 256 256"><path d="M205.66,149.66l-72,72a8,8,0,0,1-11.32,0l-72-72a8,8,0,0,1,11.32-11.32L120,196.69V40a8,8,0,0,1,16,0V196.69l58.34-58.35a8,8,0,0,1,11.32,11.32Z"/></symbol><symbol id="i-apple-logo" viewBox="0 0 16 16"><path d="M11.182.008C11.148-.03 9.923.023 8.857 1.18c-1.066 1.156-.902 2.482-.878 2.516s1.52.087 2.475-1.258.762-2.391.728-2.43m3.314 11.733c-.048-.096-2.325-1.234-2.113-3.422s1.675-2.789 1.698-2.854-.597-.79-1.254-1.157a3.7 3.7 0 0 0-1.563-.434c-.108-.003-.483-.095-1.254.116-.508.139-1.653.589-1.968.607-.316.018-1.256-.522-2.267-.665-.647-.125-1.333.131-1.824.328-.49.196-1.422.754-2.074 2.237-.652 1.482-.311 3.83-.067 4.56s.625 1.924 1.273 2.796c.576.984 1.34 1.667 1.659 1.899s1.219.386 1.843.067c.502-.308 1.408-.485 1.766-.472.357.013 1.061.154 1.782.539.571.197 1.111.115 1.652-.105.541-.221 1.324-1.059 2.238-2.758q.52-1.185.473-1.282"/><path d="M11.182.008C11.148-.03 9.923.023 8.857 1.18c-1.066 1.156-.902 2.482-.878 2.516s1.52.087 2.475-1.258.762-2.391.728-2.43m3.314 11.733c-.048-.096-2.325-1.234-2.113-3.422s1.675-2.789 1.698-2.854-.597-.79-1.254-1.157a3.7 3.7 0 0 0-1.563-.434c-.108-.003-.483-.095-1.254.116-.508.139-1.653.589-1.968.607-.316.018-1.256-.522-2.267-.665-.647-.125-1.333.131-1.824.328-.49.196-1.422.754-2.074 2.237-.652 1.482-.311 3.83-.067 4.56s.625 1.924 1.273 2.796c.576.984 1.34 1.667 1.659 1.899s1.219.386 1.843.067c.502-.308 1.408-.485 1.766-.472.357.013 1.061.154 1.782.539.571.197 1.111.115 1.652-.105.541-.221 1.324-1.059 2.238-2.758q.52-1.185.473-1.282"/></symbol></svg>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="goo" x="-25%" y="-60%" width="150%" height="220%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceGraphic" stdDeviation="4.5" result="b"/><feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -10"/></filter></svg>
 <a class="saltar" href="#historia"><span class="es">Saltar al contenido</span><span class="en">Skip to content</span></a>
 
 <header class="barra">
   <div class="barra-in">
-    <a class="marca" href="#inicio" aria-label="simpleplay"><img src="img/icon-64.png" alt="" width="28" height="28"><span class="marca-texto">simpleplay</span></a>
+    <a class="marca" href="#inicio" aria-label="tarab player"><img src="img/icon-64.png" alt="" width="28" height="28"><span class="marca-texto"><span class="mt">tarab player</span><canvas class="marca-barras" aria-hidden="true"></canvas></span></a>
     <nav class="menu" aria-label="Principal">
       <a class="enlace" href="#historia"><span class="es">Historia</span><span class="en">Story</span></a>
       <a class="enlace" href="#descargar"><span class="es">Descargar</span><span class="en">Download</span></a>
       <a class="enlace" href="#codigo"><span class="es">Código</span><span class="en">Code</span></a>
       <div class="herr">
         <div class="seg" role="group" aria-label="Idioma / Language">
+          <span class="gota" aria-hidden="true"><i></i><i></i></span>
           <button type="button" data-lang="es" aria-pressed="true">ES</button>
           <button type="button" data-lang="en" aria-pressed="false">EN</button>
         </div>
@@ -616,24 +665,34 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
           <article class="paso activo" data-i="0">
             <h3><span class="es">Una tarjeta con la portada</span><span class="en">A card with the cover art</span></h3>
             <p><span class="es">Sin menús ni barra de título. La portada, el tema y los controles, y nada más.</span><span class="en">No menus, no title bar. The cover, the track and the controls, nothing else.</span></p>
-            <figure class="fig-movil"><img src="img/player.webp" width="744" height="744" loading="lazy" alt="La tarjeta de simpleplay con la portada de un tema" data-alt-es="La tarjeta de simpleplay con la portada de un tema" data-alt-en="The simpleplay card with a track's cover art"></figure>
+            <figure class="fig-movil"><img src="img/player.webp" width="372" height="372" loading="lazy" alt="La tarjeta de simpleplay con la portada de un tema" data-alt-es="La tarjeta de simpleplay con la portada de un tema" data-alt-en="The simpleplay card with a track's cover art"></figure>
           </article>
           <article class="paso" data-i="1">
-            <h3><span class="es">Barras que escuchan lo mismo que vos</span><span class="en">Bars that hear what you hear</span></h3>
-            <p><span class="es">El espectro estilo Winamp lee el audio que sale por tus parlantes, cuadro por cuadro.</span><span class="en">The Winamp-style spectrum reads the audio going to your speakers, frame by frame.</span></p>
-            <figure class="fig-movil"><img src="img/spectrum.webp" width="744" height="744" loading="lazy" alt="La tarjeta con las barras de espectro verdes y amarillas arriba" data-alt-es="La tarjeta con las barras de espectro verdes y amarillas arriba" data-alt-en="The card with green and yellow spectrum bars at the top"></figure>
+            <h3><span class="es">Los controles se esconden solos</span><span class="en">The controls hide by themselves</span></h3>
+            <p><span class="es">Mientras suena, si dejás quieto el mouse, los controles se desvanecen y queda solo la portada. Lo movés y vuelven.</span><span class="en">While a track plays, if you leave the mouse still, the controls fade away and only the cover is left. Move it and they come back.</span></p>
+            <figure class="fig-movil"><img src="img/player-solo.webp" width="372" height="372" loading="lazy" alt="La tarjeta con solo la portada, sin controles" data-alt-es="La tarjeta con solo la portada, sin controles" data-alt-en="The card with only the cover, no controls"></figure>
           </article>
           <article class="paso" data-i="2">
-            <h3><span class="es">Se achica a una barra</span><span class="en">It shrinks to a bar</span></h3>
-            <p><span class="es">Una transición suave pasa de la tarjeta a una barra compacta. La música no se corta.</span><span class="en">A smooth transition turns the card into a compact bar. The music keeps playing.</span></p>
-            <figure class="fig-movil"><img src="img/compact.webp" width="864" height="216" loading="lazy" alt="La barra compacta con los botones anterior, pausa y siguiente" data-alt-es="La barra compacta con los botones anterior, pausa y siguiente" data-alt-en="The compact bar with previous, pause and next buttons"></figure>
+            <h3><span class="es">Barras que escuchan lo mismo que vos</span><span class="en">Bars that hear what you hear</span></h3>
+            <p><span class="es">El espectro estilo Winamp lee el audio que sale por tus parlantes, cuadro por cuadro.</span><span class="en">The Winamp-style spectrum reads the audio going to your speakers, frame by frame.</span></p>
+            <figure class="fig-movil"><img src="img/spectrum.webp" width="372" height="372" loading="lazy" alt="La tarjeta con las barras de espectro verdes y amarillas arriba" data-alt-es="La tarjeta con las barras de espectro verdes y amarillas arriba" data-alt-en="The card with green and yellow spectrum bars at the top"></figure>
           </article>
           <article class="paso" data-i="3">
-            <h3><span class="es">Una lista que se abre cuando hace falta</span><span class="en">A list that opens when needed</span></h3>
-            <p><span class="es">Buscá, ordená, arrastrá y agregá carpetas enteras.</span><span class="en">Search, sort, drag, and add whole folders.</span></p>
-            <figure class="fig-movil"><img src="img/playlist.webp" width="744" height="1302" loading="lazy" alt="El panel de la lista de reproducción con un buscador" data-alt-es="El panel de la lista de reproducción con un buscador" data-alt-en="The playlist panel with a search box"></figure>
+            <h3><span class="es">Se achica a una barra</span><span class="en">It shrinks to a bar</span></h3>
+            <p><span class="es">Una transición suave pasa de la tarjeta a una barra compacta. La música no se corta.</span><span class="en">A smooth transition turns the card into a compact bar. The music keeps playing.</span></p>
+            <figure class="fig-movil"><img src="img/compact.webp" width="432" height="108" loading="lazy" alt="La barra compacta con el espectro y los botones anterior, pausa, siguiente y detener" data-alt-es="La barra compacta con el espectro y los botones anterior, pausa, siguiente y detener" data-alt-en="The compact bar with the spectrum and the previous, pause, next and stop buttons"></figure>
           </article>
           <article class="paso" data-i="4">
+            <h3><span class="es">Una lista que se abre cuando hace falta</span><span class="en">A list that opens when needed</span></h3>
+            <p><span class="es">Buscá, ordená, arrastrá y agregá carpetas enteras.</span><span class="en">Search, sort, drag, and add whole folders.</span></p>
+            <figure class="fig-movil"><img src="img/playlist.webp" width="372" height="651" loading="lazy" alt="El panel de la lista de reproducción con un buscador" data-alt-es="El panel de la lista de reproducción con un buscador" data-alt-en="The playlist panel with a search box"></figure>
+          </article>
+          <article class="paso" data-i="5">
+            <h3><span class="es">Un ecualizador de diez bandas</span><span class="en">A ten-band equalizer</span></h3>
+            <p><span class="es">De 31 Hz a 16 kHz, con ±12 dB por banda. Se abre al costado, suena mientras movés los controles y podés partir de un preset o afinar de oído.</span><span class="en">From 31 Hz to 16 kHz, ±12 dB per band. It opens beside the player, sounds as you move the sliders, and you can start from a preset or tune by ear.</span></p>
+            <figure class="fig-movil"><img src="img/equalizer.webp" width="482" height="350" loading="lazy" alt="El ecualizador gráfico de diez bandas" data-alt-es="El ecualizador gráfico de diez bandas" data-alt-en="The ten-band graphic equalizer"></figure>
+          </article>
+          <article class="paso" data-i="6">
             <h3><span class="es">Un motor de audio propio</span><span class="en">Its own audio engine</span></h3>
             <p><span class="es">Pausar y saltar sin clics. Saltar al minuto 58 de un mix pasó de tardar un segundo y medio a una fracción de milisegundo.</span><span class="en">Pause and seek with no clicks. Jumping to minute 58 of a mix went from taking a second and a half to a fraction of a millisecond.</span></p>
             <figure class="fig-movil motor">
@@ -641,36 +700,38 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
               <p class="medida-pie"><span class="es">Medido en un mp3 de 60 minutos.</span><span class="en">Measured on a 60-minute mp3.</span></p>
             </figure>
           </article>
-          <article class="paso" data-i="5">
+          <article class="paso" data-i="7">
             <h3><span class="es">Listas de reproducción de verdad</span><span class="en">Real playlists</span></h3>
-            <p><span class="es">Guardalas y abrilas como archivos M3U8 comunes, que también leen VLC o mpv. Clic derecho en un tema para agregarlo a una lista o crear una nueva. Si movés la carpeta con la música, la lista sigue andando.</span><span class="en">Save and open them as plain M3U8 files, which VLC or mpv read too. Right click a track to add it to a list or start a new one. Move the music folder and the list keeps working.</span></p>
+            <p><span class="es">Guardalas y abrilas como archivos M3U8 comunes, que también leen VLC o mpv. Clic derecho en un tema para agregarlo a una lista o crear una nueva. Si movés la carpeta con la música, la lista sigue funcionando.</span><span class="en">Save and open them as plain M3U8 files, which VLC or mpv read too. Right click a track to add it to a list or start a new one. Move the music folder and the list keeps working.</span></p>
             <figure class="fig-movil dato"><div class="gran">M3U8</div><p class="dato-pie"><span class="es">Rutas relativas: la lista viaja con la música.</span><span class="en">Relative paths: the list travels with the music.</span></p></figure>
           </article>
-          <article class="paso" data-i="6">
+          <article class="paso" data-i="8">
             <h3><span class="es">También reproduce FLAC</span><span class="en">It plays FLAC too</span></h3>
             <p><span class="es">Con etiquetas, portada y ReplayGain, y búsqueda dentro del tema. Probado hasta 24 bits y 96 kHz.</span><span class="en">With tags, cover art and ReplayGain, and seeking inside the track. Tested up to 24-bit and 96 kHz.</span></p>
             <figure class="fig-movil dato"><div class="gran">FLAC</div><p class="dato-pie"><span class="es">24 bits, 96 kHz.</span><span class="en">24-bit, 96 kHz.</span></p></figure>
           </article>
-          <article class="paso" data-i="7">
+          <article class="paso" data-i="9">
             <h3><span class="es">Sonido a tu medida</span><span class="en">Sound to fit you</span></h3>
-            <p><span class="es">Un normalizador para que todos los temas suenen parejos, un ecualizador con presets y la base AutoEq para corregir tus auriculares. El perfil se baja una vez y después anda sin internet.</span><span class="en">A normalizer so every track sounds even, an equalizer with presets, and the AutoEq database to correct your headphones. A profile is downloaded once and then works offline.</span></p>
+            <p><span class="es">Un normalizador para que todos los temas suenen parejos, un ecualizador con presets y la base AutoEq para corregir tus auriculares. El perfil se baja una vez y después funciona sin internet.</span><span class="en">A normalizer so every track sounds even, an equalizer with presets, and the AutoEq database to correct your headphones. A profile is downloaded once and then works offline.</span></p>
             <figure class="fig-movil dato"><div class="gran">~800</div><p class="dato-pie"><span class="es">modelos de auriculares.</span><span class="en">headphone models.</span></p></figure>
           </article>
         </div>
         <div class="vitrina" aria-hidden="true" id="vitrina">
-          <figure class="v0 activa"><picture><source srcset="img/player.webp" type="image/webp"><img src="screenshots/player.png" width="744" height="744" alt="" loading="lazy" decoding="async"></picture></figure>
-          <figure class="v1"><picture><source srcset="img/spectrum.webp" type="image/webp"><img src="screenshots/spectrum.png" width="744" height="744" alt="" loading="lazy"></picture></figure>
-          <figure class="v2"><picture><source srcset="img/compact.webp" type="image/webp"><img src="screenshots/compact.png" width="864" height="216" alt="" loading="lazy"></picture></figure>
-          <figure class="v3"><picture><source srcset="img/playlist.webp" type="image/webp"><img src="screenshots/playlist.png" width="744" height="1302" alt="" loading="lazy"></picture></figure>
-          <figure class="v4">
+          <figure class="v0 activa"><picture><source srcset="img/player.webp" type="image/webp"><img src="screenshots/player.png" width="372" height="372" alt="" loading="lazy" decoding="async"></picture></figure>
+          <figure class="v1"><picture><source srcset="img/player-solo.webp" type="image/webp"><img src="screenshots/player-solo.png" width="372" height="372" alt="" loading="lazy" decoding="async"></picture></figure>
+          <figure class="v2"><picture><source srcset="img/spectrum.webp" type="image/webp"><img src="screenshots/spectrum.png" width="372" height="372" alt="" loading="lazy"></picture></figure>
+          <figure class="v3"><picture><source srcset="img/compact.webp" type="image/webp"><img src="screenshots/compact.png" width="432" height="108" alt="" loading="lazy"></picture></figure>
+          <figure class="v4"><picture><source srcset="img/playlist.webp" type="image/webp"><img src="screenshots/playlist.png" width="372" height="651" alt="" loading="lazy"></picture></figure>
+          <figure class="v5"><picture><source srcset="img/equalizer.webp" type="image/webp"><img src="screenshots/equalizer.png" width="482" height="350" alt="" loading="lazy"></picture></figure>
+          <figure class="v6">
             <div>
               <div class="medida"><span class="viejo"><span class="es">1,5<span class="u">s</span></span><span class="en">1.5<span class="u">s</span></span></span><span class="flecha">&rarr;</span><span class="nuevo"><span class="es">0,2<span class="u">ms</span></span><span class="en">0.2<span class="u">ms</span></span></span></div>
               <p class="medida-pie"><span class="es">Medido en un mp3 de 60 minutos.</span><span class="en">Measured on a 60-minute mp3.</span></p>
             </div>
           </figure>
-          <figure class="v5 dato"><div><div class="gran">M3U8</div><p class="dato-pie"><span class="es">Rutas relativas: la lista viaja con la música.</span><span class="en">Relative paths: the list travels with the music.</span></p></div></figure>
-          <figure class="v6 dato"><div><div class="gran">FLAC</div><p class="dato-pie"><span class="es">24 bits, 96 kHz.</span><span class="en">24-bit, 96 kHz.</span></p></div></figure>
-          <figure class="v7 dato"><div><div class="gran">~800</div><p class="dato-pie"><span class="es">modelos de auriculares.</span><span class="en">headphone models.</span></p></div></figure>
+          <figure class="v7 dato"><div><div class="gran">M3U8</div><p class="dato-pie"><span class="es">Rutas relativas: la lista viaja con la música.</span><span class="en">Relative paths: the list travels with the music.</span></p></div></figure>
+          <figure class="v8 dato"><div><div class="gran">FLAC</div><p class="dato-pie"><span class="es">24 bits, 96 kHz.</span><span class="en">24-bit, 96 kHz.</span></p></div></figure>
+          <figure class="v9 dato"><div><div class="gran">~800</div><p class="dato-pie"><span class="es">modelos de auriculares.</span><span class="en">headphone models.</span></p></div></figure>
         </div>
       </div>
     </div>
@@ -708,10 +769,15 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     </div>
   </section>
 
-  <section class="sonido" id="sonido">
+  <section class="sonido hay-flota" id="sonido">
+      <div class="flota-caja" aria-hidden="true">
+        <img class="flota" src="img/portadas/03.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--x:-9%;--y:6%;--w:15vw;--r:-7deg;--op:.26;--v:-.14" data-v="-.14">
+        <img class="flota" src="img/portadas/06.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--xr:-7%;--y:2%;--w:12vw;--r:6deg;--op:.22;--v:-.2" data-v="-.2">
+        <img class="flota" src="img/portadas/11.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--x:-7%;--y:76%;--w:13vw;--r:5deg;--op:.24;--v:.12" data-v=".12">
+      </div>
     <div class="cont">
-      <h2 class="grande-titulo revela"><span class="es">Suena como querés.</span><span class="en">Sounds the way you want.</span></h2>
-      <p class="intro revela" style="--i:1"><span class="es">Un ecualizador de 10 bandas con seis ajustes listos para elegir, y un normalizador para que todos los temas suenen parejos.</span><span class="en">A 10-band equalizer with six settings ready to pick, and a normalizer so every track sounds even.</span></p>
+      <h2 class="grande-titulo revela"><span class="es">Afiná tu oído.</span><span class="en">Tune your ear.</span></h2>
+      <p class="intro revela" style="--i:1"><span class="es">Escuchás dos versiones al mismo volumen, sin saber cuál es cuál, y elegís la que te gusta. Con pocas comparaciones, simpleplay arma tu curva. O partí de uno de seis ajustes y un normalizador que iguala todos los temas.</span><span class="en">You hear two versions at the same loudness, without knowing which is which, and pick the one you like. In a few comparisons, simpleplay builds your curve. Or start from one of six settings, with a normalizer that evens out every track.</span></p>
       <div class="cuerpo">
         <div class="revela" style="--i:2">
           <div class="ajustes" id="ajustes" role="group" aria-label="Ajustes de ecualizador" data-es="Ajustes de ecualizador" data-en="Equalizer settings">
@@ -722,7 +788,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
             <button type="button" data-k="brillante" aria-pressed="false"><span class="es">Brillante</span><span class="en">Bright</span></button>
             <button type="button" data-k="calido" aria-pressed="false"><span class="es">Cálido</span><span class="en">Warm</span></button>
           </div>
-          <p class="nota"><span class="es">Además, una base de perfiles para corregir unos ~800 modelos de auriculares: se baja una vez y después anda sin internet.</span><span class="en">Plus a library of profiles to correct about 800 headphone models: you download one once and it works offline afterwards.</span></p>
+          <p class="nota"><span class="es">Además, una base de perfiles para corregir unos ~800 modelos de auriculares: se baja una vez y después funciona sin internet.</span><span class="en">Plus a library of profiles to correct about 800 headphone models: you download one once and it works offline afterwards.</span></p>
         </div>
         <div class="ecu revela" style="--i:3" id="ecu" role="img" aria-label="Ecualizador de 10 bandas" data-es="Ecualizador de 10 bandas" data-en="10-band equalizer">
           <p class="ecu-titulo" aria-hidden="true"><span class="es">Ecualizador</span><span class="en">Equalizer</span></p>
@@ -742,7 +808,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
         <img class="flota" src="img/portadas/07.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--x:-8%;--y:84%;--w:14vw;--r:7deg;--op:.24;--v:-.1" data-v="-.1">
       </div>
     <div class="cont">
-      <h2 class="grande-titulo revela"><span class="es">Se maneja con el teclado.</span><span class="en">It runs on the keyboard.</span></h2>
+      <h2 class="grande-titulo revela"><span class="es">Los hotkeys están al alcance de los dedos.</span><span class="en">Hotkeys at your fingertips.</span></h2>
       <p class="intro revela" style="--i:1"><span class="es">Todo lo importante tiene su tecla. Probalas acá: se iluminan al apretarlas. Aquí no suena nada, el reproductor responde a las mismas teclas.</span><span class="en">Everything important has a key. Try them here: they light up when you press them. Nothing plays on this page, the player answers to the same keys.</span></p>
       <div class="hojas">
         <article class="hoja revela">
@@ -822,7 +888,12 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   </section>
 
   <!-- 5. descargar -->
-  <section class="descarga" id="descargar">
+  <section class="descarga hay-flota" id="descargar">
+      <div class="flota-caja" aria-hidden="true">
+        <img class="flota" src="img/portadas/02.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--xr:-8%;--y:8%;--w:17vw;--r:6deg;--op:.28;--v:-.1" data-v="-.1">
+        <img class="flota" src="img/portadas/10.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--x:-8%;--y:46%;--w:14vw;--r:-6deg;--op:.24;--v:.15" data-v=".15">
+        <img class="flota" src="img/portadas/15.webp" width="372" height="372" alt="" loading="lazy" decoding="async" style="--xr:-6%;--y:76%;--w:12vw;--r:-5deg;--op:.22;--v:-.18" data-v="-.18">
+      </div>
     <div class="cont">
       <h2 class="grande-titulo revela"><span class="es">Descargar</span><span class="en">Download</span></h2>
       <p class="sub-d revela" style="--i:1"><span class="es">Versión 1.6. Gratis y sin registro.</span><span class="en">Version 1.6. Free, no sign-up.</span></p>
@@ -873,7 +944,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
       <div class="panel revela">
         <div>
           <h2><span class="es">Código abierto, hecho de a poco</span><span class="en">Open source, built bit by bit</span></h2>
-          <p class="es">simpleplay es software libre (GPL-3.0). El código está en GitHub: leelo, probalo o abrí un issue si algo no anda. Si te sirve y querés darme una mano para seguir, podés invitarme algo. Es opcional.</p>
+          <p class="es">simpleplay es software libre (GPL-3.0). El código está en GitHub: leelo, probalo o abrí un issue si algo no funciona. Si te sirve y querés darme una mano para seguir, podés invitarme algo. Es opcional.</p>
           <p class="en">simpleplay is free software (GPL-3.0). The code is on GitHub: read it, try it, or open an issue if something breaks. If it is useful to you and you want to help me keep going, you can buy me something. It is entirely optional.</p>
         </div>
         <div class="botones">
@@ -904,14 +975,21 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
 </main>
 
 <footer class="pie">
+  <!-- iconos de redes: Bootstrap Icons 1.11 (MIT, https://icons.getbootstrap.com) -->
   <div class="cont">
     <a class="firma" href="https://cufadev.xyz">cufa</a>
+    <ul class="redes" aria-hidden="true">
+      <li><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C5.829 0 5.556.01 4.703.048 3.85.088 3.269.222 2.76.42a3.9 3.9 0 0 0-1.417.923A3.9 3.9 0 0 0 .42 2.76C.222 3.268.087 3.85.048 4.7.01 5.555 0 5.827 0 8.001c0 2.172.01 2.444.048 3.297.04.852.174 1.433.372 1.942.205.526.478.972.923 1.417.444.445.89.719 1.416.923.51.198 1.09.333 1.942.372C5.555 15.99 5.827 16 8 16s2.444-.01 3.298-.048c.851-.04 1.434-.174 1.943-.372a3.9 3.9 0 0 0 1.416-.923c.445-.445.718-.891.923-1.417.197-.509.332-1.09.372-1.942C15.99 10.445 16 10.173 16 8s-.01-2.445-.048-3.299c-.04-.851-.175-1.433-.372-1.941a3.9 3.9 0 0 0-.923-1.417A3.9 3.9 0 0 0 13.24.42c-.51-.198-1.092-.333-1.943-.372C10.443.01 10.172 0 7.998 0zm-.717 1.442h.718c2.136 0 2.389.007 3.232.046.78.035 1.204.166 1.486.275.373.145.64.319.92.599s.453.546.598.92c.11.281.24.705.275 1.485.039.843.047 1.096.047 3.231s-.008 2.389-.047 3.232c-.035.78-.166 1.203-.275 1.485a2.5 2.5 0 0 1-.599.919c-.28.28-.546.453-.92.598-.28.11-.704.24-1.485.276-.843.038-1.096.047-3.232.047s-2.39-.009-3.233-.047c-.78-.036-1.203-.166-1.485-.276a2.5 2.5 0 0 1-.92-.598 2.5 2.5 0 0 1-.6-.92c-.109-.281-.24-.705-.275-1.485-.038-.843-.046-1.096-.046-3.233s.008-2.388.046-3.231c.036-.78.166-1.204.276-1.486.145-.373.319-.64.599-.92s.546-.453.92-.598c.282-.11.705-.24 1.485-.276.738-.034 1.024-.044 2.515-.045zm4.988 1.328a.96.96 0 1 0 0 1.92.96.96 0 0 0 0-1.92m-4.27 1.122a4.109 4.109 0 1 0 0 8.217 4.109 4.109 0 0 0 0-8.217m0 1.441a2.667 2.667 0 1 1 0 5.334 2.667 2.667 0 0 1 0-5.334"/></svg></li>
+      <li><svg viewBox="0 0 16 16" fill="currentColor"><path d="M11.19 12.195c2.016-.24 3.77-1.475 3.99-2.603.348-1.778.32-4.339.32-4.339 0-3.47-2.286-4.488-2.286-4.488C12.062.238 10.083.017 8.027 0h-.05C5.92.017 3.942.238 2.79.765c0 0-2.285 1.017-2.285 4.488l-.002.662c-.004.64-.007 1.35.011 2.091.083 3.394.626 6.74 3.78 7.57 1.454.383 2.703.463 3.709.408 1.823-.1 2.847-.647 2.847-.647l-.06-1.317s-1.303.41-2.767.36c-1.45-.05-2.98-.156-3.215-1.928a4 4 0 0 1-.033-.496s1.424.346 3.228.428c1.103.05 2.137-.064 3.188-.189zm1.613-2.47H11.13v-4.08c0-.859-.364-1.295-1.091-1.295-.804 0-1.207.517-1.207 1.541v2.233H7.168V5.89c0-1.024-.403-1.541-1.207-1.541-.727 0-1.091.436-1.091 1.296v4.079H3.197V5.522q0-1.288.66-2.046c.456-.505 1.052-.764 1.793-.764.856 0 1.504.328 1.933.983L8 4.39l.417-.695c.429-.655 1.077-.983 1.934-.983.74 0 1.336.259 1.791.764q.662.757.661 2.046z"/></svg></li>
+      <li><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8"/></svg></li>
+    </ul>
     <small>
       <span class="es">&copy; 2026 Facundo González. GPL-3.0-or-later. Hecho con PySide6 y miniaudio. Tipografías Geist y Bebas Neue (SIL OFL).</span>
       <span class="en">&copy; 2026 Facundo González. GPL-3.0-or-later. Built with PySide6 and miniaudio. Typefaces Geist and Bebas Neue (SIL OFL).</span>
     </small>
   </div>
-  <div class="nombre" aria-hidden="true">simpleplay</div>
+  <div class="nombre" aria-hidden="true">playtarab</div>
+  <!--<div class="nombre" aria-hidden="true">simpleplay</div>-->
 </footer>
 
 <script src="vendor/gsap.min.js" defer></script>
@@ -934,6 +1012,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   };
   const ponerIdioma = (l) => {
     html.lang = l;
+    html.dataset.seg = l;
     document.title = textos[l].titulo;
     document.querySelector('meta[name="description"]').content = textos[l].desc;
     document.querySelector('#tema').setAttribute('aria-label', textos[l].tema);
@@ -941,6 +1020,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     document.querySelectorAll('[data-lang]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.lang === l)));
     memoria.guardar('sp-idioma', l);
   };
+  requestAnimationFrame(() => requestAnimationFrame(() => html.classList.add('seg-anima')));
   const delNavegador = (navigator.language || 'es').toLowerCase().startsWith('es') ? 'es' : 'en';
   ponerIdioma(memoria.leer('sp-idioma') || delNavegador);
   // Al cambiar de idioma el contenido se desvanece, se cambian los textos y vuelve a aparecer (con menos movimiento, se cambia directo)
@@ -949,6 +1029,66 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     if (l === html.lang || cambiandoIdioma) return;
     if (reducir.matches) { ponerIdioma(l); return; }
     cambiandoIdioma = true;
+    html.dataset.seg = l;   // el fondo del selector sale ya, a la par de las letras que se apagan
+    const modo = new URLSearchParams(location.search).get('idioma') || 'letras';   // para comparar: ?idioma=letras (por defecto) | cascada | barrido | cruce
+    if (modo === 'letras') {
+      // solo se mueven las letras: las imágenes y todo lo estático quedan fijas. Las letras visibles se apagan una tras otra, se cambia el idioma y las nuevas se encienden igual.
+      // Las letras son <span> en línea (no inline-block) y las palabras llevan nowrap: así el texto no se reacomoda ni pierde el kerning al partirlo, y solo se anima la opacidad
+      const visibles = (clase) => [...document.querySelectorAll('main .' + clase + ', footer .' + clase + ', .barra .' + clase)].filter((el) => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight && r.width > 0; });
+      const dividir = (el) => {
+        const orig = el.innerHTML, letras = [], nodos = [], w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        while (w.nextNode()) nodos.push(w.currentNode);
+        nodos.forEach((n) => {
+          if (!n.nodeValue.trim()) return;
+          const frag = document.createDocumentFragment();
+          n.nodeValue.split(/(\s+)/).forEach((parte) => {
+            if (!parte) return;
+            if (/^\s+$/.test(parte)) { frag.append(parte); return; }
+            const pal = document.createElement('span');
+            pal.style.whiteSpace = 'nowrap';
+            [...parte].forEach((c) => { const s = document.createElement('span'); s.textContent = c; pal.append(s); letras.push(s); });
+            frag.append(pal);
+          });
+          n.replaceWith(frag);
+        });
+        return { letras, deshacer: () => { el.innerHTML = orig; } };
+      };
+      const animar = (grupo, desde, hasta, dur, ease) => Promise.all(grupo.flatMap(({ el, letras }) => {
+        const base = Math.max(0, el.getBoundingClientRect().top) / innerHeight * 140;
+        return letras.map((s, i) => s.animate([{ opacity: desde }, { opacity: hasta }], { duration: dur, delay: base + Math.min(i * 5, 300), easing: ease, fill: 'both' }).finished);
+      }));
+      const dosCuadros = () => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
+      const salen = visibles(html.lang).map((el) => ({ el, ...dividir(el) }));
+      animar(salen, 1, 0, 200, 'ease-in').then(async () => {
+        salen.forEach((g) => g.deshacer());
+        ponerIdioma(l);
+        dispatchEvent(new Event('resize'));          // el largo de los textos cambia: el scroll y el riel de versiones se vuelven a medir
+        const entran = visibles(l).map((el) => ({ el, ...dividir(el) }));
+        entran.forEach((g) => g.letras.forEach((s) => { s.style.opacity = '0'; }));
+        await dosCuadros();                          // lo pesado (reacomodar y medir) termina antes de empezar a animar: sin tirones
+        return animar(entran, 0, 1, 380, 'cubic-bezier(.22,1,.36,1)').then(() => entran.forEach((g) => g.deshacer()));
+      }).finally(() => { cambiandoIdioma = false; });
+      return;
+    }
+    if (modo === 'barrido' && document.startViewTransition) {
+      html.classList.add('vt-barrido');
+      html.style.setProperty('--dir', l === 'en' ? '90deg' : '270deg');
+      const t = document.startViewTransition(() => { ponerIdioma(l); dispatchEvent(new Event('resize')); });
+      t.finished.finally(() => { html.classList.remove('vt-barrido'); cambiandoIdioma = false; });
+      return;
+    }
+    if (modo === 'cascada') {
+      html.classList.add('casc-sale');
+      setTimeout(() => {
+        ponerIdioma(l);
+        dispatchEvent(new Event('resize'));
+        html.classList.remove('casc-sale');
+        const nuevos = [...document.querySelectorAll('main .' + l + ', footer .' + l + ', .barra .' + l)].filter((el) => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight; });
+        nuevos.forEach((el) => { el.style.setProperty('--dl', Math.round(Math.max(0, el.getBoundingClientRect().top) / innerHeight * 420) + 'ms'); el.classList.add('casc-entra'); });
+        setTimeout(() => { nuevos.forEach((el) => { el.classList.remove('casc-entra'); el.style.removeProperty('--dl'); }); cambiandoIdioma = false; }, 1100);
+      }, 150);
+      return;
+    }
     if (document.startViewTransition) {
       html.classList.add('vt-idioma');
       const t = document.startViewTransition(() => { ponerIdioma(l); dispatchEvent(new Event('resize')); });
@@ -964,6 +1104,45 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     }, 190);
   };
   document.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('click', () => cambiarIdioma(b.dataset.lang)));
+
+  // Logo: al tocar la píldora el nombre deja lugar al espectro del reproductor (barras de a segmentos, con la marca de pico que cae) y a los pocos segundos vuelve
+  (() => {
+    const marca = document.querySelector('.marca'), cv = marca && marca.querySelector('.marca-barras');
+    if (!marca || !cv) return;
+    const quieto = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let t = null, raf = 0, niv = [], tgt = [], pico = [], ult = 0;
+    const dibujar = (ahora) => {
+      const dpr = Math.min(devicePixelRatio || 1, 2), W = cv.clientWidth, H = cv.clientHeight;
+      if (!W || !H) return;
+      if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+      const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+      const col = 4.4, n = Math.max(6, Math.floor(W / col)), cw = W / n, seg = 2, paso = 3, filas = Math.floor(H / paso);
+      if (niv.length !== n) { niv = Array(n).fill(0); tgt = Array(n).fill(0); pico = Array(n).fill(0); }
+      if (ahora - ult > 90) { ult = ahora; for (let i = 0; i < n; i++) tgt[i] = (0.95 - 0.5 * i / n) * (0.3 + 0.7 * Math.random()); }   // más fuerza en los graves, como un tema de verdad
+      const color = getComputedStyle(cv).color;
+      for (let i = 0; i < n; i++) {
+        niv[i] += (tgt[i] - niv[i]) * 0.3;
+        pico[i] = Math.max(niv[i], pico[i] - 0.014);
+        const lit = Math.round(niv[i] * filas);
+        for (let r = 0; r < lit; r++) {
+          const f = r / filas;
+          g.fillStyle = f < 0.6 ? '#2fd24a' : f < 0.85 ? '#e3dc3a' : '#ff8a3a';
+          g.fillRect(i * cw, H - (r + 1) * paso + 1, cw - 1, seg);
+        }
+        const rp = Math.min(filas - 1, Math.round(pico[i] * filas));
+        if (rp > lit) { g.fillStyle = color; g.fillRect(i * cw, H - (rp + 1) * paso + 1, cw - 1, 1.5); }   // la marca de pico flota y cae despacio
+      }
+    };
+    const bucle = (ahora) => { dibujar(ahora); if (marca.classList.contains('suena')) raf = requestAnimationFrame(bucle); };
+    marca.addEventListener('click', () => {
+      if (quieto) return;                          // con "reducir movimiento" el nombre se queda como está
+      marca.classList.add('suena');
+      clearTimeout(t); cancelAnimationFrame(raf);
+      niv = []; ult = 0;
+      raf = requestAnimationFrame(bucle);
+      t = setTimeout(() => { marca.classList.remove('suena'); setTimeout(() => cancelAnimationFrame(raf), 350); }, 2600);
+    });
+  })();
 
   // Tema: el guardado, y si no el del sistema
   const sistema = matchMedia('(prefers-color-scheme: dark)');
@@ -983,7 +1162,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     const t = document.startViewTransition(aplicar);
     t.ready.then(() => html.animate(
       { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radio}px at ${x}px ${y}px)`] },
-      { duration: 750, easing: 'cubic-bezier(0.23, 1, 0.32, 1)', pseudoElement: '::view-transition-new(root)' }
+      { duration: 750, delay: 160, fill: 'both', easing: 'cubic-bezier(0.23, 1, 0.32, 1)', pseudoElement: '::view-transition-new(root)' }   // el botón cambia primero; el círculo arranca 160 ms después
     )).catch(() => {});
     t.finished.finally(() => { html.classList.remove('vt-tema'); cambiandoTema = false; });
   });
