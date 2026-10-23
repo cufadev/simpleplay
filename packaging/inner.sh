@@ -17,6 +17,13 @@ python3 -m venv /tmp/uvenv
 /tmp/uvenv/bin/uv venv -q --python 3.13 /tmp/venv
 /tmp/uvenv/bin/uv pip install -q --python /tmp/venv/bin/python \
     pyinstaller PySide6 mutagen numpy miniaudio certifi
+# YouTube Music (función en prueba, solo si se arma con BUILD_YOUTUBE=1; ver requirements-youtube.txt)
+YT_ARGS=()
+if [ "${BUILD_YOUTUBE:-0}" = 1 ]; then
+    /tmp/uvenv/bin/uv pip install -q --python /tmp/venv/bin/python ytmusicapi yt-dlp av
+    YT_ARGS=(--hidden-import simpleplay_youtube --collect-submodules yt_dlp --collect-data ytmusicapi
+             --collect-submodules ytmusicapi --collect-all av)
+fi
 /tmp/venv/bin/python --version
 cd /src
 /tmp/venv/bin/pyinstaller --noconfirm --clean --onedir --name simpleplay \
@@ -24,6 +31,7 @@ cd /src
     --add-data "/src/icon/simpleplay-256.png:icon" \
     --hidden-import _cffi_backend --hidden-import miniaudio \
     --collect-data certifi \
+    "${YT_ARGS[@]}" \
     --exclude-module tkinter --exclude-module PIL \
     --exclude-module PySide6.QtNetwork --exclude-module PySide6.QtSvg \
     simpleplay.py

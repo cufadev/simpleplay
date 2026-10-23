@@ -5,6 +5,49 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
 
 ## [Unreleased]
 
+## [1.6] - 2026-10-22
+
+### Fixed
+- **Look-ahead limiter.** Normalization can raise a quiet track by up to 9 dB, and the old limiter bent every sample above
+  0.85 with a static curve: that adds harmonic distortion to any loud peak and treated each channel on its own, which could
+  pull the stereo image. The new one looks 5 ms ahead and lowers the gain smoothly just before each peak (the same gain on
+  both channels), then lets it go over about 100 ms. A limited tone shows no harmonics (below -150 dBc), the output never
+  passes -0.9 dBFS and the result does not depend on the buffer size. While normalization or the equalizer is on, the sound
+  comes out 5 ms later (it fades in and out without clicks); with both off the audio is still untouched. About 0.2 ms per 23 ms of audio.
+- **Equalizer bass accuracy.** The filter was linear-phase with a Hann window, which smoothed the response by about 80 Hz:
+  asking +6 dB at 31 Hz gave +4.8 dB (+4.2 at 62 Hz, +5.1 at 125 Hz) and the boost leaked into the neighbouring bands. It is now a
+  minimum-phase filter of 4095 taps: +6 dB gives +5.8 dB in the worst case (a single isolated band), presets match the
+  requested curve within 0.05 dB, and the headphone profiles (AutoEq) within 0.15 dB instead of 1.3 dB. Minimum phase also
+  removes the 23 ms delay of the old filter, so switching the equalizer on or off no longer shifts the sound. It costs
+  about 0.2 ms per 23 ms of audio. `SIMPLEPLAY_EQ_FASE=lineal` goes back to the linear-phase filter to compare by ear.
+- **Better sound for files that are not 44.1 kHz.** Files at 48, 88.2, 96 or 192 kHz (very common in FLAC and in anything
+  from a video or a streaming rip) were converted with a basic linear resampler: a 10 kHz tone came out 1.3 dB low, 18 kHz
+  4.2 dB low, and a 14 kHz alias sat only 13 dB under the tone. They now go through a linear-phase polyphase resampler
+  (Kaiser-windowed sinc): flat to 20 kHz (0.00 dB) and everything above the output Nyquist rejected by more than 90 dB.
+  Files at 44.1 kHz are untouched, bit for bit. No new dependency; it costs under 1% of one core at 48 kHz.
+
+### Added
+- **Controls that hide by themselves.** While a track plays and the mouse stays still for 4 seconds, the controls fade out
+  and only the cover is left; moving the mouse brings them back. They stay visible when paused, with the list open, in compact
+  mode, over a control or with a menu open. Right click > "Hide controls automatically" turns it off (saved).
+- **Accent color.** Right click > **Accent color**: orange (the default) or five more solid colors (blue, green, purple, pink,
+  teal). It colors the interface and the default card, and it is saved.
+- **Graphic equalizer, side panels and Tune by ear are now on by default** (they were written earlier and kept off while they
+  were polished). `SIMPLEPLAY_ECUALIZADOR=0` turns them off again.
+- **Side panels.** The equalizer and Tune by ear open as a frameless glass panel beside the player (same dark glass,
+  rounded corners and shadow; it unfolds from behind the player and folds back like the track list), on the right if there is room and on the left if not, never off the screen. The panel
+  follows the window when you move it, and the music and the player stay usable meanwhile. It is a tooltip-type
+  window because on Wayland the compositor ignores the position of an ordinary window and left the panel on top of
+  the player; the animation uses a widget mask and fade, not window opacity (also unsupported on Wayland).
+- **Graphic equalizer.** Right click > **Sound** > **Graphic equalizer…**: ten sliders (31 Hz to 16 kHz, ±12 dB)
+  that sound as you move them. Picking a preset in "Start from…" changes the sound at once and the sliders glide up
+  or down to their new places. It starts from whatever is playing (a preset, or your headphone profile seen in ten
+  bands), has a "Start from…" list, and saves the result as **My sound** in the Sound menu and in the session.
+- **Tune by ear.** Right click > **Sound** > **Tune by ear…**: while a track plays you compare two versions (A and B)
+  and pick the one you like more, or "sound the same". Both play at the same loudness and you are not told which is
+  the new one, so volume does not decide for you. After at most 12 comparisons it finds the curve that fits your
+  taste (bass, body, presence, treble) and offers to save it as My sound. Cancelling leaves your sound untouched.
+
 ## [1.5.3] - 2026-10-21
 
 ### Fixed

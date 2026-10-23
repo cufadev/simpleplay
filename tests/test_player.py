@@ -494,6 +494,100 @@ class TestContadorYMiniatura(Base):
         self.assertEqual(m.mezcla, 1.0)
 
 
+class TestApoyo(Base):
+    def test_apoyar_abre_la_pagina_de_donaciones(self):
+        abiertas = []
+        original = S.QDesktopServices.openUrl
+        S.QDesktopServices.openUrl = staticmethod(lambda url: abiertas.append(url.toString()) or True)
+        try:
+            self.w.apoyar()
+        finally:
+            S.QDesktopServices.openUrl = original
+        self.assertEqual(abiertas, ["https://buymeacoffee.com/cufadev"])
+        self.assertEqual(S.URL_APOYO, abiertas[0])
+
+
+class TestControlesSolos(Base):
+    """Los controles se funden solos si suena un tema y nadie toca nada."""
+    def quieto(self):
+        self.w._quietud = int(S.Player.SEGUNDOS_QUIETO / 0.2)
+        self.w._ult_cursor = S.QCursor.pos()   # el mouse no se mueve entre un tick y el otro
+        self.w._vigilar_controles()
+        espera(0.7)
+
+    def test_se_esconden_sonando_y_vuelven_al_mover_el_mouse(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        self.quieto()
+        self.assertEqual(self.w.vis_controles, 0.0)
+        self.w._ult_cursor = None   # movimiento
+        self.w._vigilar_controles()
+        espera(0.4)
+        self.assertEqual(self.w.vis_controles, 1.0)
+        self.assertFalse(self.w.ef_controles.isEnabled())
+
+    def test_en_pausa_siempre_se_ven(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        self.w.play_pausa()
+        self.quieto()
+        self.assertEqual(self.w.vis_controles, 1.0)
+
+    def test_con_la_lista_abierta_o_la_opcion_apagada_se_ven(self):
+        self.cargar(A)
+        self.w.reproducir(0)
+        self.w.lista_abierta = True
+        self.quieto()
+        self.assertEqual(self.w.vis_controles, 1.0)
+        self.w.lista_abierta = False
+        self.w.poner_ocultar_controles(False)
+        self.quieto()
+        self.assertEqual(self.w.vis_controles, 1.0)
+
+
+class TestAcento(Base):
+    def tearDown(self):
+        self.w.poner_acento("naranja", guardar=False)
+        super().tearDown()
+
+    def test_hay_seis_acentos_y_el_naranja_es_el_primero(self):
+        self.assertEqual(len(S.ACENTOS), 6)
+        self.assertEqual(next(iter(S.ACENTOS)), "naranja")
+        self.assertEqual(S.ACENTOS["naranja"][2], S.NARANJA)
+        self.assertEqual(len({v[2] for v in S.ACENTOS.values()}), 6)
+
+    def test_tinte_cambia_el_naranja_en_las_hojas_de_estilo(self):
+        self.w.poner_acento("azul", guardar=False)
+        css = S.tinte(S.ESTILO)
+        self.assertNotIn("#ff4e01", css)
+        self.assertNotIn("255,78,1", css)
+        self.assertIn(S.ACENTOS["azul"][2], css)
+        self.assertIn("rgba(47,123,255,190)", css)
+
+    def test_con_el_naranja_no_se_toca_nada(self):
+        self.w.poner_acento("naranja", guardar=False)
+        self.assertEqual(S.tinte(S.ESTILO), S.ESTILO)
+
+    def test_elegir_aplica_a_la_ventana_y_se_guarda(self):
+        viejo = S.ARCHIVO_ACENTO
+        S.ARCHIVO_ACENTO = Path(tempfile.mkdtemp()) / "cfg" / "acento"
+        try:
+            self.w.poner_acento("verde")
+            self.assertEqual(self.w.acento, "verde")
+            self.assertIn(S.ACENTOS["verde"][2], self.w.styleSheet())
+            self.assertEqual(S.ARCHIVO_ACENTO.read_text(), "verde")
+            self.w.poner_acento("violeta", guardar=False)
+            self.w._cargar_acento()                                   # lo guardado manda al arrancar
+            self.assertEqual(self.w.acento, "verde")
+        finally:
+            S.ARCHIVO_ACENTO = viejo
+
+    def test_un_acento_desconocido_se_ignora(self):
+        self.w.poner_acento("azul", guardar=False)
+        self.w.poner_acento("fucsia-que-no-existe", guardar=False)
+        self.assertEqual(self.w.acento, "azul")
+
+
 class TestListas(Base):
     def _lista(self, nombre, texto, carpeta=None):
         d = Path(carpeta or tempfile.mkdtemp())
@@ -633,8 +727,12 @@ class TestNormalizadorSuave(Base):
     def test_al_cambiar_de_tema_la_ganancia_sigue_siendo_inmediata(self):
         c = S.Cadena()          # propia: la del motor la usa también el hilo de audio
         c.poner_ganancia(-8.0)                                # sin suave: un fundido de un bloque
-        y = c.procesar(np.full((4410, 2), 0.1, np.float32))[:, 0]
+        x = np.full((4410, 2), 0.1, np.float32)
+        y = c.procesar(x)[:, 0]
+        self.assertAlmostEqual(20 * np.log10(y[0] / 0.1), 0.0, delta=0.5)      # arranca desde donde estaba
+        y = c.procesar(x)[:, 0]                               # el bloque siguiente ya está en la meta (la salida va 5 ms atrás)
         self.assertAlmostEqual(20 * np.log10(y[-1] / 0.1), -8.0, delta=0.01)
+        self.assertAlmostEqual(20 * np.log10(y[S.LIM_ANTICIPO] / 0.1), -8.0, delta=0.01)    # (pasado el retraso)
 
     def test_con_shuffle_tambien_se_mide_el_que_sigue_y_ese_es_el_que_suena(self):
         self.cargar(A, B)

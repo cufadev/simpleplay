@@ -1,0 +1,78 @@
+# Builds the macOS versions (a .dmg for Intel and another for Apple Silicon) and checks that the app starts.
+# For now it only runs by hand from the Actions tab (workflow_dispatch) while the Mac version is being tested: it does
+# NOT attach anything to a release on its own. Once the .dmg files are tested, add back the trigger
+#   release:
+#     types: [published]
+# and they will be attached automatically, like the Windows zip.
+# The .dmg is not signed by Apple (only ad-hoc signed): macOS warns the first time, see packaging/build-macos.sh.
+name: Build macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the .dmg files to (leave empty to only build)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: intel
+            runner: macos-15-intel
+          - arch: apple-silicon
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build the app and the .dmg
+        env:
+          PYTHON: python
+        run: bash packaging/build-macos.sh
+
+      - name: Smoke test - the audio decoder works inside the build
+        env:
+          SIMPLEPLAY_AUDIO: "null"   # the runner has no sound card: use the simulated device
+        run: dist/simpleplay.app/Contents/MacOS/simpleplay --diagnose tests/silencio.mp3
+
+      - name: Smoke test - the window starts and stays up
+        env:
+          QT_QPA_PLATFORM: offscreen
+          SIMPLEPLAY_AUDIO: "null"
+        run: |
+          dist/simpleplay.app/Contents/MacOS/simpleplay tests/silencio.mp3 &
+          pid=$!
+          sleep 10
+          kill -0 "$pid" || { echo "simpleplay exited early"; exit 1; }
+          kill "$pid"
+
+      - name: Check the .dmg opens and holds the app
+        run: |
+          dmg=$(ls dist/simpleplay-*-macos-${{ matrix.arch }}.dmg)
+          hdiutil attach "$dmg" -nobrowse -mountpoint /tmp/simpleplay-dmg
+          test -d /tmp/simpleplay-dmg/simpleplay.app
+          test -L /tmp/simpleplay-dmg/Applications
+          hdiutil detach /tmp/simpleplay-dmg
+          echo "DMG=$dmg" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simpleplay-macos-${{ matrix.arch }}
+          path: ${{ env.DMG }}
+
+      - name: Attach to the release
+        if: inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: gh release upload "$TAG" "$DMG" --clobber

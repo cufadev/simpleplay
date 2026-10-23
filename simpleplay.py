@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import collections
 import difflib
+import functools
 import hashlib
 import json
 import math
@@ -42,8 +43,8 @@ from mutagen.mp3 import MP3
 from PySide6.QtCore import (Qt, QEvent, QTimer, QCoreApplication, QRectF, QPointF, QSize, Signal, QLocale, QUrl, QObject,
                             ClassInfo, Property, Slot, QMetaType,
                             QStandardPaths, QVariantAnimation, QEasingCurve, QPoint, QItemSelectionModel, QEventLoop)
-from PySide6.QtGui import (QShortcut, QKeySequence, QIcon, QFont, QFontMetrics, QPainter, QColor, QPixmap, QImage, QLinearGradient,
-                           QPainterPath, QPolygonF, QPen, QPalette, QRegion)
+from PySide6.QtGui import (QDesktopServices, QShortcut, QKeySequence, QIcon, QFont, QFontMetrics, QPainter, QColor, QPixmap, QImage, QLinearGradient,
+                           QPainterPath, QPolygonF, QPen, QPalette, QRegion, QCursor)
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QSlider, QAbstractButton, QListWidget,
                                QFileDialog, QFrame, QLayout, QMenu, QSizePolicy,
@@ -57,14 +58,45 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.5.3"
+VERSION = "1.6"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
-# El ecualizador gráfico y "Afinar al oído" también están escritos pero desactivados mientras se pulen:
-# SIMPLEPLAY_ECUALIZADOR=1 python simpleplay.py
-EQ_GRAFICO = bool(os.environ.get("SIMPLEPLAY_ECUALIZADOR"))
+# El ecualizador gráfico y "Afinar al oído": activos desde la 1.6; la 1.5.3 pública los lleva apagados.
+# SIMPLEPLAY_ECUALIZADOR=0 python simpleplay.py los apaga.
+EQ_GRAFICO = os.environ.get("SIMPLEPLAY_ECUALIZADOR", "1") != "0"
+# YouTube Music (versión de desarrollo): conectar la cuenta, ver Me gusta/playlists/búsqueda y agregar temas (se bajan y se
+# convierten a mp3 en una caché). Hace falta pip install -r requirements-youtube.txt y el módulo simpleplay_youtube.py al lado.
+# SIMPLEPLAY_YOUTUBE=1 python simpleplay.py
+YOUTUBE = bool(os.environ.get("SIMPLEPLAY_YOUTUBE"))
+URL_APOYO = "https://buymeacoffee.com/cufadev"   # donación voluntaria: el mismo enlace de la web y del README
 NARANJA = "#ff4e01"
+# Colores de acento a elegir (botón activo, selección, volumen del panel). Todos se leen bien con texto blanco encima.
+ACENTOS = {"naranja": ("Naranja", "Orange", NARANJA), "azul": ("Azul", "Blue", "#2f7bff"),
+           "verde": ("Verde", "Green", "#1fa75a"), "violeta": ("Violeta", "Purple", "#8a5cf6"),
+           "rosa": ("Rosa", "Pink", "#e83e8c"), "turquesa": ("Turquesa", "Teal", "#0fa3a3")}
+ACENTO = NARANJA        # el activo; lo cambia Player.poner_acento
+
+
+def tinte(css):
+    """Las hojas de estilo se escriben con el naranja de la marca; esto lo cambia por el acento elegido."""
+    if ACENTO == NARANJA:
+        return css
+    c = QColor(ACENTO)
+    return css.replace(NARANJA, ACENTO).replace("rgba(255,78,1,", f"rgba({c.red()},{c.green()},{c.blue()},")
+
+
+def _cubo(color, lado=14):
+    """Un círculo de color para el menú."""
+    pm = QPixmap(lado, lado)
+    pm.fill(Qt.transparent)
+    q = QPainter(pm)
+    q.setRenderHint(QPainter.Antialiasing)
+    q.setPen(Qt.NoPen)
+    q.setBrush(QColor(color))
+    q.drawEllipse(0, 0, lado, lado)
+    q.end()
+    return QIcon(pm)
 # Sombra alrededor de la tarjeta y de la barra: la ventana no tiene marco y el escritorio no le pone ninguna.
 # SIMPLEPLAY_SOMBRA=0 la apaga. Se dibuja en un margen transparente de la ventana (SOMBRA_MARGEN px por lado).
 SOMBRA = os.environ.get("SIMPLEPLAY_SOMBRA", "1") != "0"
@@ -89,6 +121,7 @@ def recurso(ruta):
 
 
 ESTADO = Path.home() / ".config" / "simpleplay" / "estado.json"
+ARCHIVO_ACENTO = ESTADO.parent / "acento"       # aparte de estado.json: se guarda aunque la lista esté vacía
 ESTADO_ANTIGUO = Path.home() / ".config" / "mp3player" / "estado.json"  # nombre previo a simpleplay
 
 # interfaz en español si el sistema está en español, en inglés en cualquier otro caso
@@ -892,7 +925,7 @@ class IconButton(QAbstractButton):
         p.setRenderHint(QPainter.Antialiasing)
         # gris translúcido (más claro con mouse encima / presionado) → naranja al activarse
         gris = (255, 255, 255, 55 + 35 * self.hov + 45 * self.pre)
-        nar = QColor(NARANJA)
+        nar = QColor(ACENTO)
         naranja = (nar.red(), nar.green(), nar.blue(), 235)
         bg = QColor(*(round(g + (n - g) * self.chk) for g, n in zip(gris, naranja)))
         p.setPen(Qt.NoPen)
@@ -1272,8 +1305,9 @@ class Card(QWidget):
             p.drawPixmap((w - esc.width()) // 2, (h - esc.height()) // 2, esc)
         else:
             g = QLinearGradient(0, 0, w, h)
-            g.setColorAt(0, QColor("#ff7a2e"))
-            g.setColorAt(1, QColor("#3a1200"))
+            c = QColor(ACENTO)
+            g.setColorAt(0, QColor("#ff7a2e") if ACENTO == NARANJA else c.lighter(130))
+            g.setColorAt(1, QColor("#3a1200") if ACENTO == NARANJA else QColor.fromHsvF(max(c.hueF(), 0.0), c.saturationF(), 0.23))
             p.fillRect(self.rect(), g)
 
     def paintEvent(self, e):
@@ -1674,6 +1708,137 @@ def _leer(gen, n):
 
 
 # ------------------------------------------------------------------------------------------------
+# Remuestreo. El dispositivo va fijo a 44,1 kHz (FS). Lo que no sea de 44,1 kHz (48, 96, 88,2, 32 kHz...) lo
+# convertía el remuestreador interno de miniaudio, que es lineal con un filtro de poco orden: a 10 kHz sale
+# 1,2 dB abajo, a 18 kHz 4,2 dB abajo y deja un alias a 14,1 kHz solo 13 dB debajo del tono. Este es un
+# remuestreador polifásico de fase lineal (sinc con ventana Kaiser): plano hasta ~20 kHz, más de 90 dB de
+# rechazo del alias, sin dependencias. Solo se usa con archivos que no son de 44,1 kHz; el resto pasa intacto.
+
+RECHAZO_DB = 96        # atenuación mínima de lo que cae por encima de la frecuencia de Nyquist de salida
+TRANSICION = 0.0465    # ancho de la banda de transición, en fracción de la frecuencia menor (2050 Hz a 44,1 kHz)
+_COLA_REMUESTREO = 2048
+
+
+def _razon(f_ent, f_sal):
+    g = math.gcd(f_ent, f_sal)
+    return f_sal // g, f_ent // g
+
+
+@functools.lru_cache(maxsize=8)
+def _tabla_remuestreo(f_ent, f_sal):
+    """(L, M, H, A): razón L/M, medio ancho del filtro (en muestras de entrada) y la matriz A de L filas. Un bloque de
+    L muestras de salida sale de M muestras nuevas de entrada: salida = A @ ventana, con una ventana de A.shape[1]
+    muestras que arranca H-1 antes del primer punto del bloque. Cada fila es el filtro sinc con ventana Kaiser de la
+    fase que le toca, desplazado donde corresponde."""
+    L, M = _razon(f_ent, f_sal)
+    parada = min(f_ent, f_sal) / 2                       # desde acá hay que rechazar
+    ancho = TRANSICION * min(f_ent, f_sal)
+    corte = (parada - ancho / 2) / f_ent                 # ciclos por muestra de entrada, en medio de la transición
+    dw = 2 * math.pi * ancho / f_ent
+    K = int(math.ceil((RECHAZO_DB - 8) / (2.285 * dw)))
+    H = max(4, min((K + 1) // 2, 256))
+    beta = 0.1102 * (RECHAZO_DB - 8.7)
+    q = np.arange(L)
+    i0, fase = (q * M) // L, (q * M) % L
+    k = np.arange(2 * H)[None, :]
+    tau = (fase / L)[:, None] + (H - 1 - k)              # distancia de cada muestra de entrada al punto de salida
+    h = 2 * corte * np.sinc(2 * corte * tau)
+    h = h * np.i0(beta * np.sqrt(np.clip(1 - (tau / H) ** 2, 0, None))) / np.i0(beta)
+    h /= h.sum(axis=1, keepdims=True)                    # cada fase deja pasar el continuo con ganancia exacta 1
+    A = np.zeros((L, int(i0[-1]) + 2 * H), np.float32)
+    for r in range(L):
+        A[r, i0[r]:i0[r] + 2 * H] = h[r]
+    return L, M, H, A
+
+
+class Remuestreador:
+    """Envuelve un generador estéreo float32 de miniaudio (en la frecuencia del archivo) y entrega la misma
+    interfaz (send(n) -> n frames) a FS. Si el origen se acaba, el último send() es corto y el siguiente corta."""
+    def __init__(self, origen, f_ent, f_sal=FS):
+        self.src, self.f_ent = origen, f_ent
+        self.L, self.M, self.H, self.A = _tabla_remuestreo(f_ent, f_sal)
+        self.buf = np.zeros((self.H - 1, 2), np.float32)  # antes del principio todo es silencio
+        self.base = -(self.H - 1)                         # índice (en muestras de entrada) de buf[0]
+        self.entrada = 0                                  # muestras reales leídas del origen
+        self.fin = False
+        self.b = 0                                        # próximo bloque de salida
+        self.cola = np.zeros((0, 2), np.float32)          # salida ya calculada y todavía no entregada
+        self.limite = None                                # al llegar el final: cuántas muestras de salida existen
+
+    def _bloques(self, nb):
+        """Calcula nb bloques más de salida y los agrega a la cola."""
+        L, M, A = self.L, self.M, self.A
+        ancho = A.shape[1]
+        ini = self.b * M - (self.H - 1)                   # primera muestra de entrada del primer bloque
+        ult = (self.b + nb - 1) * M - (self.H - 1) + ancho - 1
+        while not self.fin and self.base + len(self.buf) <= ult:
+            pedir = max(4096, ult + 1 - (self.base + len(self.buf)))
+            x = _leer(self.src, pedir)
+            self.entrada += len(x)
+            if len(x) < pedir:
+                self.fin = True
+                self.limite = -(-self.entrada * L // M)  # salidas con t < fin del archivo
+            if len(x):
+                self.buf = np.concatenate((self.buf, x))
+        falta = ult + 1 - (self.base + len(self.buf))
+        if falta > 0:                                     # pasado el final del archivo: silencio
+            self.buf = np.concatenate((self.buf, np.zeros((falta, 2), np.float32)))
+        v = np.lib.stride_tricks.sliding_window_view(self.buf, ancho, axis=0)    # (m, 2, ancho), sin copiar
+        X = v[ini - self.base::M][:nb]                    # (nb, 2, ancho): la ventana de cada bloque
+        Y = np.matmul(X, A.T)                             # (nb, 2, L)
+        y = np.ascontiguousarray(Y.transpose(0, 2, 1)).reshape(-1, 2)
+        if self.limite is not None:
+            y = y[:max(self.limite - self.b * L, 0)]
+        self.cola = np.concatenate((self.cola, y)) if len(self.cola) else y
+        self.b += nb
+        corte = (self.b) * M - (self.H - 1) - self.base   # lo que ya no hace falta del buffer
+        if corte > 0:
+            self.buf = self.buf[corte:]
+            self.base += corte
+
+    def send(self, n):
+        while len(self.cola) < n and not (self.limite is not None and self.b * self.L >= self.limite):
+            self._bloques(max(1, -(-max(_COLA_REMUESTREO, n - len(self.cola)) // self.L)))
+        if len(self.cola) == 0:
+            raise StopIteration
+        out, self.cola = self.cola[:n], self.cola[n:]
+        return out.tobytes()
+
+
+_frecuencias = {}
+
+
+def frecuencia_de(ruta):
+    """Frecuencia de muestreo del archivo (header solamente), o None si no se pudo saber."""
+    try:
+        clave = (ruta, os.stat(ruta).st_mtime_ns)
+    except OSError:
+        return None
+    if clave not in _frecuencias:
+        try:
+            f = MutagenFile(ruta)
+            fr = int(f.info.sample_rate) if f is not None and getattr(f.info, "sample_rate", 0) else None
+        except Exception:
+            fr = None
+        if len(_frecuencias) > 256:
+            _frecuencias.clear()
+        _frecuencias[clave] = fr
+    return _frecuencias[clave]
+
+
+def abrir_fuente(ruta, frame=0, frames_to_read=1024):
+    """Generador estéreo float32 a FS que empieza en `frame` (a FS). Lo que no es de 44,1 kHz pasa por el remuestreador."""
+    F32 = miniaudio.SampleFormat.FLOAT32
+    fr = frecuencia_de(ruta)
+    if not fr or fr == FS or not (4000 <= fr <= 384000) or _razon(fr, FS)[0] > 640:
+        return miniaudio.stream_file(ruta, output_format=F32, nchannels=2, sample_rate=FS,
+                                     frames_to_read=frames_to_read, seek_frame=frame)
+    g = miniaudio.stream_file(ruta, output_format=F32, nchannels=2, sample_rate=fr, frames_to_read=frames_to_read,
+                              seek_frame=round(frame * fr / FS))
+    return Remuestreador(g, fr)
+
+
+# ------------------------------------------------------------------------------------------------
 # Sonido: normalización de volumen, ecualizador y limitador. Corre al final del motor, antes del dispositivo.
 
 BANDAS_HZ = (31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
@@ -1789,23 +1954,38 @@ class Afinador:
         return {k: round(v, 2) for k, v in self.ejes.items()}
 OBJETIVO_LUFS = -16.0        # sonoridad a la que se lleva cada tema
 GANANCIA_MAX_DB, GANANCIA_MIN_DB = 9.0, -12.0
-LIMITE_SUAVE = 0.85          # por encima de esto el limitador empieza a comprimir (nunca pasa de 1.0)
+LIM_TECHO = 0.9              # el limitador no deja pasar picos de más de esto (-0,9 dBFS: queda margen para los picos entre muestras)
+LIM_ANTICIPO = 220           # muestras que mira hacia adelante (5 ms): el audio sale con ese retraso mientras la cadena está activa
+LIM_SUELTA_S = 0.1           # constante de tiempo con la que la ganancia vuelve a 1 después de un pico
+LIM_FUNDIDO = 4 * LIM_ANTICIPO   # fundido al prender o apagar el limitador (el retraso aparece o desaparece sin clicks)
 LARGO_SIN_MEDIR = 15 * 60    # los temas más largos (mezclas, sets) no se miden: ya son una sola pieza
 RAMPA_DB_S = 8.0             # cuando la medida llega con el tema sonando, la ganancia se acomoda a esta velocidad (dB por s)
-TAPS = 2047                  # largo del filtro del ecualizador (fase lineal; retraso de 1023 muestras = 23 ms)
+TAPS = 4095                  # largo del filtro del ecualizador (con fase mínima no agrega retraso: solo cuesta CPU)
+# Fase del ecualizador. "minima" (por defecto): la respuesta empieza de inmediato, sin retraso ni eco previo, y con el mismo
+# largo resuelve los graves bastante mejor (como un ecualizador analógico o de biquads). "lineal": fase lineal, el retraso
+# es de (TAPS-1)/2 muestras y la resolución en graves es menor. Para comparar de oído: SIMPLEPLAY_EQ_FASE=lineal
+FASE_EQ = "lineal" if os.environ.get("SIMPLEPLAY_EQ_FASE", "minima") == "lineal" else "minima"
 
 
 def _taps_ecualizador(gan_db, freqs=None):
-    """Filtro FIR de fase lineal que aplica una curva de ganancias (dB), interpolada en escala logarítmica. Por defecto
-    son las 10 bandas de los presets (BANDAS_HZ); con `freqs` puede ser cualquier tabla (frecuencia, dB), por ejemplo
-    la de un perfil de auriculares."""
-    m = 4096
+    """Filtro FIR que aplica una curva de ganancias (dB), interpolada en escala logarítmica. Por defecto son las 10
+    bandas de los presets (BANDAS_HZ); con `freqs` puede ser cualquier tabla (frecuencia, dB), por ejemplo la de un perfil
+    de auriculares. Fase mínima (ver FASE_EQ): se parte del logaritmo de la magnitud, se pliega el cepstro y se vuelve."""
+    m = 1 << 15
     f = np.fft.rfftfreq(m, 1 / FS)
     f[0] = 1.0
     curva = np.interp(np.log10(f), np.log10(BANDAS_HZ if freqs is None else freqs), gan_db)
-    h0 = np.fft.irfft(10 ** (curva / 20), n=m)               # respuesta de fase cero
-    medio = (TAPS - 1) // 2
-    h = np.concatenate([h0[-medio:], h0[:medio + 1]]) * np.hanning(TAPS)
+    if FASE_EQ == "lineal":
+        h0 = np.fft.irfft(10 ** (curva / 20), n=m)           # respuesta de fase cero
+        medio = (TAPS - 1) // 2
+        h = np.concatenate([h0[-medio:], h0[:medio + 1]]) * np.hanning(TAPS)
+        return h.astype(np.float32)
+    cepstro = np.fft.irfft(curva / 20 * math.log(10), n=m)   # cepstro real del logaritmo de la magnitud
+    pliegue = np.zeros(m)
+    pliegue[0], pliegue[1:m // 2], pliegue[m // 2] = 1, 2, 1  # duplica lo causal y anula lo anticausal
+    h = np.fft.irfft(np.exp(np.fft.rfft(cepstro * pliegue)), n=m)[:TAPS]
+    n = TAPS * 3 // 10                                        # la cola ya es casi nada: se baja suave hasta cero
+    h[-n:] *= 0.5 + 0.5 * np.cos(np.pi * np.arange(n) / n)
     return h.astype(np.float32)
 
 
@@ -1826,10 +2006,15 @@ class Cadena:
         self._pre_act = 1.0
         self._hist = np.zeros((TAPS - 1, 2), np.float32)
         self._cache_h = {}
+        self._lim_u = np.zeros((LIM_ANTICIPO - 1, 2), np.float32)     # audio que espera su turno (el retraso del limitador)
+        self._lim_r = np.ones(2 * (LIM_ANTICIPO - 1), np.float32)     # ganancia que pide cada muestra reciente
+        self._lim_def = 0.0               # cuánto falta para volver a ganancia 1 (1 - ganancia), baja con LIM_SUELTA_S
+        self._lim_vivo = False            # el limitador está corriendo (y el audio sale retrasado)
 
     @property
     def activa(self):
-        return self._h is not None or self._pend is not None or self._gan_obj != 1.0 or self._gan_act != 1.0
+        return (self._h is not None or self._pend is not None or self._gan_obj != 1.0 or self._gan_act != 1.0
+                or self._lim_vivo)
 
     def poner_ganancia(self, db, suave=False):
         """Ganancia del tema en dB. Con `suave`, se llega a ella de a poco (RAMPA_DB_S): para una medida que llega con el
@@ -1897,14 +2082,54 @@ class Cadena:
         if gan[0] != 1.0 or gan[-1] != 1.0 or pre[0] != 1.0 or pre[-1] != 1.0:
             y = y * (gan * pre).astype(np.float32)[:, None]
         self._gan_act, self._pre_act = gan_fin, pre_obj
-        # limitador suave: lo que pasa del umbral se curva hacia 1.0 en vez de recortarse
-        a = np.abs(y)
-        if a.max(initial=0.0) > LIMITE_SUAVE:
-            exceso = a > LIMITE_SUAVE
-            T, K = LIMITE_SUAVE, 1 - LIMITE_SUAVE
-            y = y.copy()
-            y[exceso] = np.sign(y[exceso]) * (T + K * np.tanh((a[exceso] - T) / K))
-        return y.astype(np.float32, copy=False)
+        base = self._h is not None or self._gan_obj != 1.0 or self._gan_act != 1.0
+        y = y.astype(np.float32, copy=False)
+        if not base and not self._lim_vivo:
+            return y                                   # nada que hacer: el audio pasa tal cual y sin retraso
+        arranca = not self._lim_vivo
+        if arranca:                                    # sin pasado: se llena el retraso con la primera muestra (sin saltos)
+            self._lim_u[:] = y[0]
+            self._lim_r[:] = min(1.0, LIM_TECHO / max(float(np.abs(y[0]).max()), 1e-9))
+        d = self._limitar(y)
+        cf = min(n, LIM_FUNDIDO)
+        r = np.minimum(np.arange(1, n + 1) / cf, 1.0).astype(np.float32)[:, None]
+        if arranca and base:                           # entra el limitador: del audio directo al retrasado
+            self._lim_vivo = True
+            directo = y * np.minimum(1.0, LIM_TECHO / np.maximum(np.abs(y).max(axis=1), 1e-9)).astype(np.float32)[:, None]
+            return (directo * (1 - r) + d * r).astype(np.float32)     # (el directo también respeta el techo)
+        if not base:                                   # sale: del retrasado al audio directo, y se reinicia
+            self._lim_vivo = False
+            self._lim_u[:] = 0.0
+            self._lim_r[:] = 1.0
+            self._lim_def = 0.0
+            return (d * (1 - r) + y * r).astype(np.float32)
+        return d
+
+    def _limitar(self, y):
+        """Limitador con anticipación: cada muestra sale LIM_ANTICIPO-1 muestras después de entrar, y en ese tiempo se mira
+        lo que viene. La ganancia baja de a poco para llegar justo al pico (sin distorsionar la onda) y vuelve a 1 despacio.
+        Es la misma para los dos canales, así la imagen estéreo no se corre. Nunca pasa de LIM_TECHO."""
+        n, LA = len(y), LIM_ANTICIPO
+        D = LA - 1
+        pico = np.abs(y).max(axis=1)
+        r = np.concatenate((self._lim_r, np.minimum(1.0, LIM_TECHO / np.maximum(pico, 1e-9)).astype(np.float32)))
+        u = np.concatenate((self._lim_u, y))
+        self._lim_r, self._lim_u = r[-2 * D:].copy(), u[-D:].copy()
+        if self._lim_def < 1e-4 and r.min() >= 1.0:
+            self._lim_def = 0.0
+            return u[:n]                               # nada que limitar: solo el retraso
+        m = np.lib.stride_tricks.sliding_window_view(r, LA).min(axis=1)       # el pedido más duro de los próximos LA
+        c = np.concatenate(([0.0], np.cumsum(m, dtype=np.float64)))
+        deficit = 1.0 - (c[LA:] - c[:-LA]) / LA                               # promedio móvil: el ataque llega en rampa
+        b = math.exp(-1.0 / (LIM_SUELTA_S * FS))                              # suelta: el déficit decae de a poco
+        q = np.empty(n)
+        for k in range(0, n, 4096):                                           # q[i] = max(d[j] * b**(i-j)), sin bucle por muestra
+            d = deficit[k:k + 4096]
+            e = b ** np.arange(len(d))
+            v = np.maximum.accumulate(d / e) * e
+            q[k:k + len(d)] = np.maximum(v, self._lim_def * b ** (np.arange(len(d)) + 1))
+            self._lim_def = float(q[k + len(d) - 1])
+        return u[:n] * (1.0 - q).astype(np.float32)[:, None]
 
 
 def _sonoridad(bloques):
@@ -2355,8 +2580,7 @@ class Motor(QObject):
                     return g
             except Exception as e:
                 log("salto por índice falló, se usa el lineal:", e)
-        return miniaudio.stream_file(ruta, output_format=F32, nchannels=2, sample_rate=FS,
-                                     frames_to_read=1024, seek_frame=frame)
+        return abrir_fuente(ruta, frame)
 
     @staticmethod
     def _fuente_indexada(idx, frame):
@@ -2380,7 +2604,9 @@ class Motor(QObject):
         if ini > pos:
             return None
         g = miniaudio.stream_any(FuenteMp3(mm, offs[k0]), source_format=miniaudio.FileFormat.MP3,
-                                 output_format=F32, nchannels=2, sample_rate=FS, frames_to_read=1024)
+                                 output_format=F32, nchannels=2, sample_rate=fr, frames_to_read=1024)
+        if fr != FS:
+            g = Remuestreador(g, fr)                           # el mismo remuestreo que el resto de los formatos
         _leer(g, round((pos - ini) * FS / fr))                 # descarta hasta el punto pedido
         return g
 
@@ -2506,13 +2732,13 @@ class DialogoAuriculares(QDialog):
         self.entradas = []
         self.setWindowTitle(tr("Buscar auriculares (AutoEq)", "Find headphones (AutoEq)"))
         self.resize(480, 440)
-        self.setStyleSheet("""QDialog { background: #1e1e22; } QLabel { color: #cfcfd4; }
+        self.setStyleSheet(tinte("""QDialog { background: #1e1e22; } QLabel { color: #cfcfd4; }
             QLineEdit { background: rgba(255,255,255,26); color: white; border: none; border-radius: 10px; padding: 8px 12px; }
             QListWidget { background: rgba(0,0,0,70); color: white; border: none; border-radius: 10px; outline: 0; padding: 4px; }
             QListWidget::item { padding: 7px 8px; border-radius: 6px; } QListWidget::item:selected { background: #ff4e01; }
             QPushButton { background: rgba(255,255,255,40); color: white; border: none; border-radius: 10px; padding: 8px 18px; }
             QPushButton:hover { background: rgba(255,255,255,75); } QPushButton:disabled { color: rgba(255,255,255,90); }
-            QPushButton#usar:enabled { background: #ff4e01; }""")
+            QPushButton#usar:enabled { background: #ff4e01; }"""))
         self.busca = QLineEdit()
         self.busca.setPlaceholderText(tr("Escribí el modelo, por ejemplo: ATH-M20x", "Type the model, e.g. ATH-M20x"))
         self.busca.setClearButtonEnabled(True)
@@ -2635,7 +2861,7 @@ class PanelLateral(QDialog):
         self._pegado = True
         self.setWindowFlags(self.TIPO | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setStyleSheet(ESTILO_PANEL)
+        self.setStyleSheet(tinte(ESTILO_PANEL))
         self.cuerpo = QFrame()
         self.cuerpo.setObjectName("cuerpo")
         self.lay = QVBoxLayout(self.cuerpo)
@@ -3032,9 +3258,10 @@ class Player(QWidget):
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAcceptDrops(True)
-        self.setStyleSheet(ESTILO)
+        self.setStyleSheet(tinte(ESTILO))
 
         self.pistas = []
+        self.acento = "naranja"
         self.actual = -1
         self.pausado = False
         self.duracion = 0.0
@@ -3160,15 +3387,33 @@ class Player(QWidget):
         botones.addStretch()
         botones.addWidget(self.btn_shuffle)
 
-        cl = QVBoxLayout(self.card)
-        cl.setContentsMargins(14, 14, 14, 16)
+        # tiempos, barra y botones viven en un contenedor transparente: se funden juntos y la portada queda limpia
+        self.controles = QWidget(self.card)
+        cl = QVBoxLayout(self.controles)
+        cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(4)
-        cl.addLayout(top)
-        cl.addStretch()
         cl.addLayout(tiempos)
         cl.addWidget(self.linea)
         cl.addSpacing(6)
         cl.addLayout(botones)
+        cc = QVBoxLayout(self.card)   # la píldora de arriba y sus dos iconos quedan siempre a la vista
+        cc.setContentsMargins(14, 14, 14, 16)
+        cc.setSpacing(4)
+        cc.addLayout(top)
+        cc.addStretch()
+        cc.addWidget(self.controles)
+        self.ef_controles = QGraphicsOpacityEffect(self.controles)
+        self.controles.setGraphicsEffect(self.ef_controles)
+        self.ef_controles.setEnabled(False)   # solo mientras dura el fundido (ver ef_texto)
+        self.ocultar_controles = True         # se esconden solos si no pasa nada (menú: Ocultar controles solos)
+        self._quietud = 0                     # ticks de 200 ms sin actividad
+        self._ult_cursor = None
+        self.vis_controles = 1.0
+        self.fundido_ctrl = QVariantAnimation(self)
+        self.fundido_ctrl.setDuration(350)
+        self.fundido_ctrl.setEasingCurve(QEasingCurve.InOutCubic)
+        self.fundido_ctrl.valueChanged.connect(self._fundir_controles)
+        self.fundido_ctrl.finished.connect(self._fin_fundido_controles)
 
         self.lista = QListWidget()
         self.lista.setFixedHeight(168)  # unas 5 filas
@@ -3388,12 +3633,26 @@ class Player(QWidget):
         menu.addAction(tr("Agregar una carpeta…", "Add a folder…"), self.abrir_carpeta)
         menu.addSeparator()
         menu.addAction(tr("Abrir lista…", "Open playlist…"), self.abrir_lista)
+        if YOUTUBE:
+            menu.addSeparator()
+            menu.addAction("YouTube Music…", self.abrir_youtube)
+            menu.addSeparator()
         if self.lista_actual:
             menu.addAction(tr(f"Guardar «{Path(self.lista_actual).stem}»", f"Save “{Path(self.lista_actual).stem}”"),
                            lambda: self.guardar_lista(self.lista_actual)).setEnabled(bool(self.pistas))
         menu.addAction(tr("Guardar lista como…", "Save playlist as…"),
                        lambda: self.guardar_lista()).setEnabled(bool(self.pistas))
         menu.exec(self.btn_abrir.mapToGlobal(QPoint(0, self.btn_abrir.height())))
+
+    def abrir_youtube(self):
+        try:
+            import simpleplay_youtube
+        except ImportError as e:
+            self._aviso(tr("Falta instalar: pip install -r requirements-youtube.txt", "Missing: pip install -r requirements-youtube.txt"), 5000)
+            log("youtube:", e)
+            return
+        cache = Path(QStandardPaths.writableLocation(QStandardPaths.CacheLocation)) / "youtube"
+        simpleplay_youtube.DialogoYouTube(self, tr, ESTADO.parent, cache).exec()
 
     def abrir_lista(self, ruta=None):
         """Reemplaza la lista actual por la de un archivo M3U/M3U8; avisa cuántas entradas no se encontraron."""
@@ -3697,7 +3956,7 @@ class Player(QWidget):
     # --- escoba: completar los datos de los temas elegidos ---
     def _preguntar(self, n):
         caja = QMessageBox(self)
-        caja.setStyleSheet(ESTILO_DIALOGO)
+        caja.setStyleSheet(tinte(ESTILO_DIALOGO))
         caja.setIcon(QMessageBox.Question)
         caja.setWindowTitle(tr("Completar datos", "Fill in track info"))
         caja.setText(tr(f"¿Buscar en MusicBrainz y escribir título, artista, álbum y portada en {n} archivo(s)?",
@@ -3762,7 +4021,7 @@ class Player(QWidget):
         sc = [r for r in res if r[1] == "sin_coincidencia"]
         er = [r for r in res if r[1] == "error"]
         caja = QMessageBox(self)
-        caja.setStyleSheet(ESTILO_DIALOGO)
+        caja.setStyleSheet(tinte(ESTILO_DIALOGO))
         caja.setIcon(QMessageBox.Information)
         caja.setWindowTitle(tr("Completar datos", "Fill in track info"))
         caja.setText(tr(f"{len(ok)} actualizado(s), {len(sc)} sin coincidencia, {len(er)} con error.",
@@ -4120,7 +4379,7 @@ class Player(QWidget):
                  "shuffle_ya": sorted(self._ya_sonaron),
                  "carpeta": self.carpeta_musica, "carpeta_listas": self.carpeta_listas,
                  "lista_actual": self.lista_actual, "orden_original": self.orden_original,
-                 "compacto": self.compacto, "normalizar": self.normalizar, "preset": self.preset,
+                 "compacto": self.compacto, "ocultar_controles": self.ocultar_controles, "normalizar": self.normalizar, "preset": self.preset,
                  "eq_personal": self.eq_personal}
         try:
             ESTADO.parent.mkdir(parents=True, exist_ok=True)
@@ -4132,6 +4391,7 @@ class Player(QWidget):
 
     def restaurar(self, con_pistas=True):
         """Carga la última sesión: muestra el tema (en pausa) y deja el play listo."""
+        self._cargar_acento()
         try:
             d = json.loads((ESTADO if ESTADO.exists() else ESTADO_ANTIGUO).read_text())
         except (OSError, ValueError):
@@ -4142,6 +4402,7 @@ class Player(QWidget):
             if isinstance(ya, list):
                 self._ya_sonaron = {r for r in ya if isinstance(r, str)}
         self.normalizar = bool(d.get("normalizar", True))
+        self.ocultar_controles = bool(d.get("ocultar_controles", True))
         ep = d.get("eq_personal")
         if EQ_GRAFICO and isinstance(ep, list) and len(ep) == len(BANDAS_HZ) and all(isinstance(x, (int, float)) for x in ep):
             self.eq_personal = [max(-LIM_BANDA_DB, min(LIM_BANDA_DB, float(x))) for x in ep]
@@ -4557,7 +4818,49 @@ class Player(QWidget):
             return
         self.saltar(min(max((self.posicion() + delta) / self.duracion, 0.0), 0.999))
 
+    SEGUNDOS_QUIETO = 4
+
+    def _vigilar_controles(self):
+        """Cada 200 ms: si suena un tema y nadie toca nada, los controles se funden y queda solo la portada.
+        Mover el mouse los trae de vuelta."""
+        cur = QCursor.pos()
+        movio = cur != self._ult_cursor
+        self._ult_cursor = cur
+        encima = self.controles.rect().contains(self.controles.mapFromGlobal(cur))
+        if (movio and self.frameGeometry().contains(cur)) or encima:   # sobre los controles nunca se esconden
+            self._quietud = 0
+        else:
+            self._quietud += 1
+        quiet = (self.ocultar_controles and self.actual >= 0 and not self.pausado and not self.compacto
+                 and not self.lista_abierta and not self.linea.arrastrando
+                 and QApplication.activePopupWidget() is None
+                 and self._quietud * 0.2 >= self.SEGUNDOS_QUIETO)
+        self._mostrar_controles(not quiet)
+
+    def _mostrar_controles(self, si):
+        meta = 1.0 if si else 0.0
+        if self.fundido_ctrl.state() == QVariantAnimation.Running:
+            if self.fundido_ctrl.endValue() == meta:
+                return
+        elif self.vis_controles == meta:
+            return
+        self.fundido_ctrl.stop()
+        self.ef_controles.setEnabled(True)
+        self.fundido_ctrl.setStartValue(self.vis_controles)
+        self.fundido_ctrl.setEndValue(meta)
+        self.fundido_ctrl.setDuration(180 if si else 450)   # vuelven rápido, se van despacio
+        self.fundido_ctrl.start()
+
+    def _fundir_controles(self, v):
+        self.vis_controles = v
+        self.ef_controles.setOpacity(v)
+
+    def _fin_fundido_controles(self):
+        if self.vis_controles >= 1.0:
+            self.ef_controles.setEnabled(False)
+
     def tick(self):
+        self._vigilar_controles()
         if self.actual < 0:
             return
         if self.linea.arrastrando:
@@ -4625,9 +4928,60 @@ class Player(QWidget):
         menu.addAction(tr("Abrir carpeta…", "Open folder…"), self.abrir_carpeta)
         menu.addAction(tr("Modo normal", "Normal mode") if self.compacto else tr("Modo compacto", "Compact mode"),
                        lambda: self.poner_compacto(not self.compacto))
+        col = menu.addMenu(tr("Color de acento", "Accent color"))
+        for clave, (es, en, hexa) in ACENTOS.items():
+            b = col.addAction(_cubo(hexa), tr(es, en))
+            b.setCheckable(True)
+            b.setChecked(self.acento == clave)
+            b.triggered.connect(lambda _=False, c=clave: self.poner_acento(c))
+        oc = menu.addAction(tr("Ocultar controles solos", "Hide controls automatically"))
+        oc.setCheckable(True)
+        oc.setChecked(self.ocultar_controles)
+        oc.triggered.connect(self.poner_ocultar_controles)
         self._menu_sonido(menu)
+        menu.addSeparator()
+        menu.addAction(tr("Apoyar el proyecto…", "Support the project…"), self.apoyar)
         menu.addAction(tr("Cerrar", "Close"), self.close)
         menu.exec(e.globalPos())
+
+    def poner_ocultar_controles(self, si):
+        self.ocultar_controles = bool(si)
+        self._quietud = 0
+        if not si:
+            self._mostrar_controles(True)
+        self.guardar_estado()
+
+    def poner_acento(self, clave, guardar=True):
+        """Cambia el color de acento en toda la app (la ventana, los paneles abiertos y lo que se pinta a mano)."""
+        global ACENTO
+        if clave not in ACENTOS:
+            return
+        ACENTO, self.acento = ACENTOS[clave][2], clave
+        self.setStyleSheet(tinte(ESTILO))
+        for panel in self.findChildren(PanelLateral):
+            panel.setStyleSheet(tinte(ESTILO_PANEL))
+        for w in self.findChildren(QWidget):
+            w.update()
+        self.update()
+        if guardar:
+            try:
+                ARCHIVO_ACENTO.parent.mkdir(parents=True, exist_ok=True)
+                ARCHIVO_ACENTO.write_text(clave)
+            except OSError:
+                pass
+
+    def tinte(self, css):
+        return tinte(css)
+
+    def _cargar_acento(self):
+        try:
+            self.poner_acento(ARCHIVO_ACENTO.read_text().strip(), guardar=False)
+        except OSError:
+            pass
+
+    def apoyar(self):
+        """Abre la página de donaciones en el navegador (es voluntario: nada en la ventana lo pide)."""
+        QDesktopServices.openUrl(QUrl(URL_APOYO))
 
 
 if __name__ == "__main__":

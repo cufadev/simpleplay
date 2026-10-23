@@ -102,6 +102,67 @@ class TestReproduccion(Base):
         self.assertEqual(self.fines, [])
 
 
+class TestRemuestreo(unittest.TestCase):
+    """El remuestreador propio (lo que no es de 44,1 kHz): respuesta plana, sin alias y con el largo justo."""
+    class Gen:
+        def __init__(self, x):
+            self.x, self.i = x, 0
+
+        def send(self, n):
+            a = self.x[self.i:self.i + n]
+            self.i += n
+            if len(a) == 0:
+                raise StopIteration
+            return np.ascontiguousarray(a, np.float32).tobytes()
+
+    def pasar(self, x, f_ent):
+        return S._leer(S.Remuestreador(self.Gen(x), f_ent), len(x) * 2)
+
+    def tono(self, f, f_ent, seg=2):
+        s = np.sin(2 * np.pi * f / f_ent * np.arange(f_ent * seg)).astype(np.float32)
+        return np.stack([s, s], 1)
+
+    def test_respuesta_plana_hasta_20k_y_sin_alias(self):
+        for f in (1000, 10000, 18000, 20000):
+            y = self.pasar(self.tono(f, 48000), 48000)[4410:-4410, 0].astype(np.float64)
+            F = np.abs(np.fft.rfft(y * np.hanning(len(y))))
+            fr = np.fft.rfftfreq(len(y), 1 / S.FS)
+            k = np.argmin(np.abs(fr - f))
+            pico = F[k - 3:k + 4].max()
+            ref = np.abs(np.fft.rfft(np.sin(2 * np.pi * f / S.FS * np.arange(len(y))) * np.hanning(len(y))))[k - 3:k + 4].max()
+            self.assertAlmostEqual(20 * np.log10(pico / ref), 0.0, delta=0.05, msg=f"{f} Hz")
+            self.assertLess(20 * np.log10(F[np.abs(fr - f) > 300].max() / pico), -90, f"alias con {f} Hz")
+
+    def test_lo_que_pasa_de_nyquist_se_rechaza(self):
+        y = self.pasar(self.tono(23000, 48000), 48000)
+        self.assertLess(float(np.abs(y[3000:-3000]).max()), 1e-4)
+
+    def test_largo_exacto_en_las_frecuencias_comunes(self):
+        for f_ent in (22050, 32000, 48000, 88200, 96000, 192000):
+            x = np.zeros((f_ent + 37, 2), np.float32)
+            self.assertAlmostEqual(len(self.pasar(x, f_ent)), round(len(x) * S.FS / f_ent), delta=1, msg=str(f_ent))
+
+    def test_da_lo_mismo_pidiendo_en_trozos_de_cualquier_tamano(self):
+        x = (np.random.default_rng(3).standard_normal((48000, 2)) * 0.1).astype(np.float32)
+        entero = self.pasar(x, 48000)
+        r, partes, tam, k = S.Remuestreador(self.Gen(x), 48000), [], [1, 7, 1024, 333, 4096, 2], 0
+        while True:
+            try:
+                partes.append(np.frombuffer(r.send(tam[k % len(tam)]), np.float32).reshape(-1, 2))
+            except StopIteration:
+                break
+            k += 1
+        self.assertTrue(np.array_equal(np.concatenate(partes), entero))
+
+    def test_entradas_cortas_y_vacia(self):
+        for n in (0, 1, 5, 100):
+            self.assertAlmostEqual(len(self.pasar(np.zeros((n, 2), np.float32), 48000)), round(n * S.FS / 48000), delta=1)
+
+    def test_44k_no_se_toca(self):
+        self.assertIsInstance(S.abrir_fuente(str(CORPUS / "tono_44k.mp3")), type(miniaudio.stream_file(str(CORPUS / "tono_44k.mp3"))))
+        self.assertIsInstance(S.abrir_fuente(str(CORPUS / "tono_48k.mp3")), S.Remuestreador)
+
+
 class TestPausa(Base):
     def test_pausa_silencia_congela_y_reanuda_sin_clicks(self):
         self.m.cargar(str(CORPUS / "tono_44k.mp3"))
@@ -531,8 +592,8 @@ class TestCadena(unittest.TestCase):
         c = S.Cadena()
         c.poner_ganancia(9.0)
         y = self.pasar(c, self.tono(1000, 0.9))
-        self.assertLessEqual(float(np.abs(y).max()), 1.0)
-        self.assertGreater(float(np.abs(y).max()), 0.9)       # y sí sube: comprime, no aplasta
+        self.assertLessEqual(float(np.abs(y).max()), S.LIM_TECHO + 1e-6)
+        self.assertGreater(float(np.abs(y).max()), S.LIM_TECHO - 0.01)   # y sí sube: comprime hasta el techo, no aplasta
 
     def test_cambiar_de_preset_en_marcha_no_hace_clicks(self):
         c = S.Cadena()
@@ -650,6 +711,121 @@ class TestRendimiento(unittest.TestCase):
         self.assertTrue(np.array_equal(y[-4410 * 5:], x[-4410 * 5:]))   # y el audio pasa tal cual otra vez
         natural = 2 * np.pi * 440 / S.FS * 0.3
         self.assertLess(float(np.abs(np.diff(y[:, 0])).max()), natural * 1.5)
+
+
+class TestLimitador(unittest.TestCase):
+    """El limitador con anticipación de la cadena: techo firme, sin distorsión, igual en cualquier tamaño de bloque."""
+    @staticmethod
+    def tono(f, a, seg=2.0):
+        x = (a * np.sin(2 * np.pi * f * np.arange(int(S.FS * seg)) / S.FS)).astype(np.float32)
+        return np.stack([x, x], 1)
+
+    @staticmethod
+    def pasar(c, x, bloque=1024):
+        return np.concatenate([c.procesar(x[i:i + bloque]) for i in range(0, len(x), bloque)])
+
+    def cadena(self, db):
+        c = S.Cadena()
+        c.poner_ganancia(db)
+        return c
+
+    def test_el_techo_vale_siempre_hasta_con_ruido_muy_fuerte(self):
+        x = (np.random.default_rng(5).standard_normal((S.FS * 2, 2)) * 0.5).astype(np.float32)
+        y = self.pasar(self.cadena(9.0), x)
+        self.assertLessEqual(float(np.abs(y).max()), S.LIM_TECHO + 1e-6)
+
+    def test_un_tono_limitado_no_se_distorsiona(self):
+        y = self.pasar(self.cadena(6.0), self.tono(1000, 0.5, 3.0))[S.FS:, 0].astype(np.float64)
+        F = np.abs(np.fft.rfft(y * np.hanning(len(y))))
+        fr = np.fft.rfftfreq(len(y), 1 / S.FS)
+        f1 = F[np.argmin(np.abs(fr - 1000)) - 3:np.argmin(np.abs(fr - 1000)) + 4].max()
+        for h in (2, 3, 5):
+            k = np.argmin(np.abs(fr - 1000 * h))
+            self.assertLess(20 * np.log10(F[k - 3:k + 4].max() / f1), -90, f"armónico {h}")
+
+    def test_da_lo_mismo_con_bloques_de_cualquier_tamano(self):
+        t = np.arange(S.FS * 3) / S.FS
+        x = (self.tono(100, 0.5, 3.0) * (1 + 0.8 * np.sin(2 * np.pi * 3 * t))[:, None]).astype(np.float32)
+        ref = self.pasar(self.cadena(6.0), x, 4410)[S.FS:]   # pasada la rampa inicial y la memoria de la suelta
+        for b in (64, 333, 1024, 8192):
+            self.assertEqual(float(np.abs(self.pasar(self.cadena(6.0), x, b)[S.FS:] - ref).max()), 0.0, f"bloque {b}")
+
+    def test_los_dos_canales_bajan_juntos(self):
+        x = np.zeros((S.FS, 2), np.float32)
+        x[:, 1] = 0.2 * np.sin(2 * np.pi * 500 * np.arange(S.FS) / S.FS)
+        x[20000:20100, 0] = 1.4
+        y = self.pasar(self.cadena(0.1), x)
+        D = S.LIM_ANTICIPO - 1
+        gan = 10 ** (0.1 / 20)
+        g_quieto = np.abs(y[D + 40000:D + 42000, 1]).max() / (np.abs(x[40000:42000, 1]).max() * gan)   # lejos del golpe: sin reducción
+        g_golpe = np.abs(y[D + 20000:D + 20400, 1]).max() / (np.abs(x[20000:20400, 1]).max() * gan)
+        self.assertAlmostEqual(g_quieto, 1.0, delta=0.01)
+        self.assertLess(g_golpe, 0.75)                                          # el canal tranquilo también bajó con el golpe
+
+    def test_la_ganancia_vuelve_a_uno_despues_de_un_pico(self):
+        x = self.tono(440, 0.3, 3.0)
+        x[20000:20050] = 1.5
+        y = self.pasar(self.cadena(0.1), x)
+        D = S.LIM_ANTICIPO - 1
+        i = S.FS * 2
+        self.assertTrue(np.allclose(y[i + D:i + D + 4000], x[i:i + 4000] * 10 ** (0.1 / 20), atol=1e-4))
+
+    def test_prender_y_apagar_la_cadena_no_hace_clicks(self):
+        x = self.tono(440, 0.3, 3.0)
+        c, sal = S.Cadena(), []
+        for i in range(0, len(x), 1024):
+            if i == 1024 * 40:
+                c.poner_ganancia(3.0)
+            if i == 1024 * 80:
+                c.poner_ganancia(0.0)
+            sal.append(c.procesar(x[i:i + 1024]))
+        y = np.concatenate(sal)
+        self.assertLess(float(np.abs(np.diff(y[:, 0])).max()), 2 * np.pi * 440 / S.FS * 0.3 * 1.5)
+        self.assertFalse(c.activa)
+        self.assertTrue(np.array_equal(y[-4410:], x[-4410:]))                  # apagada: el audio vuelve tal cual, sin retraso
+
+    def test_sin_nada_que_hacer_el_audio_pasa_intacto(self):
+        c, x = S.Cadena(), self.tono(440, 0.95, 1.0)
+        self.assertTrue(np.array_equal(c.procesar(x), x))
+
+
+class TestPrecisionDeGraves(unittest.TestCase):
+    """El filtro del ecualizador cumple la curva pedida también en los graves, sin retraso."""
+    def respuesta(self, h, f0):
+        f = np.fft.rfftfreq(65536, 1 / S.FS)
+        return 20 * np.log10(np.abs(np.fft.rfft(h, 65536))[np.argmin(np.abs(f - f0))] + 1e-12)
+
+    def test_una_banda_de_graves_llega_casi_a_lo_pedido(self):
+        if S.FASE_EQ != "minima":
+            self.skipTest("solo con la fase mínima (la lineal tiene menos resolución en graves)")
+        for k, f0 in ((0, 31), (1, 62), (2, 125)):
+            g = [0.0] * 10
+            g[k] = 6.0
+            self.assertGreater(self.respuesta(S._taps_ecualizador(g), f0), 5.7, f"+6 dB en {f0} Hz")   # antes: 4,8 / 4,2 / 5,1
+            g[k] = -6.0
+            self.assertLess(self.respuesta(S._taps_ecualizador(g), f0), -5.7, f"-6 dB en {f0} Hz")
+
+    def test_los_presets_salen_clavados(self):
+        f = np.fft.rfftfreq(65536, 1 / S.FS)
+        marca = (f >= 25) & (f <= 20000)
+        for nombre, g in S.PRESETS.items():
+            if not any(g):
+                continue
+            H = 20 * np.log10(np.abs(np.fft.rfft(S._taps_ecualizador(g), 65536)) + 1e-12)
+            pedido = np.interp(np.log10(f[marca]), np.log10(S.BANDAS_HZ), g)
+            self.assertLess(float(np.abs(H[marca] - pedido).max()), 0.15 if S.FASE_EQ == "minima" else 0.5, nombre)
+
+    def test_sin_retraso_con_fase_minima(self):
+        if S.FASE_EQ != "minima":
+            self.skipTest("solo con la fase mínima")
+        h = S._taps_ecualizador(S.PRESETS["graves"])
+        self.assertLess(int(np.argmax(np.abs(h))), 50)               # la respuesta empieza al principio, no en el medio
+        c = S.Cadena()
+        c.poner_eq(S.PRESETS["graves"])
+        x = np.zeros((4410, 2), np.float32)
+        x[1000] = 1.0                                                  # un impulso
+        y = np.concatenate([c.procesar(x), c.procesar(np.zeros_like(x))])
+        self.assertLess(abs(int(np.argmax(np.abs(y[:, 0]))) - (1000 + S.LIM_ANTICIPO - 1)), 5)   # el EQ no agrega nada: solo el retraso del limitador
 
 
 class TestPerfilesDeAuriculares(unittest.TestCase):
