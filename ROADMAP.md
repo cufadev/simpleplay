@@ -210,6 +210,19 @@ It could be a mode in Settings ("Player / Bluetooth receiver / USB DAC"). The US
 board; the Bluetooth one means changing the chip (see the limits above) and is worth deciding together with how the
 player will talk to Bluetooth headphones.
 
+### Getting music onto the player over Wi-Fi (idea, 2026-10-24, not started)
+Receive songs by Wi-Fi instead of taking the SD card out. Two steps:
+1. **Receive from Tarab Player or the phone (home network).** Same idea as Mosquito: the player serves a small HTTP
+   endpoint (upload to the SD card, with the key in the URL and private-network-only clients), and the desktop app gets a
+   "Send to Pocket" action (a track, an album or a playlist). Needs: write to the SD in chunks, a free-space check, rebuild
+   the track list and the cached thumbnails afterwards, and a way to resume a cut transfer. Server off by default.
+2. **Later: sync with a streaming account for offline listening (only an idea).** Log in to the user's account and download
+   tracks to listen without a connection. **Check first whether it is allowed:** most services protect downloads with DRM
+   and their terms forbid saving files outside their own apps, so it may not be possible, or only through an official API
+   or a service that sells DRM-free files. Candidates to review: Bandcamp or Qobuz purchases (DRM-free), Navidrome or
+   Jellyfin on the user's own server (see the Navidrome idea), podcasts and RSS. Do not build anything until the terms
+   and the DRM question are clear.
+
 ### Software
 - First try: the **ESP32-audioI2S** library (mp3, FLAC, WAV, AAC, tags, external I2S DAC); the serious route is
   **ESP-ADF**. 24-bit/96 kHz FLAC has to be tested, 16-bit/44.1 kHz should be comfortable.

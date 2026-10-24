@@ -5,6 +5,19 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
 
 ## [Unreleased]
 
+### Added
+- **Recognize tracks by their sound (the broom, still switched off).** When the text search finds nothing, the track is
+  fingerprinted with Chromaprint (`fpcalc`) and looked up on AcoustID; the edition is then chosen with the same rules as
+  before (studio albums only, never compilations or live versions). Needs your own AcoustID key in
+  `~/.config/simpleplay/acoustid.key` (or `SIMPLEPLAY_ACOUSTID`) and `fpcalc` installed.
+- **Remove duplicate tracks** (`tools/quitar_duplicados.py`, or `tools/limpiar_biblioteca.py --duplicados`). Finds the same
+  track in several files and keeps the one with the best audio quality (lossless first, then bitrate); the others go to the
+  trash. It only shows what it would do unless `--aplicar` is given. Remixes and live versions are not treated as duplicates.
+
+### Changed
+- **Better cover art.** Cover Art Archive at 1200 px first, then 500 px; if the album has none or only a small one
+  (under 600 px), Deezer (1000 px, matched by artist and album, never a compilation) and the larger one is kept.
+
 ## [1.7] - 2026-10-23
 
 ### Added

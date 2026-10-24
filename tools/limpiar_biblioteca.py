@@ -14,6 +14,8 @@ Uso (desde la carpeta del proyecto, con su entorno de Python):
     python tools/limpiar_biblioteca.py CARPETA                  muestra qué cambiaría; NO toca nada
     python tools/limpiar_biblioteca.py CARPETA --aplicar        escribe título y artista limpios
     python tools/limpiar_biblioteca.py CARPETA --musicbrainz    además busca álbum, año y portada (internet)
+    python tools/limpiar_biblioteca.py CARPETA --duplicados     antes, quita los temas repetidos y deja el de mejor calidad
+                                                                (ver tools/quitar_duplicados.py; con --aplicar van a la papelera)
     python tools/limpiar_biblioteca.py --deshacer               devuelve el último lote a como estaba
 
 Los archivos se escriben a través de una copia temporal y antes se guardan las etiquetas y la portada
@@ -27,6 +29,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # no abre ninguna ventana
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mutagen.id3 import ID3, ID3NoHeaderError  # noqa: E402
 from mutagen.mp3 import MP3  # noqa: E402
@@ -47,7 +50,7 @@ def proponer(ruta, usar_mb):
     """-> (estado, datos, detalle). estado: 'cambia', 'limpio', 'sin_datos' o 'sin_coincidencia'."""
     tit, art = etiquetas(ruta)
     cands = sp.candidatos(ruta, tit, art)
-    if not cands:
+    if not cands and not (usar_mb and sp.clave_acoustid()):
         return "sin_datos", None, "no se pudo deducir un artista con seguridad (sin artista en el nombre o formato dudoso)"
     if usar_mb:
         try:
@@ -58,6 +61,9 @@ def proponer(ruta, usar_mb):
             info = sp.buscar_mb(artista, titulo, dur)
             if info:
                 return _comparar(tit, art, info), info, ""
+        info = sp.buscar_acoustid(ruta, dur)   # por el sonido: necesita la clave de AcoustID y fpcalc
+        if info:
+            return _comparar(tit, art, info), info, "reconocido por el sonido"
         return "sin_coincidencia", None, "MusicBrainz no tiene una coincidencia confiable"
     artista, titulo = cands[0]
     return _comparar(tit, art, {"titulo": titulo, "artista": artista}), {"titulo": titulo, "artista": artista}, ""
@@ -72,6 +78,7 @@ def main():
     ap.add_argument("carpeta", nargs="?", help="carpeta con los mp3 (se revisan también las subcarpetas)")
     ap.add_argument("--aplicar", action="store_true", help="escribir los cambios (por defecto solo se muestran)")
     ap.add_argument("--musicbrainz", action="store_true", help="buscar álbum, año y portada en MusicBrainz (internet, ~6 s por tema)")
+    ap.add_argument("--duplicados", action="store_true", help="antes de limpiar, quitar los temas repetidos y dejar el de mejor calidad")
     ap.add_argument("--deshacer", action="store_true", help="deshacer el último lote aplicado")
     ap.add_argument("--si", action="store_true", help="no pedir confirmación al aplicar")
     ap.add_argument("--limite", type=int, help="procesar solo los primeros N archivos (para probar)")
@@ -96,7 +103,17 @@ def main():
     if not carpeta.is_dir():
         print(f"No existe la carpeta: {carpeta}")
         return 2
-    archivos = sorted(p for p in carpeta.rglob("*") if p.suffix.lower() == ".mp3")
+    if a.duplicados:
+        import quitar_duplicados as qd
+        total, grupos, quitar_rutas = qd.revisar(carpeta)
+        qd.mostrar(grupos)
+        print(f"\n{len(grupos)} tema(s) repetido(s) en {total} archivos de audio: se quitan {len(quitar_rutas)}.")
+        if a.aplicar and quitar_rutas:
+            print(f"{qd.quitar(quitar_rutas)} archivo(s) mandados a la papelera.\n")
+        quitadas = set(quitar_rutas)
+    else:
+        quitadas = set()
+    archivos = sorted(p for p in carpeta.rglob("*") if p.suffix.lower() == ".mp3" and p not in quitadas)
     if a.limite:
         archivos = archivos[:a.limite]
     if not archivos:

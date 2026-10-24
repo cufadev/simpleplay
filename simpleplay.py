@@ -12,6 +12,7 @@ import random
 import re
 import shutil
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -620,21 +621,133 @@ def buscar_mb(artista, titulo, duracion=None):
             "anio": ((ed or {}).get("date") or "")[:4] or None, "rg": rg, "release": (ed or {}).get("id")}
 
 
-def descargar_portada(info):
-    """Portada de 500 px del álbum desde Cover Art Archive -> (bytes, mime) o None."""
-    for tipo, mbid in (("release-group", info.get("rg")), ("release", info.get("release"))):
-        if not mbid:
-            continue
-        try:
-            time.sleep(0.3)
-            datos = _http(f"https://coverartarchive.org/{tipo}/{mbid}/front-500", binario=True)
-            if datos[:2] == b"\xff\xd8":
-                return datos, "image/jpeg"
-            if datos[:4] == b"\x89PNG":
-                return datos, "image/png"
-        except urllib.error.HTTPError:
-            continue  # ese álbum no tiene portada
+def _imagen(datos):
+    """(bytes, mime) si los bytes son un JPEG o un PNG; si no, None."""
+    if datos[:2] == b"\xff\xd8":
+        return datos, "image/jpeg"
+    if datos[:4] == b"\x89PNG":
+        return datos, "image/png"
     return None
+
+
+def portada_deezer(artista, album):
+    """Portada de 1000 px de Deezer (sin clave) -> (bytes, mime) o None. Solo si el artista y el álbum coinciden y no es un recopilatorio."""
+    if not (artista and album):
+        return None
+    try:
+        q = urllib.parse.urlencode({"q": f'artist:"{_q(artista)}" album:"{_q(album)}"', "limit": 10})
+        for d in _http("https://api.deezer.com/search/album?" + q).get("data", []):
+            if d.get("record_type") == "compile" or not d.get("cover_xl"):
+                continue
+            if parecido(d.get("title", ""), album) < UMBRAL_TEXTO or parecido((d.get("artist") or {}).get("name", ""), artista) < 0.85:
+                continue
+            img = _imagen(_http(d["cover_xl"], binario=True))
+            if img:
+                return img
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        pass
+    return None
+
+
+def _lado_corto(img):
+    """Lado menor en píxeles de una imagen (bytes, mime); 0 si no se puede leer."""
+    q = QImage.fromData(img[0])
+    return min(q.width(), q.height())
+
+
+def descargar_portada(info):
+    """La mejor portada del álbum -> (bytes, mime) o None.
+
+    Primero Cover Art Archive (1200 px y, si no hay, 500 px), del álbum de estudio ya elegido (nunca de un
+    recopilatorio). Si ese álbum no tiene portada, o la tiene chica (menos de 600 px), se prueba Deezer (1000 px)
+    buscando por artista y álbum, y se queda la más grande.
+    """
+    mejor = None
+    for tipo, mbid in (("release-group", info.get("rg")), ("release", info.get("release"))):
+        if not mbid or mejor:
+            continue
+        for tam in ("front-1200", "front-500"):
+            try:
+                time.sleep(0.3)
+                mejor = _imagen(_http(f"https://coverartarchive.org/{tipo}/{mbid}/{tam}", binario=True))
+                if mejor:
+                    break
+            except urllib.error.HTTPError:
+                continue  # ese álbum no tiene portada de ese tamaño
+    if mejor and _lado_corto(mejor) >= 600:
+        return mejor
+    otra = portada_deezer(info.get("artista"), info.get("album"))
+    if otra and (not mejor or _lado_corto(otra) > _lado_corto(mejor)):
+        return otra
+    return mejor
+
+
+# --- reconocer el tema por su sonido (AcoustID + Chromaprint) ---
+def clave_acoustid():
+    """La clave de aplicación de AcoustID: variable SIMPLEPLAY_ACOUSTID o el archivo ~/.config/simpleplay/acoustid.key."""
+    c = os.environ.get("SIMPLEPLAY_ACOUSTID", "").strip()
+    if not c:
+        try:
+            c = (ESTADO.parent / "acoustid.key").read_text().strip()
+        except OSError:
+            c = ""
+    return c
+
+
+def _fpcalc():
+    """Ruta de fpcalc (Chromaprint): junto al ejecutable empaquetado o en el PATH; None si no está."""
+    propio = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / ("fpcalc.exe" if sys.platform == "win32" else "fpcalc")
+    return str(propio) if propio.exists() else shutil.which("fpcalc")
+
+
+def huella(ruta):
+    """(duración en segundos, huella) del audio con fpcalc, o None si no se puede."""
+    exe = _fpcalc()
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, "-json", str(ruta)], capture_output=True, text=True, timeout=60).stdout
+        d = json.loads(out)
+        return int(d["duration"]), d["fingerprint"]
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError):
+        return None
+
+
+def buscar_acoustid(ruta, duracion=None):
+    """Reconoce el tema por su sonido -> mismo resultado que buscar_mb, o None si no hay una coincidencia confiable.
+
+    AcoustID da la grabación de MusicBrainz (solo sale una huella corta, nunca el audio); de ahí se elige la edición
+    con el mismo criterio que la búsqueda por texto, así que tampoco acepta recopilatorios ni en vivo.
+    """
+    clave = clave_acoustid()
+    h = huella(ruta) if clave else None
+    if not h:
+        return None
+    seg, fp = h
+    datos = _http("https://api.acoustid.org/v2/lookup?" + urllib.parse.urlencode(
+        {"client": clave, "format": "json", "duration": seg, "fingerprint": fp, "meta": "recordings"}))
+    mejores = sorted((r for r in datos.get("results", []) if r.get("score", 0) >= 0.9 and r.get("recordings")),
+                     key=lambda r: -r["score"])
+    if not mejores:
+        return None
+    candidatas = []
+    for rec in mejores[0]["recordings"][:5]:
+        _esperar_mb()
+        r = _http(f"https://musicbrainz.org/ws/2/recording/{rec['id']}?" + urllib.parse.urlencode(
+            {"inc": "artist-credits+releases+release-groups", "fmt": "json"}))
+        largo = (r.get("length") or 0) / 1000
+        diferencia = abs(largo - duracion) if duracion and largo else 0
+        ed = mejor_edicion(r)
+        en_vivo = bool(re.search(r"live|demo|remix|acoustic|karaoke|instrumental|session|bootleg", r.get("disambiguation", ""), re.I))
+        creditos = r.get("artist-credit") or []
+        completo = "".join(c.get("name", "") + c.get("joinphrase", "") for c in creditos)
+        candidatas.append((en_vivo, _nivel(ed), diferencia > 15, _fecha_orden((ed or {}).get("date")), r, completo, ed))
+    en_vivo, nivel, _, _, r, completo, ed = min(candidatas, key=lambda x: x[:4])
+    if en_vivo or nivel > 1:
+        return None
+    rg = ((ed or {}).get("release-group") or {}).get("id")
+    return {"titulo": r["title"], "artista": completo, "album": (ed or {}).get("title"),
+            "anio": ((ed or {}).get("date") or "")[:4] or None, "rg": rg, "release": (ed or {}).get("id")}
 
 
 def guardar_original(carpeta, n, ruta):
@@ -720,14 +833,19 @@ def etiquetar_archivo(ruta, carpeta_undo, n):
     art = str(t["TPE1"]) if t is not None and "TPE1" in t else ""
     try:
         duracion = duracion_de(ruta) or None
+        info = None
         for artista, titulo in candidatos(ruta, tit, art):
             info = buscar_mb(artista, titulo, duracion)
             if info:
-                portada = descargar_portada(info)
-                guardar_original(carpeta_undo, n, ruta)
-                escribir_etiquetas(ruta, info, portada)
-                return "ok", f"{info['artista']} - {info['titulo']}" + (f" ({info['album']})" if info.get("album") else "") \
-                    + ("" if portada else " [sin portada]")
+                break
+        if not info:
+            info = buscar_acoustid(ruta, duracion)   # sin nombre útil: se reconoce por el sonido (si hay clave y fpcalc)
+        if info:
+            portada = descargar_portada(info)
+            guardar_original(carpeta_undo, n, ruta)
+            escribir_etiquetas(ruta, info, portada)
+            return "ok", f"{info['artista']} - {info['titulo']}" + (f" ({info['album']})" if info.get("album") else "") \
+                + ("" if portada else " [sin portada]")
         return "sin_coincidencia", ""
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         return "error", str(getattr(e, "reason", e))[:120]
