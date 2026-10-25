@@ -3,6 +3,13 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
+## [1.8.1] - 2026-10-26
+
+### Changed
+- **A cover that moves with the music.** When a track has no cover art, the card shows a background that slowly changes
+  colour with a glow that beats with the bass and one bar per spectrum band, instead of the plain orange gradient. It stops
+  working (no CPU) as soon as a cover is shown.
+
 ## [1.8] - 2026-10-26
 
 ### Added
@@ -31,9 +38,6 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
   trash. It only shows what it would do unless `--aplicar` is given. Remixes and live versions are not treated as duplicates.
 
 ### Changed
-- **A cover that moves with the music.** When a track has no cover art, the card shows a background that slowly changes
-  colour with a glow that beats with the bass and one bar per spectrum band, instead of the plain orange gradient. It stops
-  working (no CPU) as soon as a cover is shown.
 - **A simpler Sound menu.** The Sound menu keeps what you reach for often (normalize, presets, a Crossfeed switch that
   remembers its level, Balance and space, Headphones) and a single "Equalizer…" entry. The equalizer is one panel with a
   Graphic | Parametric switch; Find my sound, save preset and delete preset live inside it.

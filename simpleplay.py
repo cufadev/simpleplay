@@ -59,7 +59,7 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.8"
+VERSION = "1.8.1"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
