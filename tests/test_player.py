@@ -709,6 +709,103 @@ class TestCrearListas(Base):
         w2.close()
 
 
+class TestEspacial(Base):
+    def _senal(self, hz, canales=(1, 1), seg=1.0, amp=0.3):
+        t = np.arange(int(44100 * seg)) / 44100
+        x = np.zeros((len(t), 2), np.float32)
+        for c, k in enumerate(canales):
+            x[:, c] = k * amp * np.sin(2 * np.pi * hz * t)
+        return x
+
+    def _correr(self, c, x, veces=3):
+        for _ in range(veces):
+            y = c.procesar(x)
+        return y
+
+    def test_el_balance_baja_solo_el_canal_opuesto(self):
+        c = S.Cadena()
+        c.poner_balance(100)                                   # todo a la derecha
+        y = self._correr(c, self._senal(440))
+        self.assertLess(np.abs(y[:, 0]).max(), 1e-6)
+        self.assertAlmostEqual(float(np.abs(y[:, 1]).max()), 0.3, delta=0.01)
+        c.poner_balance(-50)
+        y = self._correr(c, self._senal(440))
+        self.assertAlmostEqual(float(np.abs(y[:, 0]).max()), 0.3, delta=0.01)
+        self.assertAlmostEqual(float(np.abs(y[:, 1]).max()), 0.15, delta=0.01)
+
+    def test_el_balance_centrado_no_toca_el_audio(self):
+        c = S.Cadena()
+        self.assertFalse(c.activa)
+        c.poner_balance(0)
+        self.assertFalse(c.activa)
+
+    def test_el_crossfeed_deja_igual_lo_que_es_mono(self):
+        c = S.Cadena()
+        c.poner_crossfeed(S.CROSSFEED_NIVELES[3])
+        for hz in (100, 1000, 6000):
+            y = self._correr(c, self._senal(hz))
+            self.assertAlmostEqual(float(np.abs(y).max()), 0.3, delta=0.01, msg=f"{hz} Hz")
+
+    def test_el_crossfeed_pasa_graves_al_otro_oido_y_no_agudos(self):
+        grave, agudo = S.Cadena(), S.Cadena()
+        grave.poner_crossfeed(0.4)
+        agudo.poner_crossfeed(0.4)
+        yg = self._correr(grave, self._senal(150, (1, 0)))
+        ya = self._correr(agudo, self._senal(6000, (1, 0)))
+        self.assertGreater(float(np.abs(yg[:, 1]).max()), 0.08)      # un grave de la izquierda llega a la derecha
+        self.assertLess(float(np.abs(ya[:, 1]).max()), 0.02)         # un agudo no
+
+    def test_apagar_el_crossfeed_vuelve_al_audio_original_sin_saltos(self):
+        c = S.Cadena()
+        c.poner_crossfeed(0.6)
+        x = self._senal(200, (1, 0))
+        self._correr(c, x)
+        c.poner_crossfeed(0)
+        y = self._correr(c, x, veces=3)
+        self.assertFalse(c._espacial_activo())
+        self.assertAlmostEqual(float(np.abs(y[:, 0]).max()), 0.3, delta=0.01)
+        self.assertLess(float(np.abs(y[:, 1]).max()), 1e-4)
+
+    def test_el_parametrico_sube_donde_se_le_pide(self):
+        curva = S.curva_parametrica([(1000.0, 6.0, 1.0)], [100, 1000, 10000])
+        self.assertAlmostEqual(float(curva[1]), 6.0, delta=0.05)
+        self.assertLess(abs(float(curva[0])), 0.6)
+        self.assertLess(abs(float(curva[2])), 0.6)
+
+    def test_un_q_mas_alto_hace_la_banda_mas_angosta(self):
+        ancha = S.curva_parametrica([(1000.0, 6.0, 0.5)], [2000])[0]
+        angosta = S.curva_parametrica([(1000.0, 6.0, 4.0)], [2000])[0]
+        self.assertGreater(float(ancha), float(angosta) + 1.0)
+
+    def test_el_parametrico_se_aplica_se_guarda_y_se_restaura(self):
+        self.cargar(A)
+        self.w.poner_parametrico([[100, 3, 1.0], [300, -2, 2.0], [1000, 4, 1.0], [4000, 0, 1.0], [12000, -3, 0.7]])
+        self.w.poner_balance(-30)
+        self.w.poner_crossfeed(2)
+        self.assertEqual(self.w.preset, "parametrico")
+        self.assertTrue(self.w.motor.cadena.activa)
+        self.w.guardar_estado()
+        self.w.close()
+        self.w.motor.cerrar()
+        w2 = S.Player()
+        w2.show()
+        self.w = w2
+        w2.restaurar()
+        self.assertEqual(w2.preset, "parametrico")
+        self.assertEqual(w2.balance, -30)
+        self.assertEqual(w2.crossfeed, 2)
+        self.assertEqual([round(b[1], 1) for b in w2.eq_param], [3, -2, 4, 0, -3])
+        self.assertEqual(w2.motor.cadena._cf_obj, S.CROSSFEED_NIVELES[2])
+
+    def test_valores_raros_en_la_sesion_se_corrigen(self):
+        self.w.poner_balance(500)
+        self.assertEqual(self.w.balance, 100)
+        self.w.poner_crossfeed(99)
+        self.assertEqual(self.w.crossfeed, len(S.CROSSFEED_NIVELES) - 1)
+        self.w.poner_parametrico([[5, 99, 99]] * 5)
+        self.assertEqual(self.w.eq_param[0], [S.PARAM_HZ[0], S.LIM_BANDA_DB, S.PARAM_Q[1]])
+
+
 class TestNormalizadorSuave(Base):
     def test_una_medida_tardia_se_acomoda_con_rampa_y_no_de_golpe(self):
         c = S.Cadena()          # propia: la del motor la usa también el hilo de audio

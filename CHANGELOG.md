@@ -3,11 +3,21 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
-## [Unreleased]
-
-## [1.7.1] - 2026-10-25
+## [1.8] - 2026-10-26
 
 ### Added
+- **Parametric equalizer** (with the graphic equalizer, still switched off in public builds). Five bands, each with its
+  own frequency (20 Hz to 20 kHz), gain (±12 dB) and width (Q), a live curve, and the same minimum-phase filter as the graphic
+  one. Sound menu > Parametric equalizer.
+- **Crossfeed for headphones** (off, soft, medium, strong). Each ear hears a little of the low frequencies of the other
+  side, as with speakers, so the sound stops feeling stuck to your ears. What is the same in both channels (mono) is not touched.
+- **Balance** from left (-100) to right (100). Sound menu > Balance and space.
+- **Duplicate finder by sound.** The cleaning engine now lives in `limpieza.py` (no Qt, no player needed) and, besides
+  artist and title, compares the acoustic fingerprint (Chromaprint `fpcalc`) of each track. It finds the same song under
+  different names, formats or bitrates, even with no tags, and still keeps remixes and live versions apart. Fingerprints
+  are cached in `~/.cache/simpleplay/huellas.json`. Quality is judged by what the audio really reaches, not only by the bitrate in the tag: a "192 kbps"
+  mp3 that is cut off at 16 kHz counts as a 128, and a FLAC cut off there is flagged as a converted mp3. `tools/quitar_duplicados.py` gets `--solo-nombre` and `--solo-sonido`.
+
 - **Find my sound** (replaces "Tune by ear", still switched off with the graphic equalizer). A guided search in three
   rounds: you hear four versions of the sound, pick the one you like, and it narrows down. At the end you get four controls
   (Bass, Body, Voices, Brightness) to fine-tune and a name to save it.

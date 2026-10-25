@@ -59,7 +59,7 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.7.1"
+VERSION = "1.8"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
@@ -1977,6 +1977,19 @@ NOMBRES_PRESETS = {"plano": ("Plano (sin ecualizar)", "Flat (no EQ)"), "vivo": (
                    "brillante": ("Brillante", "Bright"), "calido": ("Cálido", "Warm")}
 LIM_BANDA_DB = 12.0          # el ecualizador gráfico va de -12 a +12 dB por banda
 
+# Ecualizador paramétrico: pocas bandas, pero cada una con su frecuencia, su ganancia y su ancho (Q). Se calcula como la suma
+# de filtros "campana" (biquads de R. Bristow-Johnson) y suena por el mismo filtro de fase mínima que el gráfico.
+PARAM_BANDAS_INICIAL = ((80.0, 0.0, 1.0), (250.0, 0.0, 1.0), (1000.0, 0.0, 1.0), (4000.0, 0.0, 1.0), (10000.0, 0.0, 1.0))
+PARAM_HZ = (20.0, 20000.0)
+PARAM_Q = (0.3, 10.0)
+
+# Crossfeed (para auriculares): cada oído oye un poco del otro canal, apagado en agudos y con un retraso de ~0,3 ms, como pasa con
+# parlantes. Las bocinas dejan de sentirse pegadas a las orejas y se cansa menos. Niveles: apagado, suave, medio, fuerte.
+CROSSFEED_NIVELES = (0.0, 0.25, 0.4, 0.6)
+CROSSFEED_CORTE_HZ = 700.0
+CROSSFEED_RETRASO = 6        # muestras (0,14 ms); con el retraso propio del pasabajos, ~0,3 ms
+CROSSFEED_TAPS = 64
+
 # Cada eje del afinador mueve varias bandas a la vez con una forma suave (valor por banda de BANDAS_HZ): son pocos
 # ajustes que se entienden al oído (graves, cuerpo, presencia, brillo) y no diez botones sueltos.
 EJES_AFINADOR = {
@@ -2024,6 +2037,26 @@ def _taps_ecualizador(gan_db, freqs=None):
     return h.astype(np.float32)
 
 
+def _filtro_crossfeed():
+    """Pasabajos de un polo (de fase mínima: casi no corre la fase de los graves) precedido del retraso; ganancia 1 en continua."""
+    p = math.exp(-2 * math.pi * CROSSFEED_CORTE_HZ / FS)
+    h = p ** np.arange(CROSSFEED_TAPS)
+    return np.concatenate([np.zeros(CROSSFEED_RETRASO), h / h.sum()]).astype(np.float32)
+
+
+_H_CROSSFEED = _filtro_crossfeed()
+
+
+def curva_parametrica(bandas, freqs=None):
+    """Ganancia total (dB) de varias bandas (frecuencia, ganancia, Q) a las frecuencias `freqs` (por defecto PUNTOS_PERFIL)."""
+    f = PUNTOS_PERFIL if freqs is None else np.asarray(freqs, dtype=float)
+    curva = np.zeros(len(f))
+    for fc, g, q in bandas:
+        if g:
+            curva += _respuesta_biquad("PK", float(fc), float(g), float(q), f)
+    return curva
+
+
 class Cadena:
     """Ganancia por tema (normalización) + ecualizador + limitador suave, sobre bloques estéreo float32.
 
@@ -2045,11 +2078,45 @@ class Cadena:
         self._lim_r = np.ones(2 * (LIM_ANTICIPO - 1), np.float32)     # ganancia que pide cada muestra reciente
         self._lim_def = 0.0               # cuánto falta para volver a ganancia 1 (1 - ganancia), baja con LIM_SUELTA_S
         self._lim_vivo = False            # el limitador está corriendo (y el audio sale retrasado)
+        self._bal_obj = self._bal_act = (1.0, 1.0)       # ganancia de cada canal (balance)
+        self._cf_obj = self._cf_act = 0.0                # cuánto del otro canal se mezcla (crossfeed)
+        self._cf_hist = np.zeros((len(_H_CROSSFEED) - 1, 2), np.float32)
 
     @property
     def activa(self):
         return (self._h is not None or self._pend is not None or self._gan_obj != 1.0 or self._gan_act != 1.0
-                or self._lim_vivo)
+                or self._lim_vivo or self._espacial_activo())
+
+    def _espacial_activo(self):
+        return (self._cf_obj > 0 or self._cf_act > 0 or self._bal_obj != (1.0, 1.0) or self._bal_act != (1.0, 1.0))
+
+    def poner_balance(self, pct):
+        """Balance de -100 (todo a la izquierda) a +100 (todo a la derecha): baja el canal opuesto, el otro queda igual."""
+        b = max(-100.0, min(100.0, float(pct))) / 100
+        self._bal_obj = (1.0 - max(0.0, b), 1.0 + min(0.0, b))
+
+    def poner_crossfeed(self, cantidad):
+        """Cuánto del otro canal se mezcla en cada oído (0 = apagado; ver CROSSFEED_NIVELES)."""
+        self._cf_obj = max(0.0, min(1.0, float(cantidad)))
+
+    def _espacial(self, y):
+        """Crossfeed y balance, con rampa dentro del bloque para que prender, apagar o mover no haga clicks."""
+        n = len(y)
+        if self._cf_obj > 0 or self._cf_act > 0:
+            ext = np.concatenate([self._cf_hist, y])
+            self._cf_hist = ext[-(len(_H_CROSSFEED) - 1):].copy()
+            bajo = np.stack([np.convolve(ext[:, c], _H_CROSSFEED, "valid") for c in (0, 1)], axis=1)   # graves de cada canal, retrasados
+            a = np.linspace(self._cf_act, self._cf_obj, n, dtype=np.float32)[:, None]
+            y = y + a * (bajo[:, ::-1] - bajo)           # en los graves cada oído toma algo del otro; lo que es igual en los dos (mono) queda tal cual
+            self._cf_act = self._cf_obj
+        else:
+            self._cf_hist[:] = 0.0
+        if self._bal_obj != (1.0, 1.0) or self._bal_act != (1.0, 1.0):
+            g = np.stack([np.linspace(self._bal_act[0], self._bal_obj[0], n),
+                          np.linspace(self._bal_act[1], self._bal_obj[1], n)], axis=1).astype(np.float32)
+            y = y * g
+            self._bal_act = self._bal_obj
+        return y
 
     def poner_ganancia(self, db, suave=False):
         """Ganancia del tema en dB. Con `suave`, se llega a ella de a poco (RAMPA_DB_S): para una medida que llega con el
@@ -2117,7 +2184,10 @@ class Cadena:
         if gan[0] != 1.0 or gan[-1] != 1.0 or pre[0] != 1.0 or pre[-1] != 1.0:
             y = y * (gan * pre).astype(np.float32)[:, None]
         self._gan_act, self._pre_act = gan_fin, pre_obj
-        base = self._h is not None or self._gan_obj != 1.0 or self._gan_act != 1.0
+        hay_espacial = self._espacial_activo()
+        if hay_espacial:
+            y = self._espacial(y)
+        base = self._h is not None or self._gan_obj != 1.0 or self._gan_act != 1.0 or hay_espacial
         y = y.astype(np.float32, copy=False)
         if not base and not self._lim_vivo:
             return y                                   # nada que hacer: el audio pasa tal cual y sin retraso
@@ -3735,6 +3805,221 @@ class DialogoBuscarSonido(PanelLateral):
         super().done(r)
 
 
+class CurvaParametrica(QWidget):
+    """La respuesta del ecualizador paramétrico (20 Hz a 20 kHz, ±12 dB) con un punto por banda."""
+    REF = (31, 125, 500, 2000, 8000)
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedHeight(120)
+        self.setMinimumWidth(320)
+        self.bandas = [list(b) for b in PARAM_BANDAS_INICIAL]
+
+    def poner(self, bandas):
+        self.bandas = [list(b) for b in bandas]
+        self.update()
+
+    def _x(self, zona, hz):
+        return zona.left() + zona.width() * (math.log10(hz) - math.log10(PARAM_HZ[0])) / (math.log10(PARAM_HZ[1]) - math.log10(PARAM_HZ[0]))
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        ac = QColor(ACENTO)
+        zona = QRectF(14, 8, self.width() - 28, self.height() - 8 - 20)
+        base = zona.center().y()
+        p.setPen(QPen(QColor(255, 255, 255, 40), 1, Qt.DashLine))
+        p.drawLine(QPointF(zona.left(), base), QPointF(zona.right(), base))
+        f = QFont(self.font())
+        f.setPixelSize(10)
+        p.setFont(f)
+        p.setPen(QColor(255, 255, 255, 110))
+        for hz in self.REF:
+            x = self._x(zona, hz)
+            p.drawText(QRectF(x - 20, self.height() - 16, 40, 14), Qt.AlignCenter, f"{hz // 1000}k" if hz >= 1000 else str(hz))
+        puntos = np.geomspace(PARAM_HZ[0], PARAM_HZ[1], 160)
+        curva = curva_parametrica(self.bandas, puntos)
+        ruta = QPainterPath()
+        for i, (hz, g) in enumerate(zip(puntos, curva)):
+            q = QPointF(self._x(zona, hz), base - max(-14.0, min(14.0, g)) / LIM_BANDA_DB * (zona.height() / 2) * 0.9)
+            ruta.moveTo(q) if i == 0 else ruta.lineTo(q)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(ac, 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawPath(ruta)
+        p.setPen(Qt.NoPen)
+        p.setBrush(ac)
+        for fc, g, _ in self.bandas:
+            p.drawEllipse(QPointF(self._x(zona, fc), base - g / LIM_BANDA_DB * (zona.height() / 2) * 0.9), 3.5, 3.5)
+
+
+class DialogoParametrico(PanelLateral):
+    """Ecualizador paramétrico: 5 bandas, cada una con su frecuencia, su ganancia (±12 dB) y su ancho Q. Suena enseguida y
+    queda guardado."""
+    def __init__(self, player):
+        super().__init__(player)
+        self.player = player
+        self.setWindowTitle(tr("Ecualizador paramétrico", "Parametric equalizer"))
+        self.filas = []
+        self.curva = CurvaParametrica()
+        lay = self.lay
+        lay.addWidget(titulo_panel(tr("Ecualizador paramétrico", "Parametric equalizer")))
+        lay.addWidget(self.curva)
+        grilla = QGridLayout()
+        grilla.setHorizontalSpacing(8)
+        grilla.setVerticalSpacing(6)
+        for col, txt in enumerate((tr("Frecuencia", "Frequency"), tr("Ganancia", "Gain"), "Q")):
+            t = QLabel(txt)
+            t.setStyleSheet("color: rgba(255,255,255,120); font-size: 11px;")
+            grilla.addWidget(t, 0, 1 + col * 3, 1, 2)
+        for i, (fc, g, q) in enumerate(player.eq_param):
+            n = QLabel(str(i + 1))
+            n.setStyleSheet("color: rgba(255,255,255,140);")
+            sf, sg, sq = QSlider(Qt.Horizontal), QSlider(Qt.Horizontal), QSlider(Qt.Horizontal)
+            sf.setRange(0, 1000)
+            sf.setValue(self._hz_a_pos(fc))
+            sg.setRange(int(-LIM_BANDA_DB * 2), int(LIM_BANDA_DB * 2))
+            sg.setValue(round(g * 2))
+            sq.setRange(0, 1000)
+            sq.setValue(self._q_a_pos(q))
+            vf, vg, vq = QLabel(), QLabel(), QLabel()
+            for v in (vf, vg, vq):
+                v.setMinimumWidth(44)
+                v.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            for sl in (sf, sg, sq):
+                sl.setMinimumWidth(80)
+                sl.valueChanged.connect(self._cambio)
+            grilla.addWidget(n, i + 1, 0)
+            for col, (sl, v) in enumerate(((sf, vf), (sg, vg), (sq, vq))):
+                grilla.addWidget(sl, i + 1, 1 + col * 3)
+                grilla.addWidget(v, i + 1, 2 + col * 3)
+            self.filas.append((sf, sg, sq, vf, vg, vq))
+        grilla.setColumnMinimumWidth(3, 18)
+        grilla.setColumnMinimumWidth(6, 18)
+        lay.addLayout(grilla)
+        cero = QPushButton(tr("Dejar plano", "Reset"))
+        cero.clicked.connect(self._cero)
+        listo = QPushButton(tr("Listo", "Done"))
+        listo.setObjectName("principal")
+        listo.clicked.connect(self.accept)
+        fila = QHBoxLayout()
+        fila.addWidget(cero)
+        fila.addStretch(1)
+        fila.addWidget(listo)
+        lay.addLayout(fila)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(40)
+        self._timer.timeout.connect(self._aplicar)
+        self._cambio(aplicar=False)
+
+    @staticmethod
+    def _hz_a_pos(hz):
+        return round(1000 * (math.log10(hz) - math.log10(PARAM_HZ[0])) / (math.log10(PARAM_HZ[1]) - math.log10(PARAM_HZ[0])))
+
+    @staticmethod
+    def _pos_a_hz(pos):
+        return 10 ** (math.log10(PARAM_HZ[0]) + pos / 1000 * (math.log10(PARAM_HZ[1]) - math.log10(PARAM_HZ[0])))
+
+    @staticmethod
+    def _q_a_pos(q):
+        return round(1000 * (math.log10(q) - math.log10(PARAM_Q[0])) / (math.log10(PARAM_Q[1]) - math.log10(PARAM_Q[0])))
+
+    @staticmethod
+    def _pos_a_q(pos):
+        return 10 ** (math.log10(PARAM_Q[0]) + pos / 1000 * (math.log10(PARAM_Q[1]) - math.log10(PARAM_Q[0])))
+
+    def bandas(self):
+        return [[self._pos_a_hz(sf.value()), sg.value() / 2, self._pos_a_q(sq.value())] for sf, sg, sq, *_ in self.filas]
+
+    def _cambio(self, *_, aplicar=True):
+        for (sf, sg, sq, vf, vg, vq), (fc, g, q) in zip(self.filas, self.bandas()):
+            vf.setText(f"{fc / 1000:.1f}k".replace(".", ",") if fc >= 1000 else f"{fc:.0f}")
+            vg.setText(fmt_db(g))
+            vq.setText(f"{q:.1f}".replace(".", ","))
+        self.curva.poner(self.bandas())
+        if aplicar:
+            self._timer.start()
+
+    def _aplicar(self):
+        self.player.poner_parametrico(self.bandas())
+
+    def _cero(self):
+        for sf, sg, sq, *_ in self.filas:
+            sg.setValue(0)
+
+
+class DialogoEspacial(PanelLateral):
+    """Balance entre los dos lados y crossfeed (para auriculares)."""
+    ESTILO_EXTRA = ESTILO_BUSCAR
+
+    def __init__(self, player):
+        super().__init__(player)
+        self.player = player
+        self.setWindowTitle(tr("Balance y espacio", "Balance and space"))
+        lay = self.lay
+        lay.addWidget(titulo_panel(tr("Balance y espacio", "Balance and space")))
+        lay.addWidget(QLabel(tr("Balance", "Balance")))
+        fila = QHBoxLayout()
+        self.sl = QSlider(Qt.Horizontal)
+        self.sl.setRange(-100, 100)
+        self.sl.setValue(player.balance)
+        self.sl.setMinimumWidth(240)
+        self.sl.setTickPosition(QSlider.NoTicks)
+        self.val = QLabel()
+        self.val.setMinimumWidth(62)
+        self.val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        fila.addWidget(QLabel("I" if tr("es", "en") == "es" else "L"))
+        fila.addWidget(self.sl, 1)
+        fila.addWidget(QLabel("D" if tr("es", "en") == "es" else "R"))
+        fila.addWidget(self.val)
+        lay.addLayout(fila)
+        centrar = QPushButton(tr("Centrar", "Center"))
+        centrar.clicked.connect(lambda: self.sl.setValue(0))
+        lay.addWidget(centrar, 0, Qt.AlignLeft)
+        sep = QLabel(tr("Crossfeed (auriculares)", "Crossfeed (headphones)"))
+        sep.setStyleSheet("margin-top: 6px;")
+        lay.addWidget(sep)
+        nota = QLabel(tr("Cada oído oye un poco del otro lado, como con parlantes: el sonido deja de sentirse pegado a las orejas.",
+                         "Each ear hears a little of the other side, as with speakers: the sound no longer feels stuck to your ears."))
+        nota.setWordWrap(True)
+        nota.setMaximumWidth(300)
+        nota.setStyleSheet("color: rgba(255,255,255,120); font-size: 11px;")
+        lay.addWidget(nota)
+        seg = QHBoxLayout()
+        self.botones = []
+        for i, txt in enumerate((tr("Apagado", "Off"), tr("Suave", "Soft"), tr("Medio", "Medium"), tr("Fuerte", "Strong"))):
+            b = QPushButton(txt)
+            b.setObjectName("seg")
+            b.setCheckable(True)
+            b.setChecked(i == player.crossfeed)
+            b.clicked.connect(lambda _=False, i=i: self._crossfeed(i))
+            seg.addWidget(b)
+            self.botones.append(b)
+        lay.addLayout(seg)
+        listo = QPushButton(tr("Listo", "Done"))
+        listo.setObjectName("principal")
+        listo.clicked.connect(self.accept)
+        pie = QHBoxLayout()
+        pie.addStretch(1)
+        pie.addWidget(listo)
+        lay.addLayout(pie)
+        self.sl.valueChanged.connect(self._balance)
+        self._texto()
+
+    def _texto(self):
+        v = self.sl.value()
+        self.val.setText(tr("Centro", "Center") if v == 0 else (f"{tr('Izq.', 'Left')} {-v}" if v < 0 else f"{tr('Der.', 'Right')} {v}"))
+
+    def _balance(self, v):
+        self._texto()
+        self.player.poner_balance(v)
+
+    def _crossfeed(self, i):
+        for k, b in enumerate(self.botones):
+            b.setChecked(k == i)
+        self.player.poner_crossfeed(i)
+
+
 class DialogoMosquito(PanelLateral):
     """El QR de Mosquito, en un panel al costado del reproductor (como los del sonido). Cerrarlo NO apaga el control
     remoto: sigue andando mientras el reproductor esté abierto; para cortarlo está «Apagar Mosquito»."""
@@ -3801,6 +4086,9 @@ class Player(QWidget):
         self._panel = None                 # el panel del sonido abierto (ecualizador o afinado)
         self.eq_personal = None            # 'Mi sonido': 10 ganancias en dB, del ecualizador gráfico o del afinado
         self.mis_presets = {}              # presets con nombre que guardó el usuario: {nombre: 10 ganancias en dB}
+        self.eq_param = [list(b) for b in PARAM_BANDAS_INICIAL]   # ecualizador paramétrico: [frecuencia, ganancia dB, Q] por banda
+        self.balance = 0                   # -100 (izquierda) a 100 (derecha)
+        self.crossfeed = 0                 # índice en CROSSFEED_NIVELES
         self._midiendo = set()     # medidas de sonoridad en curso (clave de caché)
         self._sonoridades = None   # caché de sonoridad por archivo (se lee del disco la primera vez que se usa)
         self._aplicar_eq()
@@ -4707,6 +4995,10 @@ class Player(QWidget):
                 self.escuchar_curva(self.mis_presets[self.preset[4:]])
                 return
             self.preset = "plano"                                    # ese preset ya no existe
+        if self.preset == "parametrico":
+            curva = curva_parametrica(self.eq_param)
+            self.motor.cadena.poner_eq(list(curva), freqs=PUNTOS_PERFIL, nivel_db=nivel_relativo_db(PUNTOS_PERFIL, curva))
+            return
         if self.preset == "personal" and self.eq_personal:
             self.escuchar_curva(self.eq_personal)
             return
@@ -4725,6 +5017,9 @@ class Player(QWidget):
         c = curva_de_preset(self.preset, self.eq_personal, self.mis_presets)
         if c is not None:
             return c
+        if self.preset == "parametrico":
+            v = np.interp(np.log10(BANDAS_HZ), np.log10(PUNTOS_PERFIL), curva_parametrica(self.eq_param))
+            return [round(float(max(-LIM_BANDA_DB, min(LIM_BANDA_DB, x))) * 2) / 2 for x in v]
         if self.preset.startswith("perfil:"):
             p = self._cargar_perfil(self.preset[7:])
             if p is not None:
@@ -4775,8 +5070,36 @@ class Player(QWidget):
     def afinar_al_oido(self):
         return self._abrir_panel(DialogoBuscarSonido)
 
+    def parametrico(self):
+        return self._abrir_panel(DialogoParametrico)
+
+    def espacial(self):
+        return self._abrir_panel(DialogoEspacial)
+
+    def poner_parametrico(self, bandas):
+        """Pone las bandas del ecualizador paramétrico (frecuencia, ganancia, Q), lo elige y lo guarda."""
+        self.eq_param = [[max(PARAM_HZ[0], min(PARAM_HZ[1], float(f))), max(-LIM_BANDA_DB, min(LIM_BANDA_DB, float(g))),
+                          max(PARAM_Q[0], min(PARAM_Q[1], float(q)))] for f, g, q in bandas]
+        self.preset = "parametrico"
+        self._aplicar_eq()
+        self.guardar_estado()
+
+    def _aplicar_espacial(self):
+        self.motor.cadena.poner_balance(self.balance)
+        self.motor.cadena.poner_crossfeed(CROSSFEED_NIVELES[self.crossfeed])
+
+    def poner_balance(self, pct):
+        self.balance = max(-100, min(100, int(round(pct))))
+        self._aplicar_espacial()
+        self.guardar_estado()
+
+    def poner_crossfeed(self, nivel):
+        self.crossfeed = max(0, min(len(CROSSFEED_NIVELES) - 1, int(nivel)))
+        self._aplicar_espacial()
+        self.guardar_estado()
+
     def poner_preset(self, nombre):
-        existe = (nombre in PRESETS or (nombre == "personal" and bool(self.eq_personal))
+        existe = (nombre in PRESETS or nombre == "parametrico" or (nombre == "personal" and bool(self.eq_personal))
                   or (nombre.startswith("mio:") and nombre[4:] in self.mis_presets)
                   or (nombre.startswith("perfil:") and self._cargar_perfil(nombre[7:]) is not None))
         self.preset = nombre if existe else "plano"
@@ -4956,9 +5279,16 @@ class Player(QWidget):
                 borrar = sub.addMenu(tr("Borrar un preset", "Delete a preset"))
                 for n in self.mis_presets:
                     borrar.addAction(n, lambda n=n: self.borrar_mi_preset(n))
+            b = sub.addAction(tr("Paramétrico", "Parametric"))
+            b.setCheckable(True)
+            b.setChecked(self.preset == "parametrico")
+            b.triggered.connect(lambda _=False: self.poner_preset("parametrico"))
             sub.addSeparator()
             sub.addAction(tr("Ecualizador gráfico…", "Graphic equalizer…"), self.ecualizador)
+            sub.addAction(tr("Ecualizador paramétrico…", "Parametric equalizer…"), self.parametrico)
             sub.addAction(tr("Buscar mi sonido…", "Find my sound…"), self.afinar_al_oido)
+        sub.addSeparator()
+        sub.addAction(tr("Balance y espacio…", "Balance and space…"), self.espacial)
         # los perfiles de auriculares: una corrección medida para cada modelo, que se baja una vez y queda guardada
         sub.addSeparator()
         aur = sub.addMenu(tr("Auriculares", "Headphones")) if anidado else sub
@@ -5002,7 +5332,8 @@ class Player(QWidget):
                  "carpeta": self.carpeta_musica, "carpeta_listas": self.carpeta_listas,
                  "lista_actual": self.lista_actual, "orden_original": self.orden_original,
                  "compacto": self.compacto, "ocultar_controles": self.ocultar_controles, "normalizar": self.normalizar, "preset": self.preset,
-                 "eq_personal": self.eq_personal, "mis_presets": self.mis_presets}
+                 "eq_personal": self.eq_personal, "mis_presets": self.mis_presets,
+                 "eq_param": self.eq_param, "balance": self.balance, "crossfeed": self.crossfeed}
         try:
             ESTADO.parent.mkdir(parents=True, exist_ok=True)
             tmp = ESTADO.with_suffix(".tmp")
@@ -5033,8 +5364,18 @@ class Player(QWidget):
             self.mis_presets = {str(n)[:24]: [max(-LIM_BANDA_DB, min(LIM_BANDA_DB, float(x))) for x in c]
                                 for n, c in mp.items() if isinstance(c, list) and len(c) == len(BANDAS_HZ)
                                 and all(isinstance(x, (int, float)) for x in c)}
+        bp = d.get("eq_param")
+        if (isinstance(bp, list) and len(bp) == len(PARAM_BANDAS_INICIAL)
+                and all(isinstance(b, list) and len(b) == 3 and all(isinstance(x, (int, float)) for x in b) for b in bp)):
+            self.eq_param = [[max(PARAM_HZ[0], min(PARAM_HZ[1], float(f))), max(-LIM_BANDA_DB, min(LIM_BANDA_DB, float(g))),
+                              max(PARAM_Q[0], min(PARAM_Q[1], float(q)))] for f, g, q in bp]
+        b = d.get("balance", 0)
+        self.balance = max(-100, min(100, int(b))) if isinstance(b, (int, float)) else 0
+        c = d.get("crossfeed", 0)
+        self.crossfeed = c if isinstance(c, int) and 0 <= c < len(CROSSFEED_NIVELES) else 0
+        self._aplicar_espacial()
         p = d.get("preset", PRESET_INICIAL)
-        self.preset = (p if p in PRESETS or (p == "personal" and self.eq_personal)
+        self.preset = (p if p in PRESETS or p == "parametrico" or (p == "personal" and self.eq_personal)
                        or (isinstance(p, str) and p.startswith("mio:") and p[4:] in self.mis_presets)
                        or (isinstance(p, str) and p.startswith("perfil:")) else PRESET_INICIAL)
         self._aplicar_eq()
