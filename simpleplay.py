@@ -4739,8 +4739,8 @@ class Player(QWidget):
             self.mpris = Mpris(self)
         if MOSQUITO:
             QTimer.singleShot(0, self._mosquito_auto)
-            QShortcut(QKeySequence("Ctrl+Shift+M"), self).activated.connect(self.alternar_mosquito)
-            QShortcut(QKeySequence("Ctrl+Alt+M"), self).activated.connect(self.alternar_mosquito)   # por si el escritorio se queda con la otra
+            QShortcut(QKeySequence("Ctrl+Alt+M"), self).activated.connect(self.alternar_mosquito)
+            QShortcut(QKeySequence("Ctrl+Shift+M"), self).activated.connect(self.alternar_mosquito)   # la de antes: algunos escritorios se la quedan
 
     # --- teclas multimedia (MPRIS) ---
     def mpris_cambio(self, *claves):
@@ -4851,7 +4851,7 @@ class Player(QWidget):
             self._servidor_mosquito()
 
     def alternar_mosquito(self):
-        """Ctrl+Shift+M: abre el panel de Mosquito; con el panel a la vista, lo cierra (el control remoto sigue activo)."""
+        """Ctrl+Alt+M (o Ctrl+Shift+M): abre el panel de Mosquito; con el panel a la vista, lo cierra (el control remoto sigue activo)."""
         if isinstance(self._panel, DialogoMosquito) and self._panel.isVisible():
             self._panel.reject()
         else:
@@ -6267,7 +6267,7 @@ class Player(QWidget):
         if MOSQUITO:
             menu.addAction(tr("Mosquito (control remoto)…", "Mosquito (remote control)…") +
                            (tr(" · activo", " · on") if getattr(self, "_mosquito", None) is not None else ""),
-                           self.abrir_mosquito, QKeySequence("Ctrl+Shift+M"))
+                           self.abrir_mosquito, QKeySequence("Ctrl+Alt+M"))
         col = menu.addMenu(tr("Color de acento", "Accent color"))
         for clave, (es, en, hexa) in ACENTOS.items():
             b = col.addAction(_cubo(hexa), tr(es, en))

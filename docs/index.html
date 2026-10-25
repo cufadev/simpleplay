@@ -667,7 +667,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
         <li class="revela"><span class="v">1.5.3</span><span class="t"><span class="es">Fundidos suaves al pausar y cerrar, un contador en la lista y sin saltos de volumen con shuffle.</span><span class="en">Soft fades when pausing and closing, a counter in the list and no volume jumps with shuffle.</span></span></li>
         <li class="revela"><span class="v">1.6</span><span class="t"><span class="es">Ecualizador gráfico de 10 bandas con graves precisos, mejor sonido en archivos de 48 y 96 kHz, un limitador que no distorsiona, controles que se esconden solos, y seis colores de acento.</span><span class="en">A 10-band graphic equalizer with accurate bass, better sound for 48 and 96 kHz files, a limiter that does not distort, controls that hide by themselves, and six accent colors.</span></span></li>
         <li class="revela"><span class="v">1.7</span><span class="t"><span class="es">Mosquito: manejá el reproductor desde el celular, con un QR, y silenciá solo al reproductor con un doble toque.</span><span class="en">Mosquito: control the player from your phone with a QR, and mute only the player with a double tap.</span></span></li>
-        <li class="revela"><span class="v">1.8</span><span class="t"><span class="es">Crossfeed y balance, mejores portadas y una herramienta que quita los temas repetidos y deja el de mejor calidad.</span><span class="en">Crossfeed and balance, better cover art and a tool that removes duplicate tracks and keeps the best quality.</span></span></li>
+        <li class="revela"><span class="v">1.8</span><span class="t"><span class="es">Ecualizador paramétrico, crossfeed y balance, un panel de música y listas, un panel de Mosquito rediseñado y una herramienta que quita los temas repetidos y deja el de mejor calidad.</span><span class="en">Parametric equalizer, crossfeed and balance, a music and playlists panel, a redesigned Mosquito panel and a tool that removes duplicate tracks and keeps the best quality.</span></span></li>
       </ol>
     </div>
   </section>
@@ -857,13 +857,13 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
           </header>
           <div class="hoja-cols" aria-hidden="true"><span class="es">Acción</span><span class="en">Action</span><span class="es">Atajo</span><span class="en">Shortcut</span></div>
           <ul class="hoja-filas">
-            <li class="atajo" data-k="ctrl+f"><span class="accion"><span class="es">Buscar en la lista</span><span class="en">Search the list</span></span><span class="teclas"><kbd>Ctrl</kbd><i>+</i><kbd>F</kbd></span></li>
+            <li class="atajo" data-k="ctrl+f"><span class="accion"><span class="es">Buscar en la lista (otra vez, cierra)</span><span class="en">Search the list (again closes it)</span></span><span class="teclas"><kbd>Ctrl</kbd><i>+</i><kbd>F</kbd></span></li>
             <li class="atajo" data-k="enter"><span class="accion"><span class="es">Reproducir el primer resultado</span><span class="en">Play the first result</span></span><span class="teclas"><kbd>Enter</kbd></span></li>
             <li class="atajo" data-k="escape"><span class="accion"><span class="es">Limpiar la búsqueda</span><span class="en">Clear the search</span></span><span class="teclas"><kbd>Esc</kbd></span></li>
             <li class="atajo" data-k="ctrl+o"><span class="accion"><span class="es">Abrir archivos</span><span class="en">Open files</span></span><span class="teclas"><kbd>Ctrl</kbd><i>+</i><kbd>O</kbd></span></li>
             <li class="atajo" data-k="ctrl+shift+o"><span class="accion"><span class="es">Abrir una carpeta</span><span class="en">Open a folder</span></span><span class="teclas"><kbd>Ctrl</kbd><i>+</i><kbd>Shift</kbd><i>+</i><kbd>O</kbd></span></li>
             <li class="atajo" data-k="delete"><span class="accion"><span class="es">Quitar de la lista</span><span class="en">Remove from the list</span></span><span class="teclas"><kbd><span class="es">Supr</span><span class="en">Del</span></kbd></span></li>
-            <li class="atajo" data-k="ctrl+shift+m"><span class="accion"><span class="es">Control remoto: Mosquito</span><span class="en">Remote control: Mosquito</span></span><span class="teclas"><kbd>Ctrl</kbd><i>+</i><kbd>Shift</kbd><i>+</i><kbd>M</kbd></span></li>
+            <li class="atajo" data-k="ctrl+alt+m"><span class="accion"><span class="es">Control remoto: Mosquito (otra vez, cierra el panel)</span><span class="en">Remote control: Mosquito (again closes the panel)</span></span><span class="teclas"><kbd>Ctrl</kbd><i>+</i><kbd>Alt</kbd><i>+</i><kbd>M</kbd></span></li>
           </ul>
         </article>
       </div>
@@ -1326,7 +1326,8 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     const temporizadores = new Map();
     const nombreDe = (e) => {
       let t = e.key === ' ' ? 'space' : e.key === 'ArrowLeft' ? 'left' : e.key === 'ArrowRight' ? 'right' : e.key.toLowerCase();
-      if ((e.ctrlKey || e.metaKey) && t.length === 1) t = 'ctrl+' + (e.shiftKey ? 'shift+' : '') + t;
+      if ((e.ctrlKey || e.metaKey) && e.altKey && /^Key[A-Z]$/.test(e.code)) t = 'ctrl+alt+' + e.code.slice(3).toLowerCase();
+      else if ((e.ctrlKey || e.metaKey) && t.length === 1) t = 'ctrl+' + (e.shiftKey ? 'shift+' : '') + t;
       return t;
     };
     addEventListener('keydown', (e) => {
