@@ -31,6 +31,9 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
   trash. It only shows what it would do unless `--aplicar` is given. Remixes and live versions are not treated as duplicates.
 
 ### Changed
+- **Music and playlists panel** (the **+** menu > Music and playlists…). Saved folders and saved playlists as big rows you can
+  tap, a switch between replacing the list and adding to it, "Empty list" (asks twice) and "Save list". Opening a
+  playlist now replaces the current list even when only one row can be selected.
 - **Mosquito panel redesigned.** The QR on its own card, two short steps, a live "phone connected" indicator, a copy
   button for the link and a switch for "Remember this phone".
 - **Better cover art.** Cover Art Archive at 1200 px first, then 500 px; if the album has none or only a small one

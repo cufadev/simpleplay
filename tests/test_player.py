@@ -24,7 +24,7 @@ sys.path.insert(0, str(RAIZ))
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QAbstractItemView
 
 import simpleplay as S
 
@@ -1736,6 +1736,62 @@ class TestEcualizadorGrafico(Base):
         menu = S.Menu()
         self.w._menu_sonido(menu, anidado=False)
         self.assertIn("Mi sonido", [a.text() for a in menu.actions()])
+
+
+class TestPanelMusica(Base):
+    def _carpeta_con_dos(self):
+        d = Path(CONFIG) / "biblio"
+        d.mkdir(exist_ok=True)
+        for f in (A, B):
+            (d / Path(f).name).write_bytes(Path(f).read_bytes())
+        return d
+
+    def test_elegir_una_carpeta_reemplaza_o_suma(self):
+        d = self._carpeta_con_dos()
+        self.cargar(A)
+        self.w.abrir_musica()
+        espera(0.3)
+        self.w._panel._carpeta(d)                       # reemplazar: lo anterior se va
+        espera(0.4)
+        self.assertEqual(sorted(Path(r).parent.name for r in self.w.pistas), ["biblio", "biblio"])
+        self.assertEqual(self.w.carpetas_musica[0], str(d))
+        self.w.abrir_musica()
+        espera(0.3)
+        self.w._panel._modo(1)                          # sumar: lo que hay se queda
+        self.w._panel._carpeta(Path(A).parent)
+        espera(0.4)
+        self.assertGreater(len(self.w.pistas), 2)
+
+    def test_vaciar_pide_confirmar_y_no_depende_de_la_seleccion(self):
+        self.cargar(A, B)
+        self.w.abrir_musica()
+        espera(0.3)
+        pn = self.w._panel
+        pn._vaciar()
+        self.assertEqual(len(self.w.pistas), 2)         # el primer toque solo pide confirmar
+        pn._vaciar()
+        espera(0.3)
+        self.assertEqual(self.w.pistas, [])
+        self.assertEqual(self.w.lista.count(), 0)
+
+    def test_abrir_lista_reemplaza_aunque_haya_seleccion_simple(self):
+        self.cargar(A, B)
+        self.w.lista.setSelectionMode(QAbstractItemView.SingleSelection)    # como la kiosk
+        f = Path(CONFIG) / "una.m3u8"
+        f.write_text(f"{B}\n")
+        self.w.abrir_lista(str(f))
+        espera(0.3)
+        self.assertEqual([Path(r).name for r in self.w.pistas], [Path(B).name])
+
+    def test_la_biblioteca_sobrevive_al_reinicio(self):
+        d = self._carpeta_con_dos()
+        self.cargar(A)
+        self.w.recordar_carpeta(d)
+        self.w.guardar_estado()
+        w2 = S.Player()
+        w2.restaurar()
+        self.assertEqual(w2.carpetas_musica[0], str(d))
+        w2.close()
 
 
 class TestPanelMosquito(Base):

@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QGridLayout, QInputDi
                                QLabel, QSlider, QAbstractButton, QListWidget,
                                QFileDialog, QFrame, QLayout, QMenu, QSizePolicy,
                                QStackedLayout, QGraphicsOpacityEffect, QMessageBox,
-                               QAbstractItemView, QLineEdit, QListWidgetItem, QDialog, QPushButton, QComboBox, QCheckBox)
+                               QAbstractItemView, QLineEdit, QListWidgetItem, QDialog, QPushButton, QComboBox, QCheckBox, QScrollArea)
 
 try:
     from PySide6.QtDBus import (QDBusConnection, QDBusAbstractAdaptor, QDBusObjectPath,
@@ -4020,6 +4020,212 @@ class DialogoEspacial(PanelLateral):
         self.player.poner_crossfeed(i)
 
 
+class FilaMusica(QFrame):
+    """Una fila grande y tocable: un título, un detalle chico y, si corresponde, la marca de «es la que está abierta»."""
+    clicked = Signal()
+
+    def __init__(self, titulo, detalle="", marcada=False):
+        super().__init__()
+        self.setObjectName("fila")
+        self.setCursor(Qt.PointingHandCursor)
+        fila = QHBoxLayout(self)
+        fila.setContentsMargins(12, 8, 12, 8)
+        fila.setSpacing(10)
+        col = QVBoxLayout()
+        col.setSpacing(0)
+        t = QLabel()
+        t.setStyleSheet("color: white; font-size: 12px; font-weight: 600;")
+        t.setText(QFontMetrics(t.font()).elidedText(titulo, Qt.ElideRight, 230))
+        col.addWidget(t)
+        if detalle:
+            d = QLabel()
+            d.setStyleSheet("color: rgba(255,255,255,110); font-size: 11px;")
+            d.setText(QFontMetrics(d.font()).elidedText(detalle, Qt.ElideMiddle, 230))
+            col.addWidget(d)
+        fila.addLayout(col, 1)
+        if marcada:
+            m = QLabel("●")
+            m.setStyleSheet(f"color: {ACENTO}; font-size: 12px;")
+            fila.addWidget(m, 0, Qt.AlignVCenter)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton and self.rect().contains(e.position().toPoint()):
+            self.clicked.emit()
+
+
+class DialogoMusica(PanelLateral):
+    """La música y las listas en un solo lugar: elegir una carpeta de la biblioteca o una lista guardada, reemplazando lo que
+    hay o sumando, vaciar la lista y guardarla. Pensado para el dedo: filas grandes y todo a un toque."""
+    ESTILO_EXTRA = ESTILO_BUSCAR + """
+        QFrame#fila { background: rgba(255,255,255,16); border-radius: 12px; }
+        QFrame#fila:hover { background: rgba(255,255,255,34); }
+        QScrollArea { background: transparent; border: none; } QWidget#contenido { background: transparent; }
+        QPushButton#texto_rojo { background: transparent; color: rgba(255,255,255,130); padding: 8px 6px; }
+        QPushButton#texto_rojo:hover { color: #ff6b6b; }"""
+
+    def __init__(self, player):
+        super().__init__(player)
+        self.player = player
+        self.sumar = False
+        self._vaciar_pedido = False
+        self.setWindowTitle(tr("Música y listas", "Music and playlists"))
+        self.cuerpo.setMinimumWidth(320)
+        lay = self.lay
+        lay.setSpacing(10)
+        cab = QHBoxLayout()
+        cab.addWidget(titulo_panel(tr("Música y listas", "Music and playlists")))
+        cab.addStretch(1)
+        self.cuenta = QLabel()
+        self.cuenta.setStyleSheet("color: rgba(255,255,255,150); font-size: 11px; font-weight: 600;")
+        cab.addWidget(self.cuenta, 0, Qt.AlignVCenter)
+        lay.addLayout(cab)
+
+        modo = QHBoxLayout()
+        modo.setSpacing(6)
+        et = QLabel(tr("Al elegir:", "When I pick:"))
+        et.setStyleSheet("color: rgba(255,255,255,150); font-size: 11px;")
+        modo.addWidget(et)
+        self.seg = []
+        for i, txt in enumerate((tr("Reemplazar la lista", "Replace the list"), tr("Sumar a la lista", "Add to the list"))):
+            b = QPushButton(txt)
+            b.setObjectName("seg")
+            b.setCheckable(True)
+            b.setChecked(i == 0)
+            b.clicked.connect(lambda _=False, i=i: self._modo(i))
+            modo.addWidget(b)
+            self.seg.append(b)
+        modo.addStretch(1)
+        lay.addLayout(modo)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setFixedHeight(300)
+        try:
+            QScroller.grabGesture(self.scroll.viewport(), QScroller.LeftMouseButtonGesture)    # arrastrar con el dedo
+        except NameError:
+            pass
+        lay.addWidget(self.scroll)
+
+        pie = QHBoxLayout()
+        pie.setSpacing(8)
+        guardar = QPushButton(tr("Guardar lista", "Save list"))
+        guardar.clicked.connect(self._guardar)
+        self.vaciar = QPushButton(tr("Vaciar lista", "Empty list"))
+        self.vaciar.clicked.connect(self._vaciar)
+        listo = QPushButton(tr("Listo", "Done"))
+        listo.setObjectName("principal")
+        listo.clicked.connect(self.reject)
+        pie.addWidget(guardar)
+        pie.addWidget(self.vaciar)
+        pie.addStretch(1)
+        pie.addWidget(listo)
+        lay.addLayout(pie)
+        self._llenar()
+
+    def _modo(self, i):
+        self.sumar = bool(i)
+        for k, b in enumerate(self.seg):
+            b.setChecked(k == i)
+
+    def _titulo_seccion(self, texto):
+        t = QLabel(texto.upper())
+        t.setStyleSheet("color: rgba(255,255,255,110); font-size: 10px; font-weight: 700; letter-spacing: 1px; margin-top: 4px;")
+        return t
+
+    def _llenar(self):
+        p = self.player
+        self.cuenta.setText(tr(f"{len(p.pistas)} temas en la lista", f"{len(p.pistas)} tracks in the list"))
+        cont = QWidget()
+        cont.setObjectName("contenido")
+        v = QVBoxLayout(cont)
+        v.setContentsMargins(0, 0, 4, 0)
+        v.setSpacing(6)
+
+        v.addWidget(self._titulo_seccion(tr("Carpetas", "Folders")))
+        carpetas = [c for c in p.carpetas_musica if Path(c).is_dir()]
+        if p.carpeta_musica and Path(p.carpeta_musica).is_dir() and p.carpeta_musica not in carpetas:
+            carpetas.append(p.carpeta_musica)
+        for c in carpetas:
+            f = FilaMusica(Path(c).name or c, c)
+            f.clicked.connect(lambda c=c: self._carpeta(c))
+            v.addWidget(f)
+        nueva = QPushButton(tr("＋ Elegir otra carpeta…", "＋ Choose another folder…"))
+        nueva.setObjectName("texto")
+        nueva.clicked.connect(self._elegir_carpeta)
+        v.addWidget(nueva, 0, Qt.AlignLeft)
+
+        v.addWidget(self._titulo_seccion(tr("Listas guardadas", "Saved playlists")))
+        carpeta_l = Path(p._carpeta_listas())
+        listas = sorted((x for x in carpeta_l.iterdir() if x.suffix.lower() in LISTAS and x.is_file()),
+                        key=lambda x: x.name.lower()) if carpeta_l.is_dir() else []
+        for x in listas[:60]:
+            try:
+                n = sum(1 for l in x.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip() and not l.startswith("#"))
+            except OSError:
+                n = 0
+            abierta = bool(p.lista_actual) and Path(p.lista_actual) == x.resolve()
+            f = FilaMusica(x.stem, tr(f"{n} temas", f"{n} tracks"), abierta)
+            f.clicked.connect(lambda x=x: self._lista(x))
+            v.addWidget(f)
+        if not listas:
+            vacio = QLabel(tr(f"No hay listas en {carpeta_l}. Armá la lista y tocá «Guardar lista».",
+                              f"No playlists in {carpeta_l}. Build one and tap “Save list”."))
+            vacio.setWordWrap(True)
+            vacio.setStyleSheet("color: rgba(255,255,255,110); font-size: 11px;")
+            v.addWidget(vacio)
+        v.addStretch(1)
+        self.scroll.setWidget(cont)
+
+    def _carpeta(self, ruta):
+        p = self.player
+        if not self.sumar:
+            p.vaciar_lista()
+        p.carpeta_musica = str(ruta)
+        p.agregar([str(ruta)], avisar=True)
+        p.recordar_carpeta(ruta)
+        self.accept()
+
+    def _elegir_carpeta(self):
+        c = QFileDialog.getExistingDirectory(self, tr("Elegir carpeta", "Choose folder"), self.player._carpeta_inicial())
+        if c:
+            self._carpeta(c)
+
+    def _lista(self, ruta):
+        if self.sumar:
+            try:
+                temas, _ = leer_lista(str(ruta))
+            except OSError:
+                return
+            self.player.agregar(temas, avisar=True)
+        else:
+            self.player.abrir_lista(str(ruta))
+        self.accept()
+
+    def _guardar(self):
+        self.player._guardar_rapido()
+        self._llenar()
+
+    def _vaciar(self):
+        """Dos toques: el primero pide confirmar, así un roce no borra la lista."""
+        if not self.player.pistas:
+            return
+        if not self._vaciar_pedido:
+            self._vaciar_pedido = True
+            self.vaciar.setText(tr("¿Seguro? Tocá de nuevo", "Sure? Tap again"))
+            QTimer.singleShot(3000, self._cancelar_vaciar)
+            return
+        self.player.vaciar_lista()
+        self.accept()
+
+    def _cancelar_vaciar(self):
+        try:
+            self._vaciar_pedido = False
+            self.vaciar.setText(tr("Vaciar lista", "Empty list"))
+        except RuntimeError:
+            pass
+
+
 class Interruptor(QAbstractButton):
     """Un interruptor de dos estados (pastilla con perilla), para las opciones de sí o no que van en una fila."""
     def __init__(self, marcado=False):
@@ -4258,6 +4464,7 @@ class Player(QWidget):
         self.repetir = "off"         # off | all | one
         self.carpeta_musica = ""     # última carpeta usada en los diálogos
         self.carpeta_listas = ""     # dónde se guardan las listas (la última usada)
+        self.carpetas_musica = []    # la biblioteca: las carpetas de música usadas, la última primero
         self.lista_actual = ""       # archivo de la lista abierta o guardada: "Guardar lista" la reescribe
         self.etiquetando = False  # la escoba está trabajando
         self.etiquetador = None
@@ -4603,10 +4810,12 @@ class Player(QWidget):
         if carpeta:
             self.carpeta_musica = carpeta
             self.agregar([carpeta], avisar=True)
-            self.guardar_estado()
+            self.recordar_carpeta(carpeta)
 
     def _menu_agregar(self):
         menu = Menu(self)
+        menu.addAction(tr("Música y listas…", "Music and playlists…"), self.abrir_musica)
+        menu.addSeparator()
         menu.addAction(tr("Agregar archivos…", "Add files…"), self.abrir)
         menu.addAction(tr("Agregar una carpeta…", "Add a folder…"), self.abrir_carpeta)
         menu.addSeparator()
@@ -4666,6 +4875,22 @@ class Player(QWidget):
         cache = Path(QStandardPaths.writableLocation(QStandardPaths.CacheLocation)) / "youtube"
         simpleplay_youtube.DialogoYouTube(self, tr, ESTADO.parent, cache).exec()
 
+    def vaciar_lista(self):
+        """Saca todos los temas de la lista (los archivos no se borran). No depende de la selección."""
+        self.buscador.clear()                # con un filtro activo "quitar" solo vería lo visible
+        if self.pistas:
+            self.quitar(list(range(len(self.pistas))))
+        self.lista_actual = ""
+
+    def recordar_carpeta(self, carpeta):
+        """Anota la carpeta como una de las de la biblioteca (las últimas ocho, la más reciente primero)."""
+        carpeta = str(carpeta)
+        self.carpetas_musica = ([carpeta] + [c for c in self.carpetas_musica if c != carpeta])[:8]
+        self.guardar_estado()
+
+    def abrir_musica(self):
+        return self._abrir_panel(DialogoMusica)
+
     def abrir_lista(self, ruta=None):
         """Reemplaza la lista actual por la de un archivo M3U/M3U8; avisa cuántas entradas no se encontraron."""
         if not ruta:
@@ -4683,9 +4908,7 @@ class Player(QWidget):
             self._aviso(tr("La lista no tiene temas que se encuentren", "No tracks of that list were found"))
             return
         self.buscador.clear()                # con un filtro activo "quitar" solo vería lo visible
-        if self.pistas:
-            self.lista.selectAll()
-            self.quitar()
+        self.vaciar_lista()
         self.agregar(temas)
         self.carpeta_musica = str(Path(temas[0]).parent)
         self.lista_actual = str(Path(ruta).resolve())
@@ -4924,9 +5147,9 @@ class Player(QWidget):
         self.modo_orden = "manual"
         self.guardar_estado()
 
-    def quitar(self):
-        """Quita de la lista los temas seleccionados (los archivos no se borran)."""
-        filas = self.filas_elegidas()
+    def quitar(self, filas=None):
+        """Quita de la lista los temas seleccionados, o los de `filas` si se dan (los archivos no se borran)."""
+        filas = self.filas_elegidas() if filas is None else sorted(set(filas))
         if not filas:
             return
         actual_quitado = self.actual in filas
@@ -5469,6 +5692,7 @@ class Player(QWidget):
                  "shuffle": self.btn_shuffle.isChecked(), "repetir": self.repetir,
                  "shuffle_ya": sorted(self._ya_sonaron),
                  "carpeta": self.carpeta_musica, "carpeta_listas": self.carpeta_listas,
+                 "carpetas_musica": self.carpetas_musica,
                  "lista_actual": self.lista_actual, "orden_original": self.orden_original,
                  "compacto": self.compacto, "ocultar_controles": self.ocultar_controles, "normalizar": self.normalizar, "preset": self.preset,
                  "eq_personal": self.eq_personal, "mis_presets": self.mis_presets,
@@ -5521,6 +5745,9 @@ class Player(QWidget):
         self.poner_repetir(d.get("repetir", "off"))
         self.carpeta_musica = d.get("carpeta", "")
         self.carpeta_listas = d.get("carpeta_listas", "")
+        cm = d.get("carpetas_musica")
+        if isinstance(cm, list):
+            self.carpetas_musica = [c for c in cm if isinstance(c, str)][:8]
         self.lista_actual = d.get("lista_actual", "")
         self.poner_compacto(bool(d.get("compacto")), animar=False)
         if not con_pistas:
