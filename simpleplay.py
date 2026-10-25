@@ -3106,7 +3106,36 @@ def curva_de_preset(nombre, personal=None, mios=None):
     return None
 
 
+ESTILO_BUSCAR = """
+    QPushButton#seg { background: rgba(255,255,255,22); padding: 6px 14px; border-radius: 11px; color: rgba(255,255,255,200); }
+    QPushButton#seg:checked { background: rgba(255,255,255,60); color: white; }
+    QPushButton#seg:hover { background: rgba(255,255,255,45); }
+    QPushButton#texto { background: transparent; color: rgba(255,255,255,150); padding: 8px 6px; }
+    QPushButton#texto:hover { color: white; }"""
+
+
+def selector_ecualizador(player, actual):
+    """El interruptor «Gráfico | Paramétrico» de arriba de los dos ecualizadores: tocar el otro cambia de panel."""
+    fila = QHBoxLayout()
+    fila.setSpacing(6)
+    fila.addWidget(titulo_panel(tr("Ecualizador", "Equalizer")))
+    fila.addStretch(1)
+    for clave, txt, abrir in (("grafico", tr("Gráfico", "Graphic"), player.ecualizador),
+                              ("parametrico", tr("Paramétrico", "Parametric"), player.parametrico)):
+        b = QPushButton(txt)
+        b.setObjectName("seg")
+        b.setCheckable(True)
+        b.setChecked(clave == actual)
+        if clave != actual:
+            b.clicked.connect(lambda _=False, f=abrir: QTimer.singleShot(0, f))
+        else:
+            b.clicked.connect(lambda _=False, b=b: b.setChecked(True))
+        fila.addWidget(b)
+    return fila
+
+
 class DialogoEcualizador(PanelLateral):
+    ESTILO_EXTRA = ESTILO_BUSCAR
     """Ecualizador gráfico de 10 bandas (31 Hz a 16 kHz, ±12 dB). Cada cambio suena enseguida y queda guardado como 'Mi sonido'."""
     def __init__(self, player):
         super().__init__(player)
@@ -3156,18 +3185,24 @@ class DialogoEcualizador(PanelLateral):
         guardar.setToolTip(tr("Guarda esta curva con un nombre, para volver a elegirla desde el menú Sonido.",
                               "Saves this curve under a name, so you can pick it again from the Sound menu."))
         guardar.clicked.connect(self._guardar_preset)
+        borrar = None
+        if player.mis_presets:
+            borrar = QPushButton(tr("Borrar preset…", "Delete preset…"))
+            borrar.clicked.connect(lambda: self._borrar_preset(borrar))
         abajo = QVBoxLayout()                       # en dos filas: con todo en una el panel se ensancha y no entra en pantallas chicas
         fila1, fila2 = QHBoxLayout(), QHBoxLayout()
         fila1.addWidget(self.partir)
         fila1.addWidget(afinar)
         fila1.addStretch(1)
         fila2.addStretch(1)
+        if borrar is not None:
+            fila2.addWidget(borrar)
         fila2.addWidget(guardar)
         fila2.addWidget(listo)
         abajo.addLayout(fila1)
         abajo.addLayout(fila2)
         lay = self.lay
-        lay.addWidget(titulo_panel(tr("Ecualizador", "Equalizer")))
+        lay.addLayout(selector_ecualizador(player, "grafico"))
         lay.addLayout(cols, 1)
         lay.addLayout(abajo)
         self._timer = QTimer(self)
@@ -3185,6 +3220,17 @@ class DialogoEcualizador(PanelLateral):
 
     def _aplicar(self):
         self.player.poner_curva_personal(self.curva())
+
+    def _borrar_preset(self, boton):
+        menu = Menu(self)
+        for n in list(self.player.mis_presets):
+            menu.addAction(n, lambda n=n: self._quitar_preset(n, boton))
+        menu.exec(boton.mapToGlobal(QPoint(0, boton.height())))
+
+    def _quitar_preset(self, nombre, boton):
+        self.player.borrar_mi_preset(nombre)
+        if not self.player.mis_presets:
+            boton.hide()
 
     def _guardar_preset(self):
         self._asentar()
@@ -3533,14 +3579,6 @@ class CurvaSonido(QWidget):
         p.drawPath(ruta)
 
 
-ESTILO_BUSCAR = """
-    QPushButton#seg { background: rgba(255,255,255,22); padding: 6px 14px; border-radius: 11px; color: rgba(255,255,255,200); }
-    QPushButton#seg:checked { background: rgba(255,255,255,60); color: white; }
-    QPushButton#seg:hover { background: rgba(255,255,255,45); }
-    QPushButton#texto { background: transparent; color: rgba(255,255,255,150); padding: 8px 6px; }
-    QPushButton#texto:hover { color: white; }"""
-
-
 class SliderCentrado(QSlider):
     """Un control horizontal con el cero en el medio: lo que se llena es el tramo entre el cero y la manija (hacia la izquierda si
     baja, hacia la derecha si sube). Doble clic lo devuelve a cero."""
@@ -3855,6 +3893,7 @@ class CurvaParametrica(QWidget):
 class DialogoParametrico(PanelLateral):
     """Ecualizador paramétrico: 5 bandas, cada una con su frecuencia, su ganancia (±12 dB) y su ancho Q. Suena enseguida y
     queda guardado."""
+    ESTILO_EXTRA = ESTILO_BUSCAR
     def __init__(self, player):
         super().__init__(player)
         self.player = player
@@ -3862,7 +3901,7 @@ class DialogoParametrico(PanelLateral):
         self.filas = []
         self.curva = CurvaParametrica()
         lay = self.lay
-        lay.addWidget(titulo_panel(tr("Ecualizador paramétrico", "Parametric equalizer")))
+        lay.addLayout(selector_ecualizador(player, "parametrico"))
         lay.addWidget(self.curva)
         grilla = QGridLayout()
         grilla.setHorizontalSpacing(8)
@@ -5444,12 +5483,18 @@ class Player(QWidget):
         return self._panel
 
     def ecualizador(self):
+        self.eq_vista = "grafico"
         return self._abrir_panel(DialogoEcualizador)
+
+    def abrir_ecualizador(self):
+        """«Ecualizador…» del menú: abre el último que se usó, el gráfico o el paramétrico."""
+        return self.parametrico() if getattr(self, "eq_vista", "grafico") == "parametrico" else self.ecualizador()
 
     def afinar_al_oido(self):
         return self._abrir_panel(DialogoBuscarSonido)
 
     def parametrico(self):
+        self.eq_vista = "parametrico"
         return self._abrir_panel(DialogoParametrico)
 
     def espacial(self):
@@ -5471,6 +5516,17 @@ class Player(QWidget):
         self.balance = max(-100, min(100, int(round(pct))))
         self._aplicar_espacial()
         self.guardar_estado()
+
+    def alternar_crossfeed(self, si=None):
+        """El interruptor del menú: apaga el crossfeed y lo vuelve a prender en el nivel que tenía (Medio si nunca lo usó)."""
+        if si is None:
+            si = self.crossfeed == 0
+        if si:
+            self.poner_crossfeed(getattr(self, "_crossfeed_ult", 0) or 2)
+        else:
+            if self.crossfeed:
+                self._crossfeed_ult = self.crossfeed
+            self.poner_crossfeed(0)
 
     def poner_crossfeed(self, nivel):
         self.crossfeed = max(0, min(len(CROSSFEED_NIVELES) - 1, int(nivel)))
@@ -5654,19 +5710,17 @@ class Player(QWidget):
                 b.setCheckable(True)
                 b.setChecked(self.preset == "mio:" + n)
                 b.triggered.connect(lambda _=False, n=n: self.poner_preset("mio:" + n))
-            if self.mis_presets:
-                borrar = sub.addMenu(tr("Borrar un preset", "Delete a preset"))
-                for n in self.mis_presets:
-                    borrar.addAction(n, lambda n=n: self.borrar_mi_preset(n))
             b = sub.addAction(tr("Paramétrico", "Parametric"))
             b.setCheckable(True)
             b.setChecked(self.preset == "parametrico")
             b.triggered.connect(lambda _=False: self.poner_preset("parametrico"))
             sub.addSeparator()
-            sub.addAction(tr("Ecualizador gráfico…", "Graphic equalizer…"), self.ecualizador)
-            sub.addAction(tr("Ecualizador paramétrico…", "Parametric equalizer…"), self.parametrico)
-            sub.addAction(tr("Buscar mi sonido…", "Find my sound…"), self.afinar_al_oido)
+            sub.addAction(tr("Ecualizador…", "Equalizer…"), self.abrir_ecualizador)
         sub.addSeparator()
+        cf = sub.addAction(tr("Crossfeed (auriculares)", "Crossfeed (headphones)"))
+        cf.setCheckable(True)
+        cf.setChecked(self.crossfeed > 0)
+        cf.triggered.connect(lambda si: self.alternar_crossfeed(bool(si)))
         sub.addAction(tr("Balance y espacio…", "Balance and space…"), self.espacial)
         # los perfiles de auriculares: una corrección medida para cada modelo, que se baja una vez y queda guardada
         sub.addSeparator()

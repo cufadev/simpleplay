@@ -31,6 +31,9 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
   trash. It only shows what it would do unless `--aplicar` is given. Remixes and live versions are not treated as duplicates.
 
 ### Changed
+- **A simpler Sound menu.** The Sound menu keeps what you reach for often (normalize, presets, a Crossfeed switch that
+  remembers its level, Balance and space, Headphones) and a single "Equalizer…" entry. The equalizer is one panel with a
+  Graphic | Parametric switch; Find my sound, save preset and delete preset live inside it.
 - **Ctrl+F and Ctrl+Alt+M toggle**: pressed again, the search closes and the Mosquito panel closes. Mosquito's shortcut is
   now Ctrl+Alt+M (some desktops keep Ctrl+Shift+M, which still works where it is free).
 - **Music and playlists panel** (the **+** menu > Music and playlists…). Saved folders and saved playlists as big rows you can

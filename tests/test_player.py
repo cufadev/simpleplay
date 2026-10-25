@@ -1729,8 +1729,12 @@ class TestEcualizadorGrafico(Base):
         menu = S.Menu()
         self.w._menu_sonido(menu, anidado=False)
         textos = [a.text() for a in menu.actions()]
-        self.assertIn("Ecualizador gráfico…", textos)
-        self.assertIn("Buscar mi sonido…", textos)
+        self.assertIn("Ecualizador…", textos)
+        self.w.abrir_ecualizador()                                     # «Buscar mi sonido» está adentro del panel
+        espera(0.3)
+        from PySide6.QtWidgets import QPushButton
+        self.assertIn("Buscar mi sonido…", [b.text() for b in self.w._panel.findChildren(QPushButton)])
+        self.w._panel.cerrar_ya()
         self.assertNotIn("Mi sonido", textos)                          # todavía no hay
         self.w.poner_curva_personal([1] * 10)
         menu = S.Menu()
@@ -1821,6 +1825,44 @@ class TestAtajosQueAlternan(Base):
         espera(0.3)
         self.assertFalse(self.w._panel.isVisible())
         self.assertIsNotNone(getattr(self.w, "_mosquito", None))     # cerrar el panel no apaga Mosquito
+
+
+class TestMenuSonidoSimple(Base):
+    def test_el_crossfeed_se_prende_y_apaga_y_recuerda_el_nivel(self):
+        self.cargar(A)
+        self.w.poner_crossfeed(3)
+        self.w.alternar_crossfeed(False)
+        self.assertEqual(self.w.crossfeed, 0)
+        self.w.alternar_crossfeed(True)
+        self.assertEqual(self.w.crossfeed, 3)             # vuelve al nivel que tenía
+        self.w.alternar_crossfeed(False)
+        self.w._crossfeed_ult = 0
+        self.w.alternar_crossfeed()                       # sin nivel anterior: Medio
+        self.assertEqual(self.w.crossfeed, 2)
+
+    def test_el_menu_tiene_un_solo_ecualizador_y_el_interruptor(self):
+        from PySide6.QtWidgets import QMenu
+        self.cargar(A)
+        m = QMenu()
+        self.w._menu_sonido(m, anidado=False)
+        textos = [a.text() for a in m.actions()]
+        self.assertIn("Crossfeed (auriculares)", textos)
+        self.assertEqual(sum(1 for t in textos if t.startswith("Ecualizador")), 1)
+        for viejo in ("Ecualizador gráfico…", "Ecualizador paramétrico…", "Buscar mi sonido…", "Borrar un preset"):
+            self.assertNotIn(viejo, textos)
+
+    def test_el_panel_cambia_entre_grafico_y_parametrico_y_recuerda_el_ultimo(self):
+        self.cargar(A)
+        self.w.abrir_ecualizador()
+        espera(0.3)
+        self.assertIsInstance(self.w._panel, S.DialogoEcualizador)
+        self.w.parametrico()
+        espera(0.3)
+        self.assertIsInstance(self.w._panel, S.DialogoParametrico)
+        self.w._panel.cerrar_ya()
+        self.w.abrir_ecualizador()                        # abre el último que se usó
+        espera(0.3)
+        self.assertIsInstance(self.w._panel, S.DialogoParametrico)
 
 
 class TestPanelMosquito(Base):
