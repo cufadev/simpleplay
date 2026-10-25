@@ -19,6 +19,7 @@ import shutil
 import socket
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -259,6 +260,7 @@ class Mosquito(QObject):
             self.clave, self._puerto_guardado, self.recordado = guardado[0], guardado[1], True
         self.ip = _ip_local()
         self._lock = threading.Lock()
+        self.ultimo_contacto = 0.0          # cuándo preguntó por última vez el celular (para el estado del panel del QR)
         self._estado = {"titulo": "", "artista": "", "pos": 0.0, "dur": 0.0, "suena": False, "tapa": ""}
         self._tapa = b""
         self._lista = b"[]"
@@ -314,6 +316,11 @@ class Mosquito(QObject):
 
     # --- ciclo de vida ---
     @property
+    def conectado(self):
+        """True si un celular preguntó por el estado en los últimos segundos (la página lo hace cada 1,5 s)."""
+        return time.monotonic() - self.ultimo_contacto < 4.0
+
+    @property
     def url(self):
         return f"http://{self.ip}:{self.puerto}/c/{self.clave}/"
 
@@ -354,6 +361,7 @@ class Mosquito(QObject):
                 if r == "":
                     return self._responder(200, "text/html; charset=utf-8", PAGINA.encode())
                 if r == "estado":
+                    mosq.ultimo_contacto = time.monotonic()
                     with mosq._lock:
                         d = json.dumps(mosq._estado).encode()
                     return self._responder(200, "application/json", d)

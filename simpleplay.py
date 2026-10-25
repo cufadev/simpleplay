@@ -4020,48 +4020,187 @@ class DialogoEspacial(PanelLateral):
         self.player.poner_crossfeed(i)
 
 
+class Interruptor(QAbstractButton):
+    """Un interruptor de dos estados (pastilla con perilla), para las opciones de sí o no que van en una fila."""
+    def __init__(self, marcado=False):
+        super().__init__()
+        self.setCheckable(True)
+        self.setChecked(marcado)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(40, 24)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(ACENTO) if self.isChecked() else QColor(255, 255, 255, 50))
+        p.drawRoundedRect(QRectF(0, 0, 40, 24), 12, 12)
+        p.setBrush(QColor("white"))
+        p.drawEllipse(QPointF(28 if self.isChecked() else 12, 12), 9, 9)
+
+
+class PuntoEstado(QWidget):
+    """El puntito del estado: gris si no hay nadie, con el acento y un halo si hay un celular conectado."""
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(14, 14)
+        self.activo = False
+
+    def poner(self, si):
+        self.activo = si
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        if self.activo:
+            halo = QColor(ACENTO)
+            halo.setAlpha(60)
+            p.setBrush(halo)
+            p.drawEllipse(QPointF(7, 7), 7, 7)
+            p.setBrush(QColor(ACENTO))
+        else:
+            p.setBrush(QColor(255, 255, 255, 90))
+        p.drawEllipse(QPointF(7, 7), 4, 4)
+
+
 class DialogoMosquito(PanelLateral):
     """El QR de Mosquito, en un panel al costado del reproductor (como los del sonido). Cerrarlo NO apaga el control
     remoto: sigue andando mientras el reproductor esté abierto; para cortarlo está «Apagar Mosquito»."""
+    ESTILO_EXTRA = ESTILO_BUSCAR + """
+        QFrame#paso { background: rgba(255,255,255,16); border-radius: 12px; }
+        QFrame#enlace { background: rgba(255,255,255,14); border-radius: 12px; }
+        QLabel#num { background: rgba(255,255,255,26); color: white; border-radius: 10px; font-size: 11px; font-weight: 700; }
+        QPushButton#texto_rojo { background: transparent; color: rgba(255,255,255,130); padding: 8px 6px; }
+        QPushButton#texto_rojo:hover { color: #ff6b6b; }"""
+
     def __init__(self, player, mosquito, pixmap_qr):
         super().__init__(player)
         self.mosquito = mosquito
         self.setWindowTitle("Mosquito")
         self.cuerpo.setMinimumWidth(300)
-        self.lay.addWidget(titulo_panel("Mosquito"))
-        texto = QLabel(tr("Escaneá el código con el celular (en el mismo wifi). Podés cerrar este panel: el control "
-                          "sigue andando mientras el reproductor esté abierto.",
-                          "Scan the code with your phone (same wifi). You can close this panel: the remote keeps "
-                          "working while the player is open."))
-        texto.setWordWrap(True)
-        self.lay.addWidget(texto)
+        lay = self.lay
+        lay.setSpacing(12)
+
+        cab = QHBoxLayout()
+        cab.setSpacing(8)
+        cab.addWidget(titulo_panel("Mosquito"))
+        cab.addStretch(1)
+        self.punto = PuntoEstado()
+        self.estado = QLabel()
+        self.estado.setStyleSheet("color: rgba(255,255,255,150); font-size: 11px; font-weight: 600;")
+        cab.addWidget(self.punto, 0, Qt.AlignVCenter)
+        cab.addWidget(self.estado, 0, Qt.AlignVCenter)
+        lay.addLayout(cab)
+
+        sub = QLabel(tr("Controlá la música desde el celular.", "Control the music from your phone."))
+        sub.setStyleSheet("color: rgba(255,255,255,120); font-size: 11px;")
+        lay.addWidget(sub)
+
+        # el QR sobre una tarjeta blanca con aire alrededor: así el lector lo toma de lejos y no se pega al borde del panel
+        tarjeta = QFrame()
+        tarjeta.setObjectName("tarjeta_qr")
+        tarjeta.setStyleSheet("QFrame#tarjeta_qr { background: transparent; }")
+        tl = QVBoxLayout(tarjeta)
+        tl.setContentsMargins(0, 2, 0, 2)
         if pixmap_qr is not None:
             q = QLabel()
             q.setPixmap(pixmap_qr)
             q.setAlignment(Qt.AlignCenter)
-            self.lay.addWidget(q)
+            q.setStyleSheet("background: transparent;")
+            tl.addWidget(q)
         else:
-            self.lay.addWidget(QLabel(tr("Para ver el QR: pip install qrcode", "To show the QR: pip install qrcode")))
-        self.recordar = QCheckBox(tr("Recordar este celular", "Remember this phone"))
-        self.recordar.setToolTip(tr("La clave no cambia y Mosquito arranca solo con el reproductor: no hay que escanear de nuevo.",
-                                    "The key stays the same and Mosquito starts with the player: no need to scan again."))
-        self.recordar.setStyleSheet("QCheckBox { color: #cfcfd4; spacing: 8px; }")
-        self.recordar.setChecked(mosquito.recordado)
+            f = QLabel(tr("Para ver el QR:\npip install qrcode", "To show the QR:\npip install qrcode"))
+            f.setAlignment(Qt.AlignCenter)
+            f.setStyleSheet("color: #333; background: transparent; padding: 40px;")
+            tl.addWidget(f)
+        lay.addWidget(tarjeta, 0, Qt.AlignHCenter)
+
+        pasos = QFrame()
+        pasos.setObjectName("paso")
+        pl = QVBoxLayout(pasos)
+        pl.setContentsMargins(12, 10, 12, 10)
+        pl.setSpacing(8)
+        for n, txt in ((1, tr("Celular y PC en el mismo wifi", "Phone and PC on the same wifi")),
+                       (2, tr("Abrí la cámara y escaneá el código", "Open the camera and scan the code"))):
+            fila = QHBoxLayout()
+            fila.setSpacing(10)
+            num = QLabel(str(n))
+            num.setObjectName("num")
+            num.setFixedSize(20, 20)
+            num.setAlignment(Qt.AlignCenter)
+            t = QLabel(txt)
+            t.setWordWrap(True)
+            t.setStyleSheet("color: #e6e6ea; font-size: 12px;")
+            fila.addWidget(num, 0, Qt.AlignTop)
+            fila.addWidget(t, 1)
+            pl.addLayout(fila)
+        lay.addWidget(pasos)
+
+        enlace = QFrame()
+        enlace.setObjectName("enlace")
+        el = QHBoxLayout(enlace)
+        el.setContentsMargins(12, 4, 4, 4)
+        el.setSpacing(6)
+        url = QLabel()
+        url.setStyleSheet("color: rgba(255,255,255,140); font-size: 11px;")
+        url.setText(QFontMetrics(url.font()).elidedText(mosquito.url.replace("http://", ""), Qt.ElideRight, 190))
+        url.setToolTip(mosquito.url)
+        self.copiar = QPushButton(tr("Copiar", "Copy"))
+        self.copiar.setObjectName("texto")
+        self.copiar.setCursor(Qt.PointingHandCursor)
+        self.copiar.clicked.connect(self._copiar)
+        el.addWidget(url, 1)
+        el.addWidget(self.copiar)
+        lay.addWidget(enlace)
+
+        rec = QHBoxLayout()
+        rec.setSpacing(10)
+        col = QVBoxLayout()
+        col.setSpacing(0)
+        t1 = QLabel(tr("Recordar este celular", "Remember this phone"))
+        t1.setStyleSheet("color: white; font-size: 12px; font-weight: 600;")
+        t2 = QLabel(tr("No hay que escanear de nuevo", "No need to scan again"))
+        t2.setStyleSheet("color: rgba(255,255,255,110); font-size: 11px;")
+        col.addWidget(t1)
+        col.addWidget(t2)
+        self.recordar = Interruptor(mosquito.recordado)
+        self.recordar.setToolTip(tr("La clave no cambia y Mosquito arranca solo con el reproductor.",
+                                    "The key stays the same and Mosquito starts with the player."))
         self.recordar.toggled.connect(mosquito.recordar)
-        self.lay.addWidget(self.recordar)
-        enlace = QLabel(mosquito.url)
-        enlace.setWordWrap(True)
-        enlace.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        enlace.setStyleSheet("color: rgba(255,255,255,120); font-size: 11px;")
-        self.lay.addWidget(enlace)
-        cerrar = QPushButton(tr("Cerrar (sigue activo)", "Close (stays on)"))
-        cerrar.setObjectName("principal")
-        cerrar.clicked.connect(self.reject)
+        rec.addLayout(col, 1)
+        rec.addWidget(self.recordar, 0, Qt.AlignVCenter)
+        lay.addLayout(rec)
+
+        listo = QPushButton(tr("Listo", "Done"))
+        listo.setObjectName("principal")
+        listo.setToolTip(tr("Cierra el panel: Mosquito sigue activo", "Closes the panel: Mosquito stays on"))
+        listo.clicked.connect(self.reject)
         apagar = QPushButton(tr("Apagar Mosquito", "Turn Mosquito off"))
+        apagar.setObjectName("texto_rojo")
+        apagar.setCursor(Qt.PointingHandCursor)
         apagar.clicked.connect(self._apagar)
-        self.lay.addWidget(cerrar)
-        self.lay.addWidget(apagar)
+        lay.addWidget(listo)
+        lay.addWidget(apagar, 0, Qt.AlignHCenter)
         self.apagado = False
+
+        self._vigia = QTimer(self)
+        self._vigia.setInterval(1000)
+        self._vigia.timeout.connect(self._estado)
+        self._vigia.start()
+        self._estado()
+
+    def _estado(self):
+        si = bool(self.mosquito.conectado)
+        self.punto.poner(si)
+        self.estado.setText(tr("Celular conectado", "Phone connected") if si else tr("Esperando el celular", "Waiting for a phone"))
+        self.estado.setStyleSheet(f"color: {'white' if si else 'rgba(255,255,255,150)'}; font-size: 11px; font-weight: 600;")
+
+    def _copiar(self):
+        QApplication.clipboard().setText(self.mosquito.url)
+        self.copiar.setText(tr("Copiado", "Copied"))
+        QTimer.singleShot(1500, lambda: self.copiar.setText(tr("Copiar", "Copy")))
 
     def _apagar(self):
         self.apagado = True
@@ -4508,7 +4647,7 @@ class Player(QWidget):
         if mosquito is None:
             return
         import simpleplay_mosquito
-        qr = simpleplay_mosquito.pixmap_qr(mosquito.url, 232)
+        qr = simpleplay_mosquito.pixmap_qr(mosquito.url, 208)
         panel = self._abrir_panel(lambda p: DialogoMosquito(p, mosquito, qr))
 
         def cerrado(*_):

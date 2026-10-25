@@ -1738,6 +1738,37 @@ class TestEcualizadorGrafico(Base):
         self.assertIn("Mi sonido", [a.text() for a in menu.actions()])
 
 
+class TestPanelMosquito(Base):
+    def test_el_panel_dice_si_hay_un_celular_conectado(self):
+        import time
+        self.cargar(A)
+        self.w.abrir_mosquito()
+        espera(0.3)
+        m, panel = self.w._mosquito, self.w._panel
+        self.assertFalse(m.conectado)
+        self.assertFalse(panel.punto.activo)
+        m.ultimo_contacto = time.monotonic()          # el celular pregunta por el estado
+        panel._estado()
+        self.assertTrue(m.conectado)
+        self.assertTrue(panel.punto.activo)
+        m.ultimo_contacto = time.monotonic() - 10     # hace rato que no pregunta
+        self.assertFalse(m.conectado)
+
+    def test_recordar_con_el_interruptor_y_apagar_desde_el_panel(self):
+        self.cargar(A)
+        self.w.abrir_mosquito()
+        espera(0.3)
+        m, panel = self.w._mosquito, self.w._panel
+        self.assertFalse(panel.recordar.isChecked())
+        panel.recordar.click()
+        self.assertTrue(m.recordado)
+        panel.recordar.click()
+        self.assertFalse(m.recordado)
+        panel._apagar()
+        espera(0.3)
+        self.assertIsNone(getattr(self.w, "_mosquito", None))
+
+
 class TestPanelLateral(Base):
     """El ecualizador y el afinado se abren al costado de la ventana, con el mismo vidrio que el reproductor."""
 
