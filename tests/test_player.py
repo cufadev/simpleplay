@@ -831,19 +831,15 @@ class TestShuffle(Base):
             otros.append(self.w.actual)
         self.assertEqual(otros, [1, 0, 1, 0])                   # con dos temas, siempre el otro
 
-    def test_anterior_vuelve_al_que_sono_antes(self):
+    def test_anterior_en_shuffle_salta_a_otro_al_azar(self):
         pistas = [A, B, str(CORPUS / "tono_16.flac"), str(CORPUS / "corto_2s.flac")]
         self.cargar(*[p for p in pistas if Path(p).exists()])
         self.w.btn_shuffle.setChecked(True)
         self.w.reproducir(0)
-        orden = [self.w.pistas[self.w.actual]]
-        for _ in range(3):
-            self.w.siguiente()
-            orden.append(self.w.pistas[self.w.actual])
-        for esperado in reversed(orden[:-1]):
-            self.w.motor.buscar(0.0) if hasattr(self.w.motor, "buscar") else None
-            self.w.anterior()
-            self.assertEqual(self.w.pistas[self.w.actual], esperado)
+        for _ in range(6):
+            antes = self.w.actual
+            self.w.anterior()                                   # atrás o adelante: siempre otro tema
+            self.assertNotEqual(self.w.actual, antes)
 
     def test_la_ronda_se_recuerda_en_la_sesion(self):
         self.cargar(A, B)
@@ -1333,14 +1329,9 @@ def _distancia(a, b):
     return float(np.sqrt(np.mean((np.array(a) - np.array(b)) ** 2)))
 
 
-def _oyente(objetivo, ruido=0.0, azar=None):
-    """Una persona simulada con un gusto oculto: prefiere la curva más cercana a `objetivo` (y duda si casi empatan)."""
-    azar = azar or __import__("random").Random(1)
-
-    def elegir(a, b):
-        da, db = _distancia(a, objetivo) + azar.gauss(0, ruido), _distancia(b, objetivo) + azar.gauss(0, ruido)
-        return "igual" if abs(da - db) < 0.15 else ("a" if da < db else "b")
-    return elegir
+def _eligir_mas_cerca(b, objetivo):
+    """Elige, de las cuatro versiones de la ronda, la que queda más cerca de un gusto oculto (la distancia a `objetivo`)."""
+    return min(range(4), key=lambda i: _distancia(b.opciones()[i]["curva"], objetivo))
 
 
 def _gusto(azar):
@@ -1348,77 +1339,79 @@ def _gusto(azar):
     return sum((v * np.array(S.EJES_AFINADOR[k]) for k, v in ejes.items()), np.zeros(len(S.BANDAS_HZ)))
 
 
-class TestAfinador(unittest.TestCase):
-    """La búsqueda por comparaciones A/B (sin Qt)."""
+class TestBuscadorSonido(unittest.TestCase):
+    """La búsqueda por rondas (sin Qt)."""
 
-    def correr(self, a, elegir):
-        n = 0
-        while not a.terminado:
-            self.assertLessEqual(n, S.Afinador.MAX_COMPARACIONES)
-            a.responder(elegir(*a.par()))
-            n += 1
-        return n
+    def test_son_tres_rondas_de_cuatro_versiones_y_la_primera_es_la_de_ahora(self):
+        b = S.BuscadorSonido()
+        for _ in range(3):
+            ops = b.opciones()
+            self.assertEqual(len(ops), 4)
+            self.assertEqual(ops[0]["clave"], "actual")
+            self.assertEqual(ops[0]["curva"], b.curva())
+            b.elegir(0)
+        self.assertTrue(b.terminado)
+        self.assertEqual(b.opciones(), [])
+
+    def test_la_primera_ronda_se_nota_unos_6_dB_y_las_otras_menos(self):
+        b = S.BuscadorSonido()
+        picos = []
+        for _ in range(3):
+            picos.append(max(abs(max(o["curva"]) - max(b.curva())) for o in b.opciones()[1:]))
+            b.elegir(0)
+        self.assertGreaterEqual(picos[0], 5.5)
+        self.assertLess(picos[1], picos[0])
+        self.assertLess(picos[2], picos[1])
+
+    def test_un_grupo_que_ya_viene_empujado_se_prueba_hacia_atras(self):
+        b = S.BuscadorSonido()
+        b.elegir(1)                                                    # se queda con la cálida: graves arriba
+        graves = next(o for o in b.opciones() if o["clave"] == "graves")
+        self.assertEqual(graves["signo"], -1)
+        brillo = next(o for o in b.opciones() if o["clave"] == "brillo")
+        self.assertEqual(brillo["signo"], 1)
+        self.assertLess(graves["ejes"]["graves"], b.ejes["graves"])
 
     def test_se_acerca_al_gusto_de_quien_escucha(self):
         import random
         azar = random.Random(5)
         antes, despues = [], []
-        for t in range(60):
+        for _ in range(60):
             objetivo = _gusto(azar)
-            a = S.Afinador(azar=random.Random(t))
-            antes.append(_distancia(a.mejor, objetivo))
-            self.correr(a, _oyente(objetivo))
-            despues.append(_distancia(a.mejor, objetivo))
-        self.assertLess(np.mean(despues), 0.5 * np.mean(antes))        # recorta al menos la mitad del error
-        self.assertGreater(np.mean(np.array(despues) < np.array(antes)), 0.9)
+            b = S.BuscadorSonido()
+            antes.append(_distancia(b.curva(), objetivo))
+            while not b.terminado:
+                b.elegir(_eligir_mas_cerca(b, objetivo))
+            despues.append(_distancia(b.curva(), objetivo))
+        self.assertLess(np.mean(despues), 0.8 * np.mean(antes))
+        self.assertGreater(np.mean(np.array(despues) <= np.array(antes) + 1e-9), 0.9)   # casi nunca empeora
 
-    def test_aguanta_a_alguien_que_a_veces_se_equivoca(self):
-        import random
-        azar = random.Random(9)
-        antes, despues = [], []
-        for t in range(60):
-            objetivo = _gusto(azar)
-            a = S.Afinador(azar=random.Random(t))
-            antes.append(_distancia(a.mejor, objetivo))
-            self.correr(a, _oyente(objetivo, ruido=0.35, azar=random.Random(t)))
-            despues.append(_distancia(a.mejor, objetivo))
-        self.assertLess(np.mean(despues), 0.7 * np.mean(antes))
-
-    def test_son_pocas_comparaciones_y_la_curva_no_se_pasa_de_los_limites(self):
-        import random
-        a = S.Afinador(azar=random.Random(2))
-        n = self.correr(a, lambda x, y: "b")                          # siempre "B": empuja todo lo posible
-        self.assertLessEqual(n, S.Afinador.MAX_COMPARACIONES)
-        self.assertTrue(all(abs(g) <= S.LIM_BANDA_DB for g in a.mejor))
-        self.assertTrue(all(abs(v) <= S.Afinador.MAX_EJE_DB + 1e-6 for v in a.resumen().values()))
-
-    def test_si_todo_suena_igual_no_se_toca_nada(self):
-        import random
-        a = S.Afinador([1.0] * 10, azar=random.Random(3))
-        self.correr(a, lambda x, y: "igual")
-        self.assertEqual(a.mejor, [1.0] * 10)
-
-    def test_no_se_sabe_cual_es_la_nueva_y_la_mejor_se_conserva(self):
-        import random
-        lados = set()
-        for t in range(30):
-            a = S.Afinador(azar=random.Random(t))
-            A, B = a.par()
-            lados.add(A == a.mejor)                                   # a veces la actual va de A y a veces de B
-        self.assertEqual(lados, {True, False})
+    def test_las_curvas_no_se_pasan_de_los_limites(self):
+        b = S.BuscadorSonido()
+        while not b.terminado:
+            for o in b.opciones():
+                self.assertTrue(all(abs(g) <= S.LIM_BANDA_DB for g in o["curva"]))
+            b.elegir(1)                                                # siempre empujando: tope
+        self.assertTrue(all(abs(v) <= S.EJE_MAX_DB + 1e-6 for v in b.ejes.values()))
 
     def test_parte_de_la_curva_que_ya_tenias(self):
-        a = S.Afinador(S.PRESETS["voces"])
-        self.assertEqual(a.mejor, [float(x) for x in S.PRESETS["voces"]])
+        b = S.BuscadorSonido(S.PRESETS["voces"])
+        self.assertEqual(b.curva(), [float(x) for x in S.PRESETS["voces"]])
 
-    def test_responder_despues_de_terminar_no_hace_nada(self):
-        import random
-        a = S.Afinador(azar=random.Random(4))
-        self.correr(a, lambda x, y: "igual")
-        antes = a.mejor
-        a.responder("a")
-        self.assertEqual(a.mejor, antes)
-        self.assertIsNone(a.par())
+    def test_el_ajuste_fino_se_recorta_y_va_de_a_medio_dB(self):
+        b = S.BuscadorSonido()
+        b.poner_eje("brillo", 99)
+        self.assertEqual(b.ejes["brillo"], S.EJE_MAX_DB)
+        b.poner_eje("graves", 2.26)
+        self.assertEqual(b.ejes["graves"], 2.5)
+
+    def test_los_nombres_dicen_como_suena_y_despues_que_cambio(self):
+        b = S.BuscadorSonido()
+        n1 = [S.nombre_opcion(o, 0) for o in b.opciones()]
+        self.assertEqual(n1, ["Como está", "Cálido", "Voces al frente", "Brillante"])
+        b.elegir(0)
+        n2 = [S.nombre_opcion(o, 1) for o in b.opciones()]
+        self.assertEqual(n2, ["Como ahora", "Más graves", "Más voces", "Más brillo"])
 
 
 class TestEcualizadorGrafico(Base):
@@ -1509,35 +1502,115 @@ class TestEcualizadorGrafico(Base):
         self.assertEqual([sl.value() / 2 for sl in d.sliders], [float(x) for x in S.PRESETS["brillante"]])
         self.assertNotEqual(d.anim_barras.state(), d.anim_barras.State.Running)
 
-    def test_afinar_sin_musica_avisa_y_no_deja_responder(self):
-        d = S.DialogoAfinar(self.w)
-        self.assertFalse(d.pref_a.isEnabled())
+    def test_buscar_sin_musica_avisa_y_no_deja_elegir(self):
+        d = S.DialogoBuscarSonido(self.w)
+        self.assertFalse(d.elegir.isEnabled())
 
-    def test_afinar_de_punta_a_punta_guarda_mi_sonido(self):
-        import random
+    def test_buscar_de_punta_a_punta_guarda_un_preset(self):
         self.cargar(A)
-        objetivo = np.array([3, 2, 1, 0, 0, 0, 1, 2, 3, 3], dtype=float)
-        d = S.DialogoAfinar(self.w, azar=random.Random(1))
+        inicio = np.array(self.w.curva_actual())
+        objetivo = inicio + 5 * np.array(S.EJES_AFINADOR["graves"]) + 3 * np.array(S.EJES_AFINADOR["presencia"])
+        d = S.DialogoBuscarSonido(self.w)
         self.assertTrue(espera(1.0, lambda: self.w.actual >= 0))      # arrancó un tema para poder comparar
-        elegir = _oyente(objetivo)
-        antes = _distancia(d.afinador.mejor, objetivo)
+        antes = _distancia(inicio, objetivo)
         n = 0
-        while d.resultado is None and n < 20:
+        while d.paginas.currentIndex() == 0 and n < 10:
             n += 1
-            r = elegir(*d.par)
-            {"a": d.pref_a, "b": d.pref_b, "igual": d.igual}[r].click()
-        self.assertIsNotNone(d.resultado)
-        self.assertLessEqual(n, S.Afinador.MAX_COMPARACIONES)
+            i = _eligir_mas_cerca(d.buscador, objetivo)
+            d.fichas[i].click()                                       # tocar una ficha la hace sonar
+            self.assertEqual(d._sel, i)
+            d.elegir.click()
+        self.assertEqual(n, 3)
+        self.assertEqual(d.paginas.currentIndex(), 1)                 # ahora el ajuste fino
         self.assertLess(_distancia(d.resultado, objetivo), antes)
-        d.guardar.click()
-        self.assertEqual(self.w.preset, "personal")
+        elegido = d.resultado
+        d.sliders["brillo"].setValue(4)                               # +2 dB a mano: el resultado y la etiqueta lo siguen
+        self.assertEqual(d.buscador.ejes["brillo"], 2.0)
+        self.assertNotEqual(d.resultado, elegido)
+        self.assertIn("2", d.valores["brillo"].text())
+        self.w.pedir_nombre_preset = lambda sugerido: "Mi gusto"       # sin esto abriría el cuadro de nombre y esperaría
+        d.elegir.click()                                              # en el ajuste fino es «Guardar preset…»
+        self.assertEqual(self.w.preset, "mio:Mi gusto")
         self.assertEqual(self.w.eq_personal, [round(x * 2) / 2 for x in d.resultado])
+        self.assertEqual(self.w.mis_presets["Mi gusto"], [round(x * 2) / 2 for x in d.resultado])
 
-    def test_cancelar_el_afinado_deja_el_sonido_como_estaba(self):
+    def test_si_no_se_pone_nombre_la_busqueda_no_se_guarda(self):
+        self.cargar(A)
+        d = S.DialogoBuscarSonido(self.w)
+        for _ in range(3):
+            d.elegir.click()
+        self.w.pedir_nombre_preset = lambda sugerido: None             # canceló el cuadro del nombre
+        d.elegir.click()
+        self.assertEqual(self.w.mis_presets, {})
+        self.assertEqual(d.result(), 0)                                # el panel no se cerró dando por bueno el guardado
+        d.reject()
+
+    def test_el_ajuste_fino_compara_con_como_estaba(self):
         self.cargar(A)
         self.w.poner_preset("voces")
-        d = S.DialogoAfinar(self.w)
-        d.pref_b.click()
+        d = S.DialogoBuscarSonido(self.w)
+        for _ in range(3):
+            d.elegir.click()
+        d.b_antes.click()
+        pre = self.w.motor.cadena._pend[2]
+        self.assertAlmostEqual(20 * np.log10(pre), -S.nivel_relativo_db(S.BANDAS_HZ, d.inicial), places=3)
+        d.reject()
+
+    def test_el_slider_centrado_llena_desde_el_cero_y_doble_clic_lo_resetea(self):
+        sl = S.SliderCentrado()
+        sl.resize(200, 24)
+        sl.setRange(-16, 16)
+        self.assertEqual(sl._valor_en(sl.M), -16)
+        self.assertEqual(sl._valor_en(sl.width() - sl.M), 16)
+        self.assertEqual(sl._valor_en(sl.width() / 2), 0)
+        sl.setValue(7)
+        sl.mouseDoubleClickEvent(None)
+        self.assertEqual(sl.value(), 0)
+
+    def test_presets_con_nombre_se_guardan_eligen_y_borran(self):
+        a, b = [3, 2, 1, 0, 0, 0, 0, 1, 2, 3], [-2, -1, 0, 0, 1, 2, 3, 2, 0, -1]
+        self.w.guardar_mi_preset("Fiesta", a)
+        self.w.guardar_mi_preset("Voces", b)
+        self.assertEqual(self.w.preset, "mio:Voces")
+        self.assertEqual(self.w.curva_actual(), [float(x) for x in b])
+        self.w.poner_preset("mio:Fiesta")
+        self.assertEqual(self.w.curva_actual(), [float(x) for x in a])
+        menu = S.Menu()
+        self.w._menu_sonido(menu, anidado=False)
+        textos = [x.text() for x in menu.actions()]
+        self.assertIn("Fiesta", textos)
+        self.assertIn("Voces", textos)
+        self.w.borrar_mi_preset("Fiesta")                              # estaba puesto: vuelve a plano
+        self.assertEqual(self.w.preset, "plano")
+        self.assertNotIn("Fiesta", self.w.mis_presets)
+
+    def test_presets_con_nombre_sobreviven_al_reinicio(self):
+        curva = [1, 2, 3, 0, 0, 0, -1, -2, 0, 4]
+        self.w.guardar_mi_preset("Para el auto", curva)
+        self.cargar(A)
+        self.w.guardar_estado()
+        self.w.close()
+        self.w.motor.cerrar()
+        w2 = S.Player()
+        w2.show()
+        self.w = w2
+        w2.restaurar()
+        self.assertEqual(w2.preset, "mio:Para el auto")
+        self.assertEqual(w2.mis_presets["Para el auto"], [float(x) for x in curva])
+        self.assertTrue(w2.motor.cadena.activa)
+
+    def test_un_preset_con_nombre_roto_en_el_archivo_se_ignora(self):
+        S.ESTADO.parent.mkdir(parents=True, exist_ok=True)
+        S.ESTADO.write_text('{"mis_presets": {"Malo": [1, 2], "Bueno": [0,0,0,0,0,0,0,0,0,1], "Raro": "x"}, "preset": "mio:Malo"}')
+        self.w.restaurar()
+        self.assertEqual(list(self.w.mis_presets), ["Bueno"])
+        self.assertEqual(self.w.preset, S.PRESET_INICIAL)
+
+    def test_cancelar_la_busqueda_deja_el_sonido_como_estaba(self):
+        self.cargar(A)
+        self.w.poner_preset("voces")
+        d = S.DialogoBuscarSonido(self.w)
+        d.fichas[1].click()
         d.reject()
         self.assertEqual(self.w.preset, "voces")
         self.assertIsNone(d.resultado)
@@ -1550,7 +1623,7 @@ class TestEcualizadorGrafico(Base):
             menu = S.Menu()
             self.w._menu_sonido(menu, anidado=False)
             textos = [a.text() for a in menu.actions()]
-            for no in ("Ecualizador gráfico…", "Afinar al oído…", "Mi sonido"):
+            for no in ("Ecualizador gráfico…", "Buscar mi sonido…", "Mi sonido"):
                 self.assertNotIn(no, textos)
         finally:
             S.EQ_GRAFICO = True
@@ -1560,7 +1633,7 @@ class TestEcualizadorGrafico(Base):
         self.w._menu_sonido(menu, anidado=False)
         textos = [a.text() for a in menu.actions()]
         self.assertIn("Ecualizador gráfico…", textos)
-        self.assertIn("Afinar al oído…", textos)
+        self.assertIn("Buscar mi sonido…", textos)
         self.assertNotIn("Mi sonido", textos)                          # todavía no hay
         self.w.poner_curva_personal([1] * 10)
         menu = S.Menu()

@@ -6,3 +6,5 @@ dist/
 packaging/.cache/
 .venv-build/
 tests/corpus/
+hardware/pocket/lvgl/
+hardware/pocket/build/

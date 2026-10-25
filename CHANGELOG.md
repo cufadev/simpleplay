@@ -5,7 +5,13 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-10-25
+
 ### Added
+- **Find my sound** (replaces "Tune by ear", still switched off with the graphic equalizer). A guided search in three
+  rounds: you hear four versions of the sound, pick the one you like, and it narrows down. At the end you get four controls
+  (Bass, Body, Voices, Brightness) to fine-tune and a name to save it.
+- **Named presets.** Your own equalizer settings can be saved with a name and chosen from the Sound menu.
 - **Recognize tracks by their sound (the broom, still switched off).** When the text search finds nothing, the track is
   fingerprinted with Chromaprint (`fpcalc`) and looked up on AcoustID; the edition is then chosen with the same rules as
   before (studio albums only, never compilations or live versions). Needs your own AcoustID key in
