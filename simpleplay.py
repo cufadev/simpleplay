@@ -1410,6 +1410,8 @@ class Card(QWidget):
         self.fuente = None                        # el espectro del reproductor: fuente(n) -> n valores 0..1
         self.vals = [0.0] * BANDAS
         self.fase = 0.0                           # el tono de fondo, 0..1, da la vuelta cada ~50 s
+        self.reloj = 0.0                          # avanza con el tiempo: mueve las burbujas
+        self._bolas = None
         self._vivo = QTimer(self)
         self._vivo.timeout.connect(self._latir)
 
@@ -1440,6 +1442,7 @@ class Card(QWidget):
         graves = sum(self.vals[:4]) / 4
         sonando = any(v > 0.01 for v in self.vals)
         self.fase = (self.fase + (0.0006 + 0.0016 * graves if sonando else 0.0002)) % 1.0     # con más energía, giran más rápido
+        self.reloj += 0.35 if sonando else 0.1
         self._vivo.setInterval(33 if sonando else 120)                  # en pausa solo deriva el color: mucho menos trabajo
         self.update()
 
@@ -1453,32 +1456,53 @@ class Card(QWidget):
         self.anim.start()
         self._actualizar_vivo()
 
+    def _burbujas(self):
+        """Las burbujas de luz del fondo sin carátula: posición, tamaño y banda del espectro con la que late cada una.
+        Las grandes siguen a los graves y las chicas a los agudos. Se sortean una vez, con semilla fija."""
+        rng = random.Random(7)
+        n = len(self.vals)
+        lista = []
+        for k in range(16):
+            grande = k < 5
+            r = rng.uniform(0.17, 0.26) if grande else rng.uniform(0.05, 0.13)
+            lista.append({"x": rng.random(), "y": rng.random(), "r": r,
+                          "banda": min(n - 1, int((1 - (r - 0.05) / 0.21) * 0.45 * n + rng.random() * n * 0.5)),
+                          "dx": rng.uniform(-0.012, 0.012), "dy": rng.uniform(-0.009, 0.009),
+                          "borrosa": grande or k % 3 == 0, "tono": rng.uniform(-0.05, 0.08), "base": rng.uniform(0.34, 0.52)})
+        return lista
+
     def _pintar_viva(self, p, w, h):
-        """El fondo sin carátula: un degradé que va cambiando de color, un resplandor que late con los graves y una barra
-        por banda del espectro, cada una de su color."""
+        """El fondo sin carátula: un degradé que va cambiando de color y burbujas de luz desenfocadas que flotan, crecen y se
+        encienden con la música (cada una sigue una banda del espectro)."""
         f = self.fase
         g = QLinearGradient(0, 0, w, h)
-        g.setColorAt(0, QColor.fromHsvF(f % 1.0, 0.72, 0.95))
-        g.setColorAt(1, QColor.fromHsvF((f + 0.14) % 1.0, 0.85, 0.20))
+        g.setColorAt(0, QColor.fromHsvF(f % 1.0, 0.90, 0.30))
+        g.setColorAt(0.5, QColor.fromHsvF((f + 0.03) % 1.0, 0.95, 0.88))
+        g.setColorAt(1, QColor.fromHsvF((f + 0.09) % 1.0, 0.80, 1.0))
         p.fillRect(self.rect(), g)
-        n = len(self.vals)
-        graves = sum(self.vals[:4]) / 4
-        r = w * (0.30 + 0.20 * graves)
-        brillo = QRadialGradient(w / 2, h * 0.42, r)
-        brillo.setColorAt(0, QColor(255, 255, 255, int(40 + 70 * graves)))
-        brillo.setColorAt(1, QColor(255, 255, 255, 0))
-        p.fillRect(self.rect(), brillo)
-        margen = 22
-        ancho = (w - 2 * margen) / n
-        base = h * 0.70
+        if self._bolas is None:
+            self._bolas = self._burbujas()
         p.setPen(Qt.NoPen)
-        for i, v in enumerate(self.vals):
-            alto = max(4.0, v * h * 0.42)
-            c = QColor.fromHsvF((f + 0.04 + 0.30 * i / n) % 1.0, 0.55, 1.0)
-            c.setAlpha(215)
-            p.setBrush(c)
-            x = margen + i * ancho + ancho * 0.18
-            p.drawRoundedRect(QRectF(x, base - alto, ancho * 0.64, alto), ancho * 0.32, ancho * 0.32)
+        for b in self._bolas:
+            v = self.vals[b["banda"]]
+            x = ((b["x"] + b["dx"] * self.reloj) % 1.2 - 0.1) * w          # flotan despacio y vuelven a entrar por el otro lado
+            y = ((b["y"] + b["dy"] * self.reloj) % 1.2 - 0.1) * h
+            r = b["r"] * w * (1.0 + 0.30 * v)
+            c = QColor.fromHsvF((f + b["tono"]) % 1.0, 0.10 + 0.22 * (1 - v), 1.0)
+            alfa = b["base"] + 0.50 * v
+            gr = QRadialGradient(x, y, r)
+            if b["borrosa"]:
+                for pos, a in ((0.0, 0.60), (0.5, 0.42), (1.0, 0.0)):
+                    q = QColor(c)
+                    q.setAlphaF(min(1.0, alfa * a * 1.3))
+                    gr.setColorAt(pos, q)
+            else:
+                for pos, a in ((0.0, 0.95), (0.80, 0.85), (0.93, 0.55), (1.0, 0.0)):
+                    q = QColor(c)
+                    q.setAlphaF(min(1.0, alfa * a * 1.5))
+                    gr.setColorAt(pos, q)
+            p.setBrush(gr)
+            p.drawEllipse(QPointF(x, y), r, r)
 
     def _capa(self, p, esc, w, h):
         if esc:

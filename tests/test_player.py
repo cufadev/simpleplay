@@ -1881,7 +1881,7 @@ class TestPortadaViva(Base):
         card.set_pixmap(None)
         self.assertTrue(card._vivo.isActive())
 
-    def test_las_barras_siguen_al_espectro_y_el_color_deriva(self):
+    def test_las_burbujas_siguen_al_espectro_y_el_color_deriva(self):
         self.cargar(A)
         self.w.show()
         card = self.w.card

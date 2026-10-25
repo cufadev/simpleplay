@@ -6,9 +6,10 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
 ## [1.8.1] - 2026-10-26
 
 ### Changed
-- **A cover that moves with the music.** When a track has no cover art, the card shows a background that slowly changes
-  colour with a glow that beats with the bass and one bar per spectrum band, instead of the plain orange gradient. It stops
-  working (no CPU) as soon as a cover is shown.
+- **A cover that moves with the music.** When a track has no cover art, the card shows soft, glowing bubbles of light
+  floating over a background that slowly changes colour, instead of the plain orange gradient. Each bubble follows a band
+  of the spectrum: the big ones breathe with the bass, the small ones flicker with the treble. It uses no CPU as soon as a
+  cover is shown.
 
 ## [1.8] - 2026-10-26
 
