@@ -40,4 +40,6 @@ EOS
 chmod +x "$A/AppRun"
 
 ARCH=x86_64 "$TOOL" --appimage-extract-and-run "$A" "dist/simpleplay-$VERSION-x86_64.AppImage"
+# dist/simpleplay-actual.AppImage apunta siempre al último que se armó (los lanzadores fijados en la barra lo usan)
+ln -sfn "simpleplay-$VERSION-x86_64.AppImage" dist/simpleplay-actual.AppImage
 ls -lh dist/*.AppImage
