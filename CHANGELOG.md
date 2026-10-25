@@ -31,6 +31,8 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
   trash. It only shows what it would do unless `--aplicar` is given. Remixes and live versions are not treated as duplicates.
 
 ### Changed
+- **Ctrl+F and Ctrl+Shift+M toggle**: pressed again, the search closes and the Mosquito panel closes. Ctrl+Alt+M
+  also opens Mosquito, in case the desktop keeps the other combination.
 - **Music and playlists panel** (the **+** menu > Music and playlists…). Saved folders and saved playlists as big rows you can
   tap, a switch between replacing the list and adding to it, "Empty list" (asks twice) and "Save list". Opening a
   playlist now replaces the current list even when only one row can be selected.

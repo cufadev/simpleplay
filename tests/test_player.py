@@ -1794,6 +1794,35 @@ class TestPanelMusica(Base):
         w2.close()
 
 
+class TestAtajosQueAlternan(Base):
+    def test_ctrl_f_abre_y_al_repetir_cierra_el_buscador(self):
+        self.cargar(A, B)
+        self.assertFalse(self.w.lista_abierta)
+        self.w.show()
+        self.w.activateWindow()
+        espera(0.3)
+        self.w.enfocar_buscador()
+        espera(0.3)
+        self.assertTrue(self.w.lista_abierta)
+        if not self.w.buscador.hasFocus():
+            self.skipTest("este entorno no da foco de teclado a la ventana")
+        self.w.buscador.setText("mono")
+        self.w.enfocar_buscador()                        # segunda vez: se cierra todo
+        espera(0.2)
+        self.assertEqual(self.w.buscador.text(), "")
+        self.assertFalse(self.w.lista_abierta)
+
+    def test_ctrl_shift_m_abre_y_al_repetir_cierra_el_panel(self):
+        self.cargar(A)
+        self.w.alternar_mosquito()
+        espera(0.3)
+        self.assertTrue(self.w._panel.isVisible())
+        self.w.alternar_mosquito()
+        espera(0.3)
+        self.assertFalse(self.w._panel.isVisible())
+        self.assertIsNotNone(getattr(self.w, "_mosquito", None))     # cerrar el panel no apaga Mosquito
+
+
 class TestPanelMosquito(Base):
     def test_el_panel_dice_si_hay_un_celular_conectado(self):
         import time

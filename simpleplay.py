@@ -4739,7 +4739,8 @@ class Player(QWidget):
             self.mpris = Mpris(self)
         if MOSQUITO:
             QTimer.singleShot(0, self._mosquito_auto)
-            QShortcut(QKeySequence("Ctrl+Shift+M"), self).activated.connect(self.abrir_mosquito)
+            QShortcut(QKeySequence("Ctrl+Shift+M"), self).activated.connect(self.alternar_mosquito)
+            QShortcut(QKeySequence("Ctrl+Alt+M"), self).activated.connect(self.alternar_mosquito)   # por si el escritorio se queda con la otra
 
     # --- teclas multimedia (MPRIS) ---
     def mpris_cambio(self, *claves):
@@ -4848,6 +4849,13 @@ class Player(QWidget):
         """Con «Recordar este celular» activado, Mosquito arranca solo con el reproductor."""
         if (ESTADO.parent / "mosquito.json").exists():
             self._servidor_mosquito()
+
+    def alternar_mosquito(self):
+        """Ctrl+Shift+M: abre el panel de Mosquito; con el panel a la vista, lo cierra (el control remoto sigue activo)."""
+        if isinstance(self._panel, DialogoMosquito) and self._panel.isVisible():
+            self._panel.reject()
+        else:
+            self.abrir_mosquito()
 
     def abrir_mosquito(self):
         """Control remoto desde el navegador del celular. El servidor vive con el reproductor: cerrar el panel del QR no
@@ -5068,6 +5076,15 @@ class Player(QWidget):
                 return
 
     def enfocar_buscador(self):
+        """Ctrl+F: abre el buscador (y la lista, si estaba cerrada); apretado de nuevo lo cierra y deja la lista como estaba."""
+        if self.buscador.hasFocus():
+            self.buscador.clear()
+            self.buscador.clearFocus()
+            if getattr(self, "_lista_por_buscar", False):
+                self.btn_lista.setChecked(False)
+            self._lista_por_buscar = False
+            return
+        self._lista_por_buscar = not self.lista_abierta
         if not self.lista_abierta:
             self.btn_lista.setChecked(True)
         self.buscador.setFocus()
