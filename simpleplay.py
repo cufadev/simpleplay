@@ -45,7 +45,7 @@ from PySide6.QtCore import (Qt, QEvent, QTimer, QCoreApplication, QRectF, QPoint
                             ClassInfo, Property, Slot, QMetaType,
                             QStandardPaths, QVariantAnimation, QEasingCurve, QPoint, QItemSelectionModel, QEventLoop)
 from PySide6.QtGui import (QDesktopServices, QShortcut, QKeySequence, QIcon, QFont, QFontMetrics, QPainter, QColor, QPixmap, QImage, QLinearGradient,
-                           QPainterPath, QPolygonF, QPen, QPalette, QRegion, QCursor)
+                           QPainterPath, QPolygonF, QPen, QPalette, QRegion, QCursor, QRadialGradient)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QGridLayout, QInputDialog, QStackedWidget, QWidget, QVBoxLayout, QHBoxLayout,
                                QLabel, QSlider, QAbstractButton, QListWidget,
                                QFileDialog, QFrame, QLayout, QMenu, QSizePolicy,
@@ -1406,9 +1406,41 @@ class Card(QWidget):
         self.anim.setDuration(380)
         self.anim.setEasingCurve(QEasingCurve.InOutCubic)
         self.anim.valueChanged.connect(self._mezclar)
+        # sin carátula: un fondo que cambia de color y se mueve con la música, como un espectro
+        self.fuente = None                        # el espectro del reproductor: fuente(n) -> n valores 0..1
+        self.vals = [0.0] * BANDAS
+        self.fase = 0.0                           # el tono de fondo, 0..1, da la vuelta cada ~50 s
+        self._vivo = QTimer(self)
+        self._vivo.timeout.connect(self._latir)
 
     def _mezclar(self, v):
         self.mezcla = v
+        self.update()
+
+    def _actualizar_vivo(self):
+        """El reloj solo corre mientras se ve el fondo animado: sin carátula, con la tarjeta a la vista."""
+        if self.escalada is None and self.fuente is not None and self.isVisible():
+            if not self._vivo.isActive():
+                self._vivo.start(33)
+        else:
+            self._vivo.stop()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._actualizar_vivo()
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        self._actualizar_vivo()
+
+    def _latir(self):
+        nuevo = self.fuente(len(self.vals))
+        for i, v in enumerate(nuevo):
+            self.vals[i] = v if v > self.vals[i] else max(self.vals[i] - 0.05, v)
+        graves = sum(self.vals[:4]) / 4
+        sonando = any(v > 0.01 for v in self.vals)
+        self.fase = (self.fase + (0.0006 + 0.0016 * graves if sonando else 0.0002)) % 1.0     # con más energía, giran más rápido
+        self._vivo.setInterval(33 if sonando else 120)                  # en pausa solo deriva el color: mucho menos trabajo
         self.update()
 
     def set_pixmap(self, pix):
@@ -1419,10 +1451,40 @@ class Card(QWidget):
         self.anim.setStartValue(0.0)
         self.anim.setEndValue(1.0)
         self.anim.start()
+        self._actualizar_vivo()
+
+    def _pintar_viva(self, p, w, h):
+        """El fondo sin carátula: un degradé que va cambiando de color, un resplandor que late con los graves y una barra
+        por banda del espectro, cada una de su color."""
+        f = self.fase
+        g = QLinearGradient(0, 0, w, h)
+        g.setColorAt(0, QColor.fromHsvF(f % 1.0, 0.72, 0.95))
+        g.setColorAt(1, QColor.fromHsvF((f + 0.14) % 1.0, 0.85, 0.20))
+        p.fillRect(self.rect(), g)
+        n = len(self.vals)
+        graves = sum(self.vals[:4]) / 4
+        r = w * (0.30 + 0.20 * graves)
+        brillo = QRadialGradient(w / 2, h * 0.42, r)
+        brillo.setColorAt(0, QColor(255, 255, 255, int(40 + 70 * graves)))
+        brillo.setColorAt(1, QColor(255, 255, 255, 0))
+        p.fillRect(self.rect(), brillo)
+        margen = 22
+        ancho = (w - 2 * margen) / n
+        base = h * 0.70
+        p.setPen(Qt.NoPen)
+        for i, v in enumerate(self.vals):
+            alto = max(4.0, v * h * 0.42)
+            c = QColor.fromHsvF((f + 0.04 + 0.30 * i / n) % 1.0, 0.55, 1.0)
+            c.setAlpha(215)
+            p.setBrush(c)
+            x = margen + i * ancho + ancho * 0.18
+            p.drawRoundedRect(QRectF(x, base - alto, ancho * 0.64, alto), ancho * 0.32, ancho * 0.32)
 
     def _capa(self, p, esc, w, h):
         if esc:
             p.drawPixmap((w - esc.width()) // 2, (h - esc.height()) // 2, esc)
+        elif self.fuente is not None:
+            self._pintar_viva(p, w, h)
         else:
             g = QLinearGradient(0, 0, w, h)
             c = QColor(ACENTO)
@@ -4511,6 +4573,7 @@ class Player(QWidget):
 
         # --- tarjeta ---
         self.card = Card()
+        self.card.fuente = self.espectro_fondo
         self.thumb = Miniatura(28)
         self.titulo = Marquee(12, "white", QFont.DemiBold)
         self.titulo.set_text(tr("Sin pista", "No track"))
@@ -6057,6 +6120,23 @@ class Player(QWidget):
         ref = self._ref_p
         self.ref_suave = ref if self.ref_suave is None else self.ref_suave + (ref - self.ref_suave) * 0.08
         return [float(x) for x in np.clip((db - (self.ref_suave - RANGO_DB)) / RANGO_DB, 0.0, 1.0)]
+
+    def espectro_fondo(self, n):
+        """Lo mismo que espectro(), con su propio nivel de referencia, para el fondo animado de la tarjeta: así no se pisa con
+        el de las barras (cada uno ve los picos de lo que él mismo pidió)."""
+        if self.actual < 0 or self.pausado:
+            return [0.0] * n
+        db = bandas_db(self.motor.muestras(VENTANA))
+        pico = float(db.max())
+        if pico < -70:
+            return [0.0] * n
+        if not hasattr(self, "_picos_fondo"):
+            self._picos_fondo, self._ref_fondo, self._cuenta_fondo = collections.deque(maxlen=HISTORIA), None, 0
+        self._picos_fondo.append(pico)
+        self._cuenta_fondo = (self._cuenta_fondo + 1) % 6
+        if self._ref_fondo is None or self._cuenta_fondo == 0:
+            self._ref_fondo = float(np.percentile(self._picos_fondo, 90))
+        return [float(x) for x in np.clip((db - (self._ref_fondo - RANGO_DB)) / RANGO_DB, 0.0, 1.0)]
 
     def icono_play(self):
         kind = "pause" if (self.actual >= 0 and not self.pausado) else "play"

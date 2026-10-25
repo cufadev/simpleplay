@@ -1865,6 +1865,41 @@ class TestMenuSonidoSimple(Base):
         self.assertIsInstance(self.w._panel, S.DialogoParametrico)
 
 
+class TestPortadaViva(Base):
+    def test_sin_portada_el_fondo_se_anima_y_con_portada_se_detiene(self):
+        self.cargar(A)
+        self.w.show()
+        espera(0.3)
+        card = self.w.card
+        self.assertIsNone(card.escalada)
+        self.assertTrue(card._vivo.isActive())            # sin carátula: fondo animado
+        from PySide6.QtGui import QPixmap
+        pix = QPixmap(64, 64)
+        pix.fill(Qt.red)
+        card.set_pixmap(pix)
+        self.assertFalse(card._vivo.isActive())           # con carátula: no gasta nada
+        card.set_pixmap(None)
+        self.assertTrue(card._vivo.isActive())
+
+    def test_las_barras_siguen_al_espectro_y_el_color_deriva(self):
+        self.cargar(A)
+        self.w.show()
+        card = self.w.card
+        card.fuente = lambda n: [0.9] * n
+        antes = card.fase
+        for _ in range(5):
+            card._latir()
+        self.assertGreater(min(card.vals), 0.8)
+        self.assertGreater(card.fase, antes)
+        card.fuente = lambda n: [0.0] * n
+        for _ in range(40):
+            card._latir()
+        self.assertLess(max(card.vals), 0.05)             # bajan solas cuando se calla
+        self.assertGreaterEqual(card._vivo.interval(), 100)
+        img = card.grab().toImage()
+        self.assertFalse(img.isNull())
+
+
 class TestPanelMosquito(Base):
     def test_el_panel_dice_si_hay_un_celular_conectado(self):
         import time
