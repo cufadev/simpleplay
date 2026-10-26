@@ -1436,7 +1436,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   if (sueltas.length) {
     const pool = Array.from({ length: 16 }, (_, k) => k + 1).filter((n) => n !== 9);
     for (let k = pool.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [pool[k], pool[j]] = [pool[j], pool[k]]; }
-    sueltas.forEach((img, k) => { img.src = 'img/portadas/' + String(k === 0 ? 9 : pool[k - 1]).padStart(2, '0') + '.webp'; });
+    sueltas.forEach((img, k) => { img.src = 'img/portadas/' + String(k === 0 ? 9 : pool[(k - 1) % pool.length]).padStart(2, '0') + '.webp'; });
   }
   if (!cajas.length || matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) return;
   const tarjetas = new Map(cajas.map((c) => [c, [...c.querySelectorAll('.flota')].map((el) => [el, parseFloat(el.dataset.v)])]));
