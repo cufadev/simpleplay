@@ -44,6 +44,10 @@ No streaming, no accounts, no ads.
 - **Sound:** a volume normalizer (uses ReplayGain tags, or measures each track once) so tracks play at
   the same loudness, and an equalizer with presets (Flat, Lively, More bass, Vocals, Bright, Warm) behind a
   soft limiter. Right click > **Sound**. Flat leaves the audio untouched.
+- **Two equalizers:** Right click > **Sound** > **Equalizer…** opens either a 10-band **graphic** equalizer (the presets,
+  your own named presets and "Find my sound" use it) or a 5-band **parametric** one (free frequency, gain and width per
+  band), with a Graphic | Parametric switch at the top. They are separate curves and only one is active at a time;
+  switching tabs does not convert one into the other.
 - **Headphone profiles:** pick your headphone model from the AutoEq database (or import a profile) and the equalizer
   corrects its frequency response. Right click > **Sound** > **Headphones**.
 - **Playlists:** save and open plain M3U8 files (VLC and mpv read them too), with paths relative to the list so it

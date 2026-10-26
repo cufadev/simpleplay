@@ -14,9 +14,12 @@ All notable changes to simpleplay. The version number lives in the `VERSION` con
 ## [1.8] - 2026-10-26
 
 ### Added
-- **Parametric equalizer** (next to the graphic equalizer, in Sound). Five bands, each with its
-  own frequency (20 Hz to 20 kHz), gain (±12 dB) and width (Q), a live curve, and the same minimum-phase filter as the graphic
-  one. Sound menu > Parametric equalizer.
+- **Parametric equalizer**, a second equalizer next to the graphic one (they are separate, not two views of the same
+  curve). Five free bands, each with its own frequency (20 Hz to 20 kHz), gain (±12 dB) and width (Q), a live curve, and
+  the same minimum-phase filter as the graphic one. Sound > **Equalizer…** opens it, with a Graphic | Parametric switch at
+  the top. Only one of the two is active at a time: choosing "Parametric" in the preset list turns the graphic preset
+  off, and the other way round. Switching tabs does not convert one curve into the other, and named presets are saved
+  from the graphic equalizer only.
 - **Crossfeed for headphones** (off, soft, medium, strong). Each ear hears a little of the low frequencies of the other
   side, as with speakers, so the sound stops feeling stuck to your ears. What is the same in both channels (mono) is not touched.
 - **Balance** from left (-100) to right (100). Sound menu > Balance and space.
