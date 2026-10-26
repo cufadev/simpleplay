@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QGridLayout, QInputDi
                                QLabel, QSlider, QAbstractButton, QListWidget,
                                QFileDialog, QFrame, QLayout, QMenu, QSizePolicy,
                                QStackedLayout, QGraphicsOpacityEffect, QMessageBox,
-                               QAbstractItemView, QLineEdit, QListWidgetItem, QDialog, QPushButton, QComboBox, QCheckBox, QScrollArea)
+                               QAbstractItemView, QLineEdit, QListWidgetItem, QStyledItemDelegate, QStyle, QDialog, QPushButton, QComboBox, QCheckBox, QScrollArea)
 
 try:
     from PySide6.QtDBus import (QDBusConnection, QDBusAbstractAdaptor, QDBusObjectPath,
@@ -59,7 +59,7 @@ try:
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.8.1"
+VERSION = "1.8.2"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
@@ -143,8 +143,14 @@ QFrame#pill { background: rgba(0,0,0,95); border-radius: 18px; }
 QFrame#panel { background: rgba(22,22,24,235); border-radius: 18px; }
 QFrame#mini { background: rgba(22,22,24,235); border-radius: 28px; }
 QListWidget { background: transparent; color: white; border: none; padding: 0; outline: 0; }
-QListWidget::item { padding: 6px 8px; border-radius: 8px; }
+QListWidget::item { padding: 6px 8px 6px 22px; border-radius: 8px; }
 QListWidget::item:selected { background: rgba(255,78,1,190); color: white; }
+QListWidget::item:hover:!selected { background: rgba(255,255,255,18); }
+QScrollBar:vertical { background: transparent; width: 8px; margin: 2px 1px; }
+QScrollBar::handle:vertical { background: rgba(255,255,255,55); border-radius: 3px; min-height: 28px; }
+QScrollBar::handle:vertical:hover { background: rgba(255,255,255,100); }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; background: none; border: none; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
 QLineEdit { background: rgba(255,255,255,26); color: white; border: none; border-radius: 14px;
             padding: 7px 12px; selection-background-color: #ff4e01; }
 QMenu { background: #1e1e22; color: #f2f2f2; border: 1px solid rgba(255,255,255,30); border-radius: 10px; padding: 6px; }
@@ -961,6 +967,26 @@ class Menu(QMenu):
             super().addMenu(sub)
             return sub
         return super().addMenu(*args)
+
+
+class FilaConPunto(QStyledItemDelegate):
+    """Dibuja la fila de la lista y, en el tema que suena, un punto del color de acento a la izquierda."""
+
+    def __init__(self, player):
+        super().__init__(player.lista)
+        self.player = player
+
+    def paint(self, p, opcion, indice):
+        super().paint(p, opcion, indice)
+        if indice.row() != self.player.actual:
+            return
+        elegido = opcion.state & QStyle.State_Selected
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("white") if elegido else QColor(ACENTO))
+        p.drawEllipse(QPoint(opcion.rect.left() + 11, opcion.rect.center().y()), 3, 3)
+        p.restore()
 
 
 class IconButton(QAbstractButton):
@@ -3016,11 +3042,35 @@ ESTILO_PANEL = """QDialog { background: transparent; } QLabel { color: #cfcfd4; 
     QPushButton#principal { background: #ff4e01; } QPushButton#principal:disabled { background: rgba(255,78,1,80); }
     QPushButton:checked { background: #ff4e01; }
     QComboBox { background: rgba(255,255,255,26); color: white; border: none; border-radius: 12px; padding: 6px 12px; }
+    QComboBox:hover { background: rgba(255,255,255,40); }
+    QComboBox::drop-down { border: none; width: 22px; }
+    QComboBox::down-arrow { image: url(@FLECHA@); width: 10px; height: 6px; }
     QComboBox QAbstractItemView { background: #1e1e22; color: white; selection-background-color: #ff4e01; outline: 0; }
     QSlider::groove:vertical { width: 3px; background: rgba(255,255,255,70); border-radius: 1px; }
     QSlider::sub-page:vertical { background: rgba(255,255,255,70); border-radius: 1px; }
     QSlider::add-page:vertical { background: #ff4e01; border-radius: 1px; }
     QSlider::handle:vertical { background: white; height: 11px; width: 11px; margin: 0 -4px; border-radius: 5px; }"""
+
+
+def estilo_panel(extra=""):
+    """La hoja de estilo de los paneles laterales; la flecha de los desplegables se dibuja una vez y se guarda en la caché."""
+    ruta = Path(QStandardPaths.writableLocation(QStandardPaths.CacheLocation)) / "flecha.png"
+    if not ruta.exists():
+        try:
+            ruta.parent.mkdir(parents=True, exist_ok=True)
+            pm = QPixmap(10, 6)
+            pm.fill(Qt.transparent)
+            q = QPainter(pm)
+            q.setRenderHint(QPainter.Antialiasing)
+            q.setPen(QPen(QColor(255, 255, 255, 190), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            q.drawPolyline(QPolygonF([QPoint(1, 1), QPoint(5, 5), QPoint(9, 1)]))
+            q.end()
+            pm.save(str(ruta))
+        except OSError:
+            pass
+    return (ESTILO_PANEL + extra).replace("@FLECHA@", ruta.as_posix())
+
+
 HUECO_PANEL = 10          # separación entre la ventana y el panel pegado a su lado
 
 
@@ -3053,7 +3103,7 @@ class PanelLateral(QDialog):
         self._pegado = True
         self.setWindowFlags(self.TIPO | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setStyleSheet(tinte(ESTILO_PANEL + self.ESTILO_EXTRA))
+        self.setStyleSheet(tinte(estilo_panel(self.ESTILO_EXTRA)))
         self.cuerpo = QFrame()
         self.cuerpo.setObjectName("cuerpo")
         self.lay = QVBoxLayout(self.cuerpo)
@@ -4234,14 +4284,17 @@ class DialogoMusica(PanelLateral):
 
         pie = QHBoxLayout()
         pie.setSpacing(8)
-        guardar = QPushButton(tr("Guardar lista", "Save list"))
-        guardar.clicked.connect(self._guardar)
+        self.guardar = QPushButton()
+        self.guardar.clicked.connect(self._guardar)
+        como = QPushButton(tr("Guardar como…", "Save as…"))
+        como.clicked.connect(self._guardar_como)
         self.vaciar = QPushButton(tr("Vaciar lista", "Empty list"))
         self.vaciar.clicked.connect(self._vaciar)
         listo = QPushButton(tr("Listo", "Done"))
         listo.setObjectName("principal")
         listo.clicked.connect(self.reject)
-        pie.addWidget(guardar)
+        pie.addWidget(self.guardar)
+        pie.addWidget(como)
         pie.addWidget(self.vaciar)
         pie.addStretch(1)
         pie.addWidget(listo)
@@ -4260,7 +4313,12 @@ class DialogoMusica(PanelLateral):
 
     def _llenar(self):
         p = self.player
-        self.cuenta.setText(tr(f"{len(p.pistas)} temas en la lista", f"{len(p.pistas)} tracks in the list"))
+        abierta_f = p.lista_actual if p.lista_actual and Path(p.lista_actual).is_file() else ""
+        quien = (tr(f" · lista «{Path(abierta_f).stem}»", f" · list “{Path(abierta_f).stem}”") if abierta_f
+                 else tr(" · sin guardar", " · not saved"))
+        self.cuenta.setText(tr(f"{len(p.pistas)} temas en la lista", f"{len(p.pistas)} tracks in the list") + quien)
+        self.guardar.setText(tr(f"Guardar en «{Path(abierta_f).stem}»", f"Save to “{Path(abierta_f).stem}”") if abierta_f
+                             else tr("Guardar lista…", "Save list…"))
         cont = QWidget()
         cont.setObjectName("contenido")
         v = QVBoxLayout(cont)
@@ -4329,6 +4387,10 @@ class DialogoMusica(PanelLateral):
 
     def _guardar(self):
         self.player._guardar_rapido()
+        self._llenar()
+
+    def _guardar_como(self):
+        self.player.guardar_lista()
         self._llenar()
 
     def _vaciar(self):
@@ -4571,6 +4633,7 @@ class Player(QWidget):
         self.pistas = []
         self.acento = "naranja"
         self.actual = -1
+        self._punto_en = -1
         self.pausado = False
         self.duracion = 0.0
         # espectro: lee del motor las muestras que están sonando; el nivel de referencia sale de los picos recientes
@@ -4725,6 +4788,7 @@ class Player(QWidget):
 
         self.lista = QListWidget()
         self.lista.setFixedHeight(168)  # unas 5 filas
+        self.lista.setItemDelegate(FilaConPunto(self))
         self.lista.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.lista.setTextElideMode(Qt.ElideRight)
         self.lista.setSelectionMode(QAbstractItemView.ExtendedSelection)  # Ctrl/Shift para varios
@@ -4951,7 +5015,7 @@ class Player(QWidget):
             menu.addSeparator()
             menu.addAction("YouTube Music…", self.abrir_youtube)
             menu.addSeparator()
-        if self.lista_actual:
+        if self.lista_actual and Path(self.lista_actual).is_file():
             menu.addAction(tr(f"Guardar «{Path(self.lista_actual).stem}»", f"Save “{Path(self.lista_actual).stem}”"),
                            lambda: self.guardar_lista(self.lista_actual)).setEnabled(bool(self.pistas))
         menu.addAction(tr("Guardar lista como…", "Save playlist as…"),
@@ -5076,7 +5140,7 @@ class Player(QWidget):
     def nueva_lista(self):
         """Crea una lista nueva con los temas elegidos."""
         ruta, _ = QFileDialog.getSaveFileName(
-            self, tr("Nueva lista", "New playlist"), str(Path(self._carpeta_listas()) / "lista.m3u8"),
+            self, tr("Nueva lista", "New playlist"), str(Path(self._carpeta_listas()) / self._nombre_sugerido()),
             tr("Lista M3U8 (*.m3u8)", "M3U8 playlist (*.m3u8)"))
         if ruta:
             self.agregar_a_lista(ruta if Path(ruta).suffix.lower() in LISTAS else ruta + ".m3u8")
@@ -5106,10 +5170,10 @@ class Player(QWidget):
         """El disquete: reescribe la lista abierta; si no hay una, pide el nombre."""
         if not self.pistas:
             self._aviso(tr("No hay temas para guardar", "There are no tracks to save"))
-        elif self.lista_actual and Path(self.lista_actual).parent.is_dir():
+        elif self.lista_actual and Path(self.lista_actual).is_file():
             self.guardar_lista(self.lista_actual)
         else:
-            self.guardar_lista()
+            self.guardar_lista()             # no hay lista abierta (o ya no existe): pregunta dónde y con qué nombre
 
     def guardar_lista(self, ruta=None):
         """Guarda los temas de la lista, en el orden en que están, como M3U8 con rutas relativas."""
@@ -5117,7 +5181,7 @@ class Player(QWidget):
             return
         if not ruta:
             ruta, _ = QFileDialog.getSaveFileName(
-                self, tr("Guardar lista", "Save playlist"), str(Path(self._carpeta_listas()) / "lista.m3u8"),
+                self, tr("Guardar lista", "Save playlist"), str(Path(self._carpeta_listas()) / self._nombre_sugerido()),
                 tr("Lista M3U8 (*.m3u8)", "M3U8 playlist (*.m3u8)"))
         if not ruta:
             return
@@ -5131,11 +5195,32 @@ class Player(QWidget):
         self.lista_actual = str(Path(ruta).resolve())
         self.carpeta_listas = str(Path(ruta).resolve().parent)
         self.guardar_estado()
-        self._aviso(tr(f"Lista guardada ({len(self.pistas)} temas)", f"Playlist saved ({len(self.pistas)} tracks)"))
+        nombre = Path(ruta).stem
+        self._aviso(tr(f"Guardada en «{nombre}» ({len(self.pistas)} temas)", f"Saved to “{nombre}” ({len(self.pistas)} tracks)"), 3500)
+
+    @staticmethod
+    def _lista_es_de(ruta, pistas):
+        """¿Los temas cargados vienen de esa lista guardada? Evita arrastrar una lista vieja que ya no tiene que ver."""
+        if not ruta or not Path(ruta).is_file():
+            return False
+        try:
+            en_la_lista = set(leer_lista(ruta)[0])
+        except OSError:
+            return False
+        return any(str(Path(r).resolve()) in en_la_lista for r in pistas)
+
+    def _nombre_sugerido(self):
+        """Nombre de archivo para una lista nueva: el de la carpeta de la música, o «lista»."""
+        base = Path(self.carpeta_musica).name if self.carpeta_musica else ""
+        if not base and self.pistas:
+            base = Path(self.pistas[0]).parent.name
+        return (base or "lista") + ".m3u8"
 
     def agregar(self, archivos, mostrar=True, avisar=False):
         """Agrega mp3 (o carpetas, con sus subcarpetas) a la lista; los que ya estaban no se repiten."""
         primera = not self.pistas
+        if primera:
+            self.lista_actual = ""           # arranca de cero: no es la lista que estaba abierta (abrir_lista la vuelve a poner)
         existentes = set(self.pistas)
         nuevos = [r for r in buscar_audio(archivos) if r not in existentes]
         for r in nuevos:
@@ -5292,7 +5377,8 @@ class Player(QWidget):
 
     def quitar(self, filas=None):
         """Quita de la lista los temas seleccionados, o los de `filas` si se dan (los archivos no se borran)."""
-        filas = self.filas_elegidas() if filas is None else sorted(set(filas))
+        # las señales clicked/triggered mandan un bool: solo una lista de filas cuenta
+        filas = sorted(set(filas)) if isinstance(filas, (list, tuple, set)) else self.filas_elegidas()
         if not filas:
             return
         actual_quitado = self.actual in filas
@@ -5906,7 +5992,6 @@ class Player(QWidget):
         cm = d.get("carpetas_musica")
         if isinstance(cm, list):
             self.carpetas_musica = [c for c in cm if isinstance(c, str)][:8]
-        self.lista_actual = d.get("lista_actual", "")
         self.poner_compacto(bool(d.get("compacto")), animar=False)
         if not con_pistas:
             return
@@ -5918,6 +6003,8 @@ class Player(QWidget):
         guardada = previas[d.get("indice", 0)] if 0 <= d.get("indice", 0) < len(previas) else None
         i = pistas.index(guardada) if guardada in pistas else 0
         self.agregar(pistas, mostrar=False)
+        guardada_en = d.get("lista_actual", "")
+        self.lista_actual = guardada_en if self._lista_es_de(guardada_en, pistas) else ""
         presentes = set(pistas)  # el "orden original" guardado, solo con los temas que siguen existiendo
         guardado = [r for r in d.get("orden_original", []) if r in presentes]
         self.orden_original = guardado + [r for r in pistas if r not in set(guardado)]
@@ -6355,6 +6442,9 @@ class Player(QWidget):
 
     def tick(self):
         self._vigilar_controles()
+        if self.actual != self._punto_en:           # el punto de la lista sigue al tema que suena
+            self._punto_en = self.actual
+            self.lista.viewport().update()
         if self.actual < 0:
             return
         if self.linea.arrastrando:
@@ -6457,7 +6547,7 @@ class Player(QWidget):
         ACENTO, self.acento = ACENTOS[clave][2], clave
         self.setStyleSheet(tinte(ESTILO))
         for panel in self.findChildren(PanelLateral):
-            panel.setStyleSheet(tinte(ESTILO_PANEL + panel.ESTILO_EXTRA))
+            panel.setStyleSheet(tinte(estilo_panel(panel.ESTILO_EXTRA)))
         for w in self.findChildren(QWidget):
             w.update()
         self.update()

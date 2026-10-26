@@ -422,6 +422,12 @@ class TestLista(Base):
         self.assertTrue(self.w.motor.reproduciendo)
         self.assertEqual(self.w.motor.ruta, B)
 
+    def test_el_boton_menos_quita_el_seleccionado(self):
+        self.cargar(A, B)
+        self.w.lista.setCurrentRow(1)
+        self.w.btn_quitar.click()      # clicked manda un bool: no debe tomarse como filas
+        self.assertEqual(self.w.pistas, [A])
+
     def test_vaciar_la_lista_para_el_audio(self):
         self.cargar(A)
         self.w.reproducir(0)
@@ -1740,6 +1746,104 @@ class TestEcualizadorGrafico(Base):
         menu = S.Menu()
         self.w._menu_sonido(menu, anidado=False)
         self.assertIn("Mi sonido", [a.text() for a in menu.actions()])
+
+
+class TestGuardarLista(Base):
+    """El disquete: la primera vez pregunta dónde; después reescribe la lista abierta y lo dice."""
+
+    def setUp(self):
+        super().setUp()
+        self.dir = Path(tempfile.mkdtemp())
+        self.pregunto = []
+        self._orig = S.QFileDialog.getSaveFileName
+
+        def falso(*a, **k):
+            self.pregunto.append(a)
+            return str(self.dir / "mia.m3u8"), ""
+        S.QFileDialog.getSaveFileName = staticmethod(falso)
+
+    def tearDown(self):
+        S.QFileDialog.getSaveFileName = self._orig
+        super().tearDown()
+
+    def test_la_primera_vez_pregunta_donde(self):
+        self.cargar(A, B)
+        self.w._guardar_rapido()
+        self.assertEqual(len(self.pregunto), 1)
+        self.assertTrue((self.dir / "mia.m3u8").is_file())
+        self.assertEqual(Path(self.w.lista_actual).name, "mia.m3u8")
+
+    def test_la_segunda_vez_reescribe_sin_preguntar(self):
+        self.cargar(A, B)
+        self.w._guardar_rapido()
+        self.w.quitar([0])
+        self.w._guardar_rapido()
+        self.assertEqual(len(self.pregunto), 1)
+        self.assertEqual(S.leer_lista(str(self.dir / "mia.m3u8"))[0], [str(Path(B).resolve())])
+
+    def test_una_lista_vieja_que_ya_no_existe_no_se_reescribe_a_ciegas(self):
+        self.cargar(A)
+        self.w.lista_actual = str(self.dir / "borrada.m3u8")      # quedó en el estado de otra sesión
+        self.w._guardar_rapido()
+        self.assertEqual(len(self.pregunto), 1)
+
+    def test_cargar_otra_cosa_en_una_lista_vacia_olvida_la_lista_abierta(self):
+        vieja = self.dir / "vieja.m3u8"
+        S.escribir_lista(str(vieja), [A])
+        self.w.abrir_lista(str(vieja))
+        self.assertEqual(Path(self.w.lista_actual).name, "vieja.m3u8")
+        self.w.vaciar_lista()
+        self.cargar(B)
+        self.assertEqual(self.w.lista_actual, "")
+        self.w._guardar_rapido()
+        self.assertEqual(len(self.pregunto), 1)
+        self.assertEqual(S.leer_lista(str(vieja))[0], [str(Path(A).resolve())])   # la vieja quedó intacta
+
+    def test_al_reabrir_no_se_arrastra_una_lista_que_no_es_la_de_los_temas(self):
+        vieja = self.dir / "wonder.m3u8"
+        S.escribir_lista(str(vieja), [B])
+        self.cargar(A)
+        self.w.lista_actual = str(vieja)
+        self.w.guardar_estado()
+        self.w.close()
+        self.w.motor.cerrar()
+        self.w = S.Player()
+        self.w.show()
+        self.w.restaurar()
+        self.assertEqual(self.w.pistas, [A])
+        self.assertEqual(self.w.lista_actual, "")
+
+    def test_al_reabrir_se_mantiene_la_lista_de_la_que_vienen_los_temas(self):
+        propia = self.dir / "propia.m3u8"
+        S.escribir_lista(str(propia), [A, B])
+        self.w.abrir_lista(str(propia))
+        self.w.guardar_estado()
+        self.w.close()
+        self.w.motor.cerrar()
+        self.w = S.Player()
+        self.w.show()
+        self.w.restaurar()
+        self.assertEqual(Path(self.w.lista_actual).name, "propia.m3u8")
+
+    def test_ida_y_vuelta_con_muchos_temas(self):
+        pistas = []
+        for i in range(177):
+            f = self.dir / f"tema {i:03d} [x{i}].mp3"
+            f.write_bytes(Path(A).read_bytes())
+            pistas.append(str(f.resolve()))
+        S.escribir_lista(str(self.dir / "grande.m3u8"), pistas)
+        temas, faltan = S.leer_lista(str(self.dir / "grande.m3u8"))
+        self.assertEqual((temas, faltan), (pistas, 0))
+
+    def test_el_panel_dice_que_lista_esta_abierta(self):
+        self.cargar(A)
+        panel = S.DialogoMusica(self.w)
+        self.assertIn("sin guardar", panel.cuenta.text())
+        self.w._guardar_rapido()
+        panel._llenar()
+        self.assertIn("mia", panel.cuenta.text())
+        self.assertIn("mia", panel.guardar.text())
+        panel.close()
 
 
 class TestPanelMusica(Base):

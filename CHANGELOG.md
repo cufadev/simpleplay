@@ -3,6 +3,21 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
+## [1.8.2] - 2026-10-26
+
+### Fixed
+- The "–" button (and "Remove from the list" in the right-click menu) did nothing since 1.8; it now removes the selected tracks.
+
+- The floppy-disk button no longer overwrites an old playlist without asking. A playlist is only "the open one" while the
+  list still comes from it: loading a folder or files into an empty list forgets it, and so does a playlist file that no
+  longer exists. The first save asks where and under what name (proposing the folder's name).
+
+### Changed
+- "Music and playlists" shows which playlist is open (or "not saved"), the save button names it, and there is a new
+  "Save as…" button. Saving always says where it saved.
+- The track that is playing is marked with a dot in the list; the list scrollbar is slim and rounded; list rows light up
+  under the mouse; dropdowns in the side panels have their own arrow.
+
 ## [1.8.1] - 2026-10-26
 
 ### Changed
