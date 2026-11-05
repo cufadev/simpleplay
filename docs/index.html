@@ -94,13 +94,13 @@ html[lang="es"] .en, html[lang="en"] .es { display: none !important; }
 /* Transiciones de página con View Transitions (Chrome, Edge, Safari y Firefox recientes; sin soporte se usan las de arriba).
    Tema: la pantalla nueva se abre en círculo desde el botón. Idioma: un cruce suave con un leve desenfoque. */
 html.vt-tema::view-transition-old(root), html.vt-tema::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
-html.vt-tema::view-transition-new(root) { z-index: 2; }
+html.vt-tema::view-transition-new(root) { z-index: 2; clip-path: circle(0px at var(--vt-x, 100%) var(--vt-y, 0px)); }   /* arranca ya recortado: nunca hay un cuadro con el tema nuevo entero */
 /* el botón es lo primero que cambia: sale a su propio plano, con el ícono y el fondo del tema nuevo, y recién después se abre el círculo desde él */
-html.vt-tema #tema { view-transition-name: boton-tema; background: var(--bg); }
+html.vt-tema #tema { view-transition-name: boton-tema; }
 html.vt-tema::view-transition-group(boton-tema) { animation: none; }
 html.vt-tema::view-transition-old(boton-tema) { display: none; }
 html.vt-tema::view-transition-new(boton-tema) { animation: tema-boton .5s cubic-bezier(.34, 1.56, .64, 1) both; mix-blend-mode: normal; }
-@keyframes tema-boton { from { transform: scale(.55) rotate(-120deg); opacity: .4; } to { transform: scale(1) rotate(0); opacity: 1; } }
+@keyframes tema-boton { from { transform: scale(.55) rotate(-120deg); } to { transform: scale(1) rotate(0); } }
 /* mientras el círculo se abre, el resto de las animaciones de la página se pausa: menos trabajo por cuadro, más fluidez */
 html.vt-tema *, html.vt-tema *::before, html.vt-tema *::after { animation-play-state: paused !important; }
 html.vt-idioma::view-transition-old(root), html.vt-idioma::view-transition-new(root) { mix-blend-mode: normal; }
@@ -165,6 +165,45 @@ html[data-seg="es"].seg-anima .seg [data-lang="es"], html[data-seg="en"].seg-ani
 @media (prefers-color-scheme: dark) { :root:not([data-theme]) .icono-btn .sol { display: block; } :root:not([data-theme]) .icono-btn .luna { display: none; } }
 @media (max-width: 640px) { .menu a.enlace { display: none; } }
 @media (hover: hover) and (pointer: fine) { .menu a.enlace:hover { color: var(--text); } .icono-btn:hover { background: var(--surface-2); } }
+
+/* pestaña de descarga: en reposo solo se ven las ondas saliendo del borde derecho; al acercar el mouse la pestaña sale entera */
+.notch-zona { position: fixed; right: 0; top: 50%; z-index: 45; width: 72px; height: 150px; transform: translateY(-50%); }
+.pulso { position: fixed; left: 0; top: 0; z-index: 60; width: 0; height: 0; pointer-events: none; will-change: transform; opacity: var(--po, 1); }
+.pulso-in { transform: scale(var(--esc, 1)); }
+.pulso-in::after { content: ""; position: absolute; left: 0; top: 0; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 70%, transparent); opacity: var(--core, 0); }
+.menu a.enlace.llama { color: var(--text); transition-duration: .6s; }
+/* al cambiar de tema el texto cambia junto con el fondo, sin quedarse un momento en el color del tema anterior */
+html.vt-tema .menu a.enlace { transition: none; }
+.pulso i, .pulso b { position: absolute; left: 0; top: 0; width: var(--w, 44px); height: var(--h, 44px); margin: calc(var(--h, 44px) / -2) 0 0 calc(var(--w, 44px) / -2); border-radius: 999px; border: 2px solid var(--accent); box-shadow: 0 0 calc(14px * var(--g, 1)) color-mix(in srgb, var(--accent) 60%, transparent), inset 0 0 calc(10px * var(--g, 1)) color-mix(in srgb, var(--accent) 40%, transparent); opacity: 0; }
+.notch { position: absolute; right: 0; top: 50%; display: flex; align-items: center; height: 56px; border-radius: 28px 0 0 28px; background: var(--accent); color: var(--on-accent); text-decoration: none; font-weight: 650; font-size: .95rem; box-shadow: var(--shadow); transform: translate(100%, -50%); transition: transform .45s var(--ease-out); }
+.notch-t { max-width: 0; overflow: hidden; white-space: nowrap; transition: max-width .35s var(--ease-out), padding .35s var(--ease-out); }
+.notch-ico { display: grid; place-items: center; width: 56px; height: 56px; flex: none; }
+.notch-ico svg { width: 24px; height: 24px; display: block; }
+.notch:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; transform: translate(0, -50%); }
+.notch:focus-visible .notch-t { max-width: 10em; padding-left: 22px; }
+.notch-zona:hover .notch { transform: translate(0, -50%); }
+.notch-zona:hover .notch-t { max-width: 10em; padding-left: 22px; }
+.notch-zona.oculto { opacity: 0; pointer-events: none; transition: opacity .3s ease; }
+html.js .notch-zona:not(.listo) { visibility: hidden; }
+/* sin mouse (táctil): la muesca queda asomada con el icono, y las ondas salen de él */
+@media (hover: none), (pointer: coarse) {
+  .notch { transform: translate(16px, -50%); }
+  .notch-ico { width: 40px; }
+  .notch { padding-right: 16px; }
+}
+@media (max-width: 640px) { .notch-zona { top: auto; bottom: 96px; transform: none; height: 56px; } .notch { height: 48px; } .notch-ico { height: 48px; } }
+@media (prefers-reduced-motion: no-preference) {
+  .pulso i { animation: notch-onda 5.6s cubic-bezier(.25, .5, .35, 1) infinite; }
+  .pulso i:nth-child(2) { animation-delay: 2.8s; }
+  .notch-ico svg { animation: notch-latido 2.6s ease-in-out infinite; }
+}
+@media (prefers-reduced-motion: reduce) { .pulso i:nth-child(1) { opacity: .5; transform: scale(1.4); } }
+.pulso b { font-weight: normal; }
+@media (prefers-reduced-motion: no-preference) { .pulso.dock i { animation-duration: 4.8s; animation-timing-function: cubic-bezier(.3, .4, .3, 1); } .pulso.dock i:nth-child(2) { animation-delay: 2.4s; } }
+.pulso.aterriza b { animation: notch-aterriza 1.6s cubic-bezier(.2, .6, .3, 1) 1; }
+@keyframes notch-aterriza { 0% { transform: scale(1); opacity: .6; } 100% { transform: scale(4); opacity: 0; } }
+@keyframes notch-onda { 0% { transform: scale(var(--e0, .7)); opacity: var(--o0, .9); } 100% { transform: scale(var(--e1, 3.8)); opacity: 0; } }
+@keyframes notch-latido { 0%, 72%, 100% { transform: translateY(0); } 82% { transform: translateY(2px); } 92% { transform: translateY(-1px); } }
 
 /* cartel de scroll: se ve al principio y desaparece apenas se empieza a bajar */
 .cue { position: fixed; right: clamp(16px, 3vw, 40px); bottom: clamp(16px, 3vw, 32px); z-index: 40; display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 16px; border: 1px solid var(--line); border-radius: 999px; font-size: .88rem; font-weight: 600; letter-spacing: .02em; color: var(--text); background: color-mix(in srgb, var(--surface) 70%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); pointer-events: none; transition: opacity .3s var(--ease-out), translate .3s var(--ease-out); }
@@ -265,7 +304,11 @@ html.final-directo .calor { opacity: .5; }
 .versiones li { display: grid; grid-template-columns: clamp(110px, 18vw, 260px) 1fr; align-items: center; gap: 18px; }
 .versiones .v { font-family: "Bebas Neue", "Geist", sans-serif; font-size: clamp(3.4rem, 9vw, 8rem); line-height: .86; color: color-mix(in srgb, var(--text) 55%, transparent); letter-spacing: .01em; transition: color .3s ease; }
 .versiones .t { font-size: clamp(1.1rem, 2vw, 1.6rem); line-height: 1.35; letter-spacing: -.015em; font-weight: 550; max-width: 36ch; transition: opacity .35s ease; }
-.versiones li:last-child .v { color: var(--accent); }
+.versiones li:last-child .v, .versiones li.cierre .v { color: var(--accent); }
+.versiones:not(.abierta) li.menor { display: none; }
+.versiones.abierta li.cierre:not(:last-child) .v { color: inherit; }
+.ver-mas { margin-top: clamp(32px, 4vw, 56px); }
+.ver-mas[aria-expanded="true"] .mas, .ver-mas[aria-expanded="false"] .menos { display: none; }
 /* riel con una bolita, como el slider del reproductor: avanza con el scroll y va iluminando las versiones que pasa */
 .versiones .riel { position: absolute; left: 0; width: 2px; border-radius: 2px; background: var(--line); pointer-events: none; }
 .versiones .relleno { position: absolute; inset: 0 0 auto 0; height: 0; border-radius: 2px; background: var(--accent); }
@@ -328,10 +371,15 @@ html.js .versiones li.pasada .v, html.js .versiones li.actual .v { color: var(--
 .sigue { padding-block: clamp(96px, 13vw, 190px); }
 .sigue .grande-titulo { max-width: 13ch; }
 .sigue .doble { margin-top: clamp(40px, 6vw, 88px); display: grid; grid-template-columns: 6fr 5fr; gap: clamp(32px, 7vw, 120px); align-items: start; }
+.sigue figure { margin-top: clamp(0px, 4vw, 56px); max-width: 440px; justify-self: end; }
+.sigue figure img { width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--line); box-shadow: var(--shadow); rotate: -1.6deg; }
+.sigue figcaption { margin-top: 18px; font-size: .9rem; color: var(--muted); }
 .sigue .estado { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); max-width: 46ch; font-size: .98rem; }
 .tiene h3 { font-size: .95rem; font-weight: 600; color: var(--accent-text); margin-bottom: 18px; }
 .tiene li { font-size: clamp(1.4rem, 2.6vw, 2.1rem); line-height: 1.22; letter-spacing: -.03em; font-weight: 650; text-wrap: balance; }
-.tiene li + li { margin-top: 18px; }
+.tiene { margin-top: clamp(56px, 8vw, 112px); padding-top: clamp(28px, 3vw, 40px); border-top: 1px solid var(--line); }
+.tiene ul { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(20px, 4vw, 64px); }
+@media (max-width: 880px) { .tiene ul { grid-template-columns: 1fr; gap: 18px; } }
 .no-tiene { margin-top: clamp(56px, 9vw, 130px); }
 .no-tiene > h3 { font-size: .95rem; font-weight: 600; color: var(--accent-text); margin-bottom: 8px; }
 .tachada { position: relative; display: inline-block; font-family: "Bebas Neue", "Geist", sans-serif; font-size: clamp(3rem, 12.5vw, 12.5rem); line-height: .92; letter-spacing: .005em; color: color-mix(in srgb, var(--text) 78%, transparent); }
@@ -549,6 +597,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     <a class="marca" href="#inicio" aria-label="tarab player"><img src="img/icon-64.png" alt="" width="28" height="28"><span class="marca-texto"><span class="mt">tarab player</span><canvas class="marca-barras" aria-hidden="true"></canvas></span></a>
     <nav class="menu" aria-label="Principal">
       <a class="enlace" href="#historia"><span class="es">Historia</span><span class="en">Story</span></a>
+      <a class="enlace" href="#pocket"><span class="es">Pocket</span><span class="en">Pocket</span></a>
       <a class="enlace" href="#descargar"><span class="es">Descargar</span><span class="en">Download</span></a>
       <a class="enlace" href="#codigo"><span class="es">Código</span><span class="en">Code</span></a>
       <div class="herr">
@@ -567,6 +616,8 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
 </header>
 
 <span class="cue" aria-hidden="true"><span>Scroll</span><svg class="ic"><use href="#i-arrow-down"/></svg></span>
+<div class="notch-zona" id="notch"><a class="notch" href="https://github.com/cufadev/simpleplay/releases/latest" rel="noopener"><span class="notch-t"><span class="es">Última versión</span><span class="en">Latest release</span></span><span class="notch-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v12"/><path d="m6.5 10.5 5.5 5.5 5.5-5.5"/><path d="M5 20.5h14"/></svg></span></a></div>
+<div class="pulso" id="pulso" aria-hidden="true"><div class="pulso-in"><i></i><i></i><b></b></div></div>
 <main>
 
   <!-- 1. del ruido al silencio -->
@@ -659,23 +710,24 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
           <figcaption><span class="es">El primer prototipo, en Tkinter.</span><span class="en">The first prototype, in Tkinter.</span></figcaption>
         </figure>
       </div>
-      <ol class="versiones">
+      <ol class="versiones" id="versiones">
         <li class="revela"><span class="v">1.0</span><span class="t"><span class="es">La tarjeta con la portada, las barras de espectro y la lista.</span><span class="en">The card with the cover art, the spectrum bars and the list.</span></span></li>
-        <li class="revela"><span class="v">1.1</span><span class="t"><span class="es">Teclas multimedia, atajos de teclado y un espectro que se adapta a cada tema.</span><span class="en">Media keys, keyboard shortcuts and a spectrum that adapts to each track.</span></span></li>
-        <li class="revela"><span class="v">1.2</span><span class="t"><span class="es">Búsqueda, orden y carpetas enteras en la lista. Repetir un tema o toda la lista.</span><span class="en">Search, sorting and whole folders in the list. Repeat a track or the whole list.</span></span></li>
-        <li class="revela"><span class="v">1.3</span><span class="t"><span class="es">El modo compacto: la tarjeta se achica a una barra.</span><span class="en">Compact mode: the card shrinks to a bar.</span></span></li>
+        <li class="revela menor"><span class="v">1.1</span><span class="t"><span class="es">Teclas multimedia, atajos de teclado y un espectro que se adapta a cada tema.</span><span class="en">Media keys, keyboard shortcuts and a spectrum that adapts to each track.</span></span></li>
+        <li class="revela menor"><span class="v">1.2</span><span class="t"><span class="es">Búsqueda, orden y carpetas enteras en la lista. Repetir un tema o toda la lista.</span><span class="en">Search, sorting and whole folders in the list. Repeat a track or the whole list.</span></span></li>
+        <li class="revela menor"><span class="v">1.3</span><span class="t"><span class="es">El modo compacto: la tarjeta se achica a una barra.</span><span class="en">Compact mode: the card shrinks to a bar.</span></span></li>
         <li class="revela"><span class="v">1.4</span><span class="t"><span class="es">Un motor de audio propio, una transición animada y una sombra suave.</span><span class="en">Its own audio engine, an animated transition and a soft shadow.</span></span></li>
-        <li class="revela"><span class="v">1.4.1</span><span class="t"><span class="es">Normalizador de volumen y ecualizador con presets.</span><span class="en">Volume normalizer and an equalizer with presets.</span></span></li>
-        <li class="revela"><span class="v">1.5</span><span class="t"><span class="es">FLAC, perfiles de auriculares, listas de reproducción y menos consumo de CPU.</span><span class="en">FLAC, headphone profiles, playlists and lower CPU use.</span></span></li>
-        <li class="revela"><span class="v">1.5.1</span><span class="t"><span class="es">El normalizador se acomoda de a poco y mide el tema que sigue, sin saltos de volumen.</span><span class="en">The normalizer settles gradually and measures the next track ahead, with no sudden volume jumps.</span></span></li>
-        <li class="revela"><span class="v">1.5.2</span><span class="t"><span class="es">Un shuffle que no repite temas hasta que suenan todos, y un icono nuevo.</span><span class="en">A shuffle that never repeats a track until all have played, and a new icon.</span></span></li>
-        <li class="revela"><span class="v">1.5.3</span><span class="t"><span class="es">Fundidos suaves al pausar y cerrar, un contador en la lista y sin saltos de volumen con shuffle.</span><span class="en">Soft fades when pausing and closing, a counter in the list and no volume jumps with shuffle.</span></span></li>
+        <li class="revela menor"><span class="v">1.4.1</span><span class="t"><span class="es">Normalizador de volumen y ecualizador con presets.</span><span class="en">Volume normalizer and an equalizer with presets.</span></span></li>
+        <li class="revela menor"><span class="v">1.5</span><span class="t"><span class="es">FLAC, perfiles de auriculares, listas de reproducción y menos consumo de CPU.</span><span class="en">FLAC, headphone profiles, playlists and lower CPU use.</span></span></li>
+        <li class="revela menor"><span class="v">1.5.1</span><span class="t"><span class="es">El normalizador se acomoda de a poco y mide el tema que sigue, sin saltos de volumen.</span><span class="en">The normalizer settles gradually and measures the next track ahead, with no sudden volume jumps.</span></span></li>
+        <li class="revela menor"><span class="v">1.5.2</span><span class="t"><span class="es">Un shuffle que no repite temas hasta que suenan todos, y un icono nuevo.</span><span class="en">A shuffle that never repeats a track until all have played, and a new icon.</span></span></li>
+        <li class="revela menor"><span class="v">1.5.3</span><span class="t"><span class="es">Fundidos suaves al pausar y cerrar, un contador en la lista y sin saltos de volumen con shuffle.</span><span class="en">Soft fades when pausing and closing, a counter in the list and no volume jumps with shuffle.</span></span></li>
         <li class="revela"><span class="v">1.6</span><span class="t"><span class="es">Ecualizador gráfico de 10 bandas con graves precisos, mejor sonido en archivos de 48 y 96 kHz, un limitador que no distorsiona, controles que se esconden solos, y seis colores de acento.</span><span class="en">A 10-band graphic equalizer with accurate bass, better sound for 48 and 96 kHz files, a limiter that does not distort, controls that hide by themselves, and six accent colors.</span></span></li>
         <li class="revela"><span class="v">1.7</span><span class="t"><span class="es">Mosquito: manejá el reproductor desde el celular, con un QR, y silenciá solo al reproductor con un doble toque.</span><span class="en">Mosquito: control the player from your phone with a QR, and mute only the player with a double tap.</span></span></li>
-        <li class="revela"><span class="v">1.8</span><span class="t"><span class="es">Ecualizador paramétrico, crossfeed y balance para auriculares, y un panel para elegir carpetas y listas.</span><span class="en">Parametric equalizer, crossfeed and balance for headphones, and a panel for choosing folders and playlists.</span></span></li>
-        <li class="revela"><span class="v">1.8.1</span><span class="t"><span class="es">Burbujas de luz que cambian de color y laten con la música cuando el tema no tiene carátula.</span><span class="en">Bubbles of light that change colour and pulse with the music when a track has no cover art.</span></span></li>
-        <li class="revela"><span class="v">1.8.2</span><span class="t"><span class="es">Correcciones y ajustes menores: el botón «–», el guardado de listas y detalles de la lista.</span><span class="en">Fixes and minor adjustments: the “–” button, playlist saving and list details.</span></span></li>
+        <li class="revela cierre"><span class="v">1.8</span><span class="t"><span class="es">Ecualizador paramétrico, crossfeed y balance para auriculares, y un panel para elegir carpetas y listas.</span><span class="en">Parametric equalizer, crossfeed and balance for headphones, and a panel for choosing folders and playlists.</span></span></li>
+        <li class="revela menor"><span class="v">1.8.1</span><span class="t"><span class="es">Burbujas de luz que cambian de color y laten con la música cuando el tema no tiene carátula.</span><span class="en">Bubbles of light that change colour and pulse with the music when a track has no cover art.</span></span></li>
+        <li class="revela menor"><span class="v">1.8.2</span><span class="t"><span class="es">Correcciones y ajustes menores: el botón «–», el guardado de listas y detalles de la lista.</span><span class="en">Fixes and minor adjustments: the “–” button, playlist saving and list details.</span></span></li>
       </ol>
+      <button type="button" class="boton secundario ver-mas" id="ver-versiones" aria-expanded="false" aria-controls="versiones"><span class="mas"><span class="es">Ver las 15 versiones</span><span class="en">See all 15 versions</span></span><span class="menos"><span class="es">Ver menos</span><span class="en">Show less</span></span></button>
     </div>
   </section>
 
@@ -878,32 +930,36 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   </section>
 
   <!-- 4. lo que sigue -->
-  <section class="sigue">
+  <section class="sigue" id="pocket">
     <div class="cont">
-      <h2 class="grande-titulo revela"><span class="es">Lo que sigue: un reproductor que solo toca música.</span><span class="en">What's next: a player that only plays music.</span></h2>
+      <h2 class="grande-titulo revela"><span class="es">Ahora, uno que entra en el bolsillo.</span><span class="en">Now, one that fits in your pocket.</span></h2>
       <div class="doble">
         <div>
           <div class="prosa revela" style="--i:1">
-            <p class="es">Quiero llevar esta idea a un reproductor físico: un mp3 chico, con tus archivos en una tarjeta de memoria y una sola tarea. Sin nadie que decida qué escuchás después.</p>
-            <p class="en">I want to bring this idea to a physical player: a small mp3 player with your files on a memory card and a single job. Nobody deciding what you hear next.</p>
-            <p class="es">La conectividad de hoy inunda y sofoca. Este sería un lugar donde no entra.</p>
-            <p class="en">Today's connectivity floods and suffocates. This would be a place it does not reach.</p>
+            <p class="es">La misma idea, en un reproductor físico: un mp3 chico, con tus archivos en una tarjeta de memoria y una sola tarea. Sin nadie que decida qué escuchás después.</p>
+            <p class="en">The same idea, as a physical player: a small mp3 player with your files on a memory card and a single job. Nobody deciding what you hear next.</p>
+            <p class="es">La conectividad de hoy inunda y sofoca. Este es un lugar donde no entra.</p>
+            <p class="en">Today's connectivity floods and suffocates. This is a place it does not reach.</p>
           </div>
-          <p class="estado revela" style="--i:2"><span class="es">Hoy está en construcción, sobre un microcontrolador ESP32. Cuando haya algo para mostrar, lo voy a contar acá.</span><span class="en">It is under construction on an ESP32 microcontroller. When there is something to show, I will post it here.</span></p>
+          <p class="estado revela" style="--i:2"><span class="es">Hoy es un prototipo sobre una placa ESP32. Lo que falte lo voy a ir contando acá.</span><span class="en">Today it is a prototype on an ESP32 board. What is still missing, I will post here.</span></p>
         </div>
-        <div class="tiene revela" style="--i:1">
-          <h3><span class="es">Va a tener</span><span class="en">It will have</span></h3>
-          <ul>
-            <li><span class="es">Tus mp3 en una tarjeta de memoria</span><span class="en">Your mp3s on a memory card</span></li>
-            <li><span class="es">Una pantalla chica con la portada</span><span class="en">A small screen with the cover art</span></li>
-            <li><span class="es">Una sola tarea: que suene la música</span><span class="en">One job: playing music</span></li>
-          </ul>
-        </div>
+        <figure class="pocket revela" style="--i:2">
+          <picture><source srcset="img/pocket.webp" type="image/webp"><img src="img/pocket.jpg" width="900" height="1125" loading="lazy" alt="Un ESP32 con pantalla táctil reproduciendo un tema, conectado por USB a un tester que marca 5 V y 0,14 A" data-alt-es="Un ESP32 con pantalla táctil reproduciendo un tema, conectado por USB a un tester que marca 5 V y 0,14 A" data-alt-en="An ESP32 with a touchscreen playing a track, plugged into a USB tester reading 5 V and 0.14 A"></picture>
+          <figcaption><span class="es">Tarab Pocket en una placa ESP32 de 2,8″, conectada a un tester USB: 5 V y 0,14 A.</span><span class="en">Tarab Pocket on a 2.8″ ESP32 board, plugged into a USB tester: 5 V and 0.14 A.</span></figcaption>
+        </figure>
+      </div>
+      <div class="tiene revela" style="--i:1">
+        <h3><span class="es">Tiene</span><span class="en">It has</span></h3>
+        <ul>
+          <li><span class="es">Tus mp3 en una tarjeta de memoria</span><span class="en">Your mp3s on a memory card</span></li>
+          <li><span class="es">Una pantalla táctil chica</span><span class="en">A small touchscreen</span></li>
+          <li><span class="es">Una sola tarea: que suene la música</span><span class="en">One job: playing music</span></li>
+        </ul>
       </div>
       <div class="no-tiene">
-        <h3 class="revela"><span class="es">No va a tener</span><span class="en">It will not have</span></h3>
+        <h3 class="revela"><span class="es">No tiene</span><span class="en">It does not have</span></h3>
         <ul id="tachadas">
-          <li><span class="tachada" style="--i:0"><span class="es">Internet</span><span class="en">Internet</span></span></li>
+          <li><span class="tachada" style="--i:0"><span class="es">Streaming</span><span class="en">Streaming</span></span></li>
           <li><span class="tachada" style="--i:0"><span class="es">Cuentas</span><span class="en">Accounts</span></span></li>
           <li><span class="tachada" style="--i:0"><span class="es">Notificaciones</span><span class="en">Notifications</span></span></li>
           <li><span class="tachada" style="--i:0"><span class="es">Recomendaciones</span><span class="en">Recommendations</span></span></li>
@@ -1184,11 +1240,12 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     const r = e.currentTarget.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
     const radio = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
     cambiandoTema = true;
+    html.style.setProperty('--vt-x', x + 'px'); html.style.setProperty('--vt-y', y + 'px');
     html.classList.add('vt-tema');
     const t = document.startViewTransition(aplicar);
     t.ready.then(() => html.animate(
       { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radio}px at ${x}px ${y}px)`] },
-      { duration: 750, delay: 160, fill: 'both', easing: 'cubic-bezier(0.23, 1, 0.32, 1)', pseudoElement: '::view-transition-new(root)' }   // el botón cambia primero; el círculo arranca 160 ms después
+      { duration: 900, fill: 'both', easing: 'cubic-bezier(.45, .05, .25, 1)', pseudoElement: '::view-transition-new(root)' }   // el círculo nace ya del botón y se ve crecer
     )).catch(() => {});
     t.finished.finally(() => { html.classList.remove('vt-tema'); cambiandoTema = false; });
   });
@@ -1294,7 +1351,8 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
   // Versiones: la bolita avanza con el scroll por el riel y va iluminando cada versión que pasa
   const listaV = document.querySelector('.versiones');
   if (listaV) {
-    const items = [...listaV.children];
+    const visibles = () => [...listaV.children].filter((li) => li.tagName === 'LI' && li.offsetParent !== null);
+    let items = visibles();
     const riel = document.createElement('span');
     riel.className = 'riel';
     riel.setAttribute('aria-hidden', 'true');
@@ -1306,6 +1364,8 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     const centro = (el, base) => { const r = el.querySelector('.v').getBoundingClientRect(); return r.top + r.height / 2 - base; };
     const medir = () => {
       esperando = false;
+      items = visibles();
+      listaV.querySelectorAll('li').forEach((li) => { if (!items.includes(li)) li.classList.remove('pasada', 'actual'); });
       const base = listaV.getBoundingClientRect().top;
       const c = items.map((li) => centro(li, base));
       const primero = c[0], ultimo = c[c.length - 1];
@@ -1325,7 +1385,66 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     document.fonts && document.fonts.ready.then(pedir);
     addEventListener('load', pedir);
     if ('ResizeObserver' in window) new ResizeObserver(pedir).observe(listaV);   // si el diseño cambia (fuentes, idioma), vuelve a medir
+    const verMas = document.getElementById('ver-versiones');
+    if (verMas) verMas.addEventListener('click', () => {
+      const abrir = verMas.getAttribute('aria-expanded') !== 'true';
+      listaV.classList.toggle('abierta', abrir);
+      verMas.setAttribute('aria-expanded', String(abrir));
+      if (abrir) listaV.querySelectorAll('li.menor').forEach((li) => li.classList.add('dentro'));
+      pedir();
+    });
     pedir();
+  }
+
+  // Pulso de descarga: arriba late en el borde derecho (con la pestaña que sale al acercar el mouse); al hacer scroll viaja hasta "Descargar" del menú y se queda ahí
+  const notch = document.getElementById('notch');
+  const pulso = document.getElementById('pulso');
+  if (notch && pulso) {
+    setTimeout(() => notch.classList.add('listo'), 1200);
+    const destino = document.querySelector('.menu a.enlace[href="#descargar"]');
+    const suave = (t) => t * t * (3 - 2 * t);
+    let esperandoP = false;
+    const colocar = () => {
+      esperandoP = false;
+      const z = notch.getBoundingClientRect();
+      const tactil = matchMedia('(hover: none), (pointer: coarse)').matches;
+      const ox = z.right - (tactil ? 12 : 0), oy = z.top + z.height / 2;
+      const d = destino ? destino.getBoundingClientRect() : null;
+      const hayDestino = !!(d && d.width > 0);
+      const tramo = Math.max(240, innerHeight * 0.55);
+      let p = Math.min(1, Math.max(0, scrollY / tramo));
+      if (reducir.matches) p = p > 0.05 ? 1 : 0;
+      const e = suave(p);
+      const tx = hayDestino ? d.right + 3 : ox, ty = hayDestino ? d.top + d.height * 0.3 : oy;   // el punto queda en la esquina de la palabra
+      const x = ox + (tx - ox) * e, y = oy + (ty - oy) * e;
+      pulso.style.transform = 'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0)';
+      // al llegar, el círculo se achica hasta ser un punto de aviso en la esquina de la palabra, con ondas circulares
+      const lerp = (a, b) => a + (b - a) * e;
+      const w = hayDestino ? lerp(44, 8) : 44, h = w;
+      pulso.style.setProperty('--w', w.toFixed(1) + 'px');
+      pulso.style.setProperty('--h', h.toFixed(1) + 'px');
+      pulso.style.setProperty('--e0', (hayDestino ? lerp(0.7, 1) : 0.7).toFixed(3));
+      pulso.style.setProperty('--e1', (hayDestino ? lerp(3.8, 3.2) : 3.8).toFixed(3));
+      pulso.style.setProperty('--o0', (hayDestino ? lerp(0.9, 0.75) : 0.9).toFixed(3));   // en el menú las ondas nacen más tenues
+      pulso.style.setProperty('--core', hayDestino ? (e * e * e).toFixed(3) : '0');   // el puntito se enciende recién al llegar
+      pulso.style.setProperty('--g', (hayDestino ? lerp(1, 0.45) : 1).toFixed(3));
+      pulso.style.setProperty('--po', hayDestino ? '1' : String(1 - Math.min(1, p * 4)));   // sin menú visible (celular): se apaga al bajar
+      notch.classList.toggle('oculto', p > 0.03);
+      const llego = hayDestino && p >= 1;
+      if (destino) destino.classList.toggle('llama', llego);
+      pulso.classList.toggle('dock', llego);
+      if (llego && !pulso.dataset.llego && !reducir.matches) {   // al aterrizar: un anillo más fuerte, una sola vez
+        pulso.classList.remove('aterriza'); void pulso.offsetWidth; pulso.classList.add('aterriza');
+        setTimeout(() => pulso.classList.remove('aterriza'), 1000);
+      }
+      if (llego) pulso.dataset.llego = '1'; else delete pulso.dataset.llego;
+    };
+    const pedirP = () => { if (!esperandoP) { esperandoP = true; requestAnimationFrame(colocar); } };
+    addEventListener('scroll', pedirP, { passive: true });
+    addEventListener('resize', pedirP);
+    document.fonts && document.fonts.ready.then(pedirP);
+    addEventListener('load', pedirP);
+    colocar();
   }
 
   // Atajos: la fila de la página se ilumina cuando se aprieta el mismo atajo en el teclado (no hace nada más)
