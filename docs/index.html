@@ -307,7 +307,8 @@ html.final-directo .calor { opacity: .5; }
 .versiones li:last-child .v, .versiones li.cierre .v { color: var(--accent); }
 .versiones:not(.abierta) li.menor { display: none; }
 .versiones.abierta li.cierre:not(:last-child) .v { color: inherit; }
-.ver-mas { margin-top: clamp(32px, 4vw, 56px); }
+.ver-mas { margin-top: clamp(40px, 5vw, 72px); }
+.ver-mas + .versiones { margin-top: clamp(32px, 4vw, 56px); }
 .ver-mas[aria-expanded="true"] .mas, .ver-mas[aria-expanded="false"] .menos { display: none; }
 /* riel con una bolita, como el slider del reproductor: avanza con el scroll y va iluminando las versiones que pasa */
 .versiones .riel { position: absolute; left: 0; width: 2px; border-radius: 2px; background: var(--line); pointer-events: none; }
@@ -713,25 +714,25 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
           <figcaption><span class="es">El primer prototipo, en Tkinter.</span><span class="en">The first prototype, in Tkinter.</span></figcaption>
         </figure>
       </div>
+      <button type="button" class="boton secundario ver-mas" id="ver-versiones" aria-expanded="false" aria-controls="versiones"><span class="mas"><span class="es">Ver las 16 versiones</span><span class="en">See all 16 versions</span></span><span class="menos"><span class="es">Ver menos</span><span class="en">Show less</span></span></button>
       <ol class="versiones" id="versiones">
         <li class="revela"><span class="v">1.0</span><span class="t"><span class="es">La tarjeta con la portada, las barras de espectro y la lista.</span><span class="en">The card with the cover art, the spectrum bars and the list.</span></span></li>
         <li class="revela menor"><span class="v">1.1</span><span class="t"><span class="es">Teclas multimedia, atajos de teclado y un espectro que se adapta a cada tema.</span><span class="en">Media keys, keyboard shortcuts and a spectrum that adapts to each track.</span></span></li>
         <li class="revela menor"><span class="v">1.2</span><span class="t"><span class="es">Búsqueda, orden y carpetas enteras en la lista. Repetir un tema o toda la lista.</span><span class="en">Search, sorting and whole folders in the list. Repeat a track or the whole list.</span></span></li>
         <li class="revela menor"><span class="v">1.3</span><span class="t"><span class="es">El modo compacto: la tarjeta se achica a una barra.</span><span class="en">Compact mode: the card shrinks to a bar.</span></span></li>
-        <li class="revela"><span class="v">1.4</span><span class="t"><span class="es">Un motor de audio propio, una transición animada y una sombra suave.</span><span class="en">Its own audio engine, an animated transition and a soft shadow.</span></span></li>
+        <li class="revela menor"><span class="v">1.4</span><span class="t"><span class="es">Un motor de audio propio, una transición animada y una sombra suave.</span><span class="en">Its own audio engine, an animated transition and a soft shadow.</span></span></li>
         <li class="revela menor"><span class="v">1.4.1</span><span class="t"><span class="es">Normalizador de volumen y ecualizador con presets.</span><span class="en">Volume normalizer and an equalizer with presets.</span></span></li>
         <li class="revela menor"><span class="v">1.5</span><span class="t"><span class="es">FLAC, perfiles de auriculares, listas de reproducción y menos consumo de CPU.</span><span class="en">FLAC, headphone profiles, playlists and lower CPU use.</span></span></li>
         <li class="revela menor"><span class="v">1.5.1</span><span class="t"><span class="es">El normalizador se acomoda de a poco y mide el tema que sigue, sin saltos de volumen.</span><span class="en">The normalizer settles gradually and measures the next track ahead, with no sudden volume jumps.</span></span></li>
         <li class="revela menor"><span class="v">1.5.2</span><span class="t"><span class="es">Un shuffle que no repite temas hasta que suenan todos, y un icono nuevo.</span><span class="en">A shuffle that never repeats a track until all have played, and a new icon.</span></span></li>
         <li class="revela menor"><span class="v">1.5.3</span><span class="t"><span class="es">Fundidos suaves al pausar y cerrar, un contador en la lista y sin saltos de volumen con shuffle.</span><span class="en">Soft fades when pausing and closing, a counter in the list and no volume jumps with shuffle.</span></span></li>
         <li class="revela"><span class="v">1.6</span><span class="t"><span class="es">Ecualizador gráfico de 10 bandas con graves precisos, mejor sonido en archivos de 48 y 96 kHz, un limitador que no distorsiona, controles que se esconden solos, y seis colores de acento.</span><span class="en">A 10-band graphic equalizer with accurate bass, better sound for 48 and 96 kHz files, a limiter that does not distort, controls that hide by themselves, and six accent colors.</span></span></li>
-        <li class="revela"><span class="v">1.7</span><span class="t"><span class="es">Mosquito: manejá el reproductor desde el celular, con un QR, y silenciá solo al reproductor con un doble toque.</span><span class="en">Mosquito: control the player from your phone with a QR, and mute only the player with a double tap.</span></span></li>
-        <li class="revela cierre"><span class="v">1.8</span><span class="t"><span class="es">Ecualizador paramétrico, crossfeed y balance para auriculares, y un panel para elegir carpetas y listas.</span><span class="en">Parametric equalizer, crossfeed and balance for headphones, and a panel for choosing folders and playlists.</span></span></li>
+        <li class="revela menor"><span class="v">1.7</span><span class="t"><span class="es">Mosquito: manejá el reproductor desde el celular, con un QR, y silenciá solo al reproductor con un doble toque.</span><span class="en">Mosquito: control the player from your phone with a QR, and mute only the player with a double tap.</span></span></li>
+        <li class="revela cierre menor"><span class="v">1.8</span><span class="t"><span class="es">Ecualizador paramétrico, crossfeed y balance para auriculares, y un panel para elegir carpetas y listas.</span><span class="en">Parametric equalizer, crossfeed and balance for headphones, and a panel for choosing folders and playlists.</span></span></li>
         <li class="revela menor"><span class="v">1.8.1</span><span class="t"><span class="es">Burbujas de luz que cambian de color y laten con la música cuando el tema no tiene carátula.</span><span class="en">Bubbles of light that change colour and pulse with the music when a track has no cover art.</span></span></li>
         <li class="revela menor"><span class="v">1.8.2</span><span class="t"><span class="es">Correcciones y ajustes menores: el botón «–», el guardado de listas y detalles de la lista.</span><span class="en">Fixes and minor adjustments: the “–” button, playlist saving and list details.</span></span></li>
         <li class="revela"><span class="v">1.8.5</span><span class="t"><span class="es">El notch: la barra compacta se pega al borde de arriba de la pantalla, por encima de las demás ventanas, y se esconde sola. Solo Linux por ahora, probado en KDE Plasma con Wayland.</span><span class="en">The notch: the compact bar docks to the top edge of the screen, above the other windows, and hides itself. Linux only for now, tested on KDE Plasma with Wayland.</span></span></li>
       </ol>
-      <button type="button" class="boton secundario ver-mas" id="ver-versiones" aria-expanded="false" aria-controls="versiones"><span class="mas"><span class="es">Ver las 16 versiones</span><span class="en">See all 16 versions</span></span><span class="menos"><span class="es">Ver menos</span><span class="en">Show less</span></span></button>
     </div>
   </section>
 
@@ -1394,13 +1395,64 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     addEventListener('load', pedir);
     if ('ResizeObserver' in window) new ResizeObserver(pedir).observe(listaV);   // si el diseño cambia (fuentes, idioma), vuelve a medir
     const verMas = document.getElementById('ver-versiones');
-    if (verMas) verMas.addEventListener('click', () => {
-      const abrir = verMas.getAttribute('aria-expanded') !== 'true';
-      listaV.classList.toggle('abierta', abrir);
+    let anims = [];
+    let armado = false;   // el cierre por scroll solo vale después de desplegar
+    const cortar = () => { anims.forEach((x) => x.finish()); anims = []; };
+    const ultimo = () => listaV.querySelector('li:last-of-type .v');
+    const cambiar = (abrir, auto) => {
+      cortar();
+      const menores = [...listaV.querySelectorAll('li.menor')];
       verMas.setAttribute('aria-expanded', String(abrir));
-      if (abrir) listaV.querySelectorAll('li.menor').forEach((li) => li.classList.add('dentro'));
+      armado = abrir;
+      const mover = !reducir.matches && listaV.animate;
+      // al cerrar, algo se queda quieto en la pantalla: el botón (si lo tocaste) o la última versión (si se cerró sola al llegar a ella)
+      const ancla = abrir ? null : (auto ? ultimo() : verMas);
+      const y0 = ancla ? ancla.getBoundingClientRect().top : 0;
+      const corregir = () => { if (!ancla) return; const d = ancla.getBoundingClientRect().top - y0; if (Math.abs(d) > 0.5) window.scrollTo({ top: scrollY + d, behavior: 'instant' }); };
+      const h0 = listaV.offsetHeight;
+      if (abrir) menores.forEach((li) => li.classList.add('dentro'));
+      const sinAnimar = () => { listaV.classList.toggle('abierta', abrir); corregir(); pedir(); };
+      if (!mover) return sinAnimar();
+      const ease = 'cubic-bezier(.22,.8,.2,1)';
+      if (auto) {
+        // cierre por scroll: las del medio se desvanecen y la lista se compacta; la última no se mueve de donde está en la pantalla
+        const fund = menores.map((li) => li.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: 'ease-out', fill: 'both' }));
+        anims.push(...fund);
+        fund[0].onfinish = () => { anims.forEach((x) => x.cancel()); anims = []; sinAnimar(); };
+        return;
+      }
+      listaV.classList.toggle('abierta', abrir);
+      const h1 = listaV.offsetHeight;   // altura final, medida antes de pintar
+      listaV.style.overflow = 'hidden';
+      if (!abrir) listaV.classList.add('abierta');   // al cerrar, las filas siguen a la vista mientras la lista se encoge
+      const alto = listaV.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: abrir ? 780 : 560, easing: ease });
+      anims.push(alto);
+      (abrir ? menores : [...menores].reverse()).forEach((li, i) => {
+        const fuera = { opacity: 0, transform: 'translateY(' + (abrir ? 28 : -14) + 'px)' };
+        const dentro = { opacity: 1, transform: 'none' };
+        anims.push(li.animate(abrir ? [fuera, dentro] : [dentro, fuera], {
+          duration: abrir ? 560 : 320, delay: Math.min(i * (abrir ? 60 : 30), abrir ? 520 : 260), easing: ease, fill: 'both'
+        }));
+      });
+      alto.onfinish = () => {
+        listaV.style.overflow = '';
+        if (!abrir) listaV.classList.remove('abierta');
+        anims.forEach((x) => x.cancel()); anims = [];
+        pedir();
+      };
+      if (!abrir) { const seguir = () => { corregir(); if (anims.length) requestAnimationFrame(seguir); }; requestAnimationFrame(seguir); }
       pedir();
-    });
+    };
+    if (verMas) {
+      verMas.addEventListener('click', () => cambiar(verMas.getAttribute('aria-expanded') !== 'true', false));
+      // al bajar por la lista desplegada y llegar a la última versión, se compacta sola: al volver a subir no queda el tramo largo abierto
+      addEventListener('scroll', () => {
+        if (!armado || anims.length || !listaV.classList.contains('abierta')) return;
+        const u = ultimo(); if (!u) return;
+        const r = u.getBoundingClientRect();
+        if (r.top + r.height / 2 <= innerHeight * 0.58) cambiar(false, true);
+      }, { passive: true });
+    }
     pedir();
   }
 
