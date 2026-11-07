@@ -5,6 +5,7 @@ import collections
 import difflib
 import functools
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -14,6 +15,7 @@ import shutil
 import ssl
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unicodedata
@@ -53,13 +55,13 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QGridLayout, QInputDi
                                QAbstractItemView, QLineEdit, QListWidgetItem, QStyledItemDelegate, QStyle, QDialog, QPushButton, QComboBox, QCheckBox, QScrollArea)
 
 try:
-    from PySide6.QtDBus import (QDBusConnection, QDBusAbstractAdaptor, QDBusObjectPath,
+    from PySide6.QtDBus import (QDBus, QDBusConnection, QDBusAbstractAdaptor, QDBusObjectPath,
                                 QDBusMessage, QDBusArgument)
     HAY_DBUS = True
 except ImportError:  # sin QtDBus no hay teclas multimedia; el resto anda igual
     HAY_DBUS = False
 
-VERSION = "1.8.2"
+VERSION = "1.8.5"
 # La escoba (completar los datos del tema desde MusicBrainz) está escrita pero desactivada en esta
 # versión. Para seguir trabajando en ella: SIMPLEPLAY_ESCOBA=1 python simpleplay.py
 ESCOBA = bool(os.environ.get("SIMPLEPLAY_ESCOBA"))
@@ -142,6 +144,7 @@ QLabel { color: white; background: transparent; }
 QFrame#pill { background: rgba(0,0,0,95); border-radius: 18px; }
 QFrame#panel { background: rgba(22,22,24,235); border-radius: 18px; }
 QFrame#mini { background: rgba(22,22,24,235); border-radius: 28px; }
+QFrame#mini[notch="true"] { border-top-left-radius: 0; border-top-right-radius: 0; border-bottom-left-radius: 22px; border-bottom-right-radius: 22px; }
 QListWidget { background: transparent; color: white; border: none; padding: 0; outline: 0; }
 QListWidget::item { padding: 6px 8px 6px 22px; border-radius: 8px; }
 QListWidget::item:selected { background: rgba(255,78,1,190); color: white; }
@@ -1609,6 +1612,74 @@ def dibujar_sombra(p, rect, radio, factor=1.0):
     p.restore()
 
 
+NOTCH_RADIO = 22     # radio de las esquinas de abajo del notch
+NOTCH_OREJA = 14     # radio de las "orejas" cóncavas que lo funden con el borde de la pantalla
+NOTCH_BORDE = 6      # lo que queda a la vista del notch cuando se esconde (alto, en px)
+NOTCH_ESPERA_MS = 1800   # cuánto espera con el mouse afuera antes de esconderse
+
+
+def _paneles_plasma():
+    """[(pantalla, borde)] de los paneles de KDE Plasma leídos de su configuración. Qt en Wayland no los informa
+    (availableGeometry == geometry), así que se lee el archivo. Ubicaciones de Plasma: 3 arriba, 4 abajo, 5 izq., 6 der."""
+    ruta = Path.home() / ".config" / "plasma-org.kde.plasma.desktop-appletsrc"
+    try:
+        texto = ruta.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    paneles = []
+    for bloque in re.split(r"\n(?=\[)", texto):
+        if not re.match(r"\[Containments\]\[\d+\]\s*\n", bloque + "\n") or "plugin=org.kde.panel" not in bloque:
+            continue
+        pant = re.search(r"^lastScreen=(-?\d+)", bloque, re.M)
+        loc = re.search(r"^location=(\d+)", bloque, re.M)
+        borde = {"3": "top", "4": "bottom", "5": "left", "6": "right"}.get(loc.group(1)) if loc else None
+        if pant and borde:
+            paneles.append((int(pant.group(1)), borde))
+    return paneles
+
+
+def bordes_ocupados(pantalla):
+    """Conjunto de bordes ('top', 'bottom', 'left', 'right') de `pantalla` que tienen un panel o barra de inicio.
+    Mezcla lo que dice Qt (Windows, Mac, X11: availableGeometry) con los paneles de Plasma (Wayland)."""
+    g, v = pantalla.geometry(), pantalla.availableGeometry()
+    ocupados = set()
+    if v.top() > g.top():
+        ocupados.add("top")
+    if v.bottom() < g.bottom():
+        ocupados.add("bottom")
+    if v.left() > g.left():
+        ocupados.add("left")
+    if v.right() < g.right():
+        ocupados.add("right")
+    if sys.platform.startswith("linux"):
+        pantallas = QApplication.screens()
+        if pantalla in pantallas:
+            idx = pantallas.index(pantalla)
+            ocupados |= {b for n, b in _paneles_plasma() if n == idx}
+    return ocupados
+
+
+def trazar_forma(path, rect, radio_arriba, radio_abajo):
+    """Rectángulo con esquinas de arriba y de abajo de distinto radio (el notch tiene las de arriba rectas)."""
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    ra = min(radio_arriba, w / 2, h / 2)
+    rb = min(radio_abajo, w / 2, h / 2)
+    path.moveTo(x + ra, y)
+    path.lineTo(x + w - ra, y)
+    if ra:
+        path.arcTo(x + w - 2 * ra, y, 2 * ra, 2 * ra, 90, -90)
+    path.lineTo(x + w, y + h - rb)
+    if rb:
+        path.arcTo(x + w - 2 * rb, y + h - 2 * rb, 2 * rb, 2 * rb, 0, -90)
+    path.lineTo(x + rb, y + h)
+    if rb:
+        path.arcTo(x, y + h - 2 * rb, 2 * rb, 2 * rb, 270, -90)
+    path.lineTo(x, y + ra)
+    if ra:
+        path.arcTo(x, y, 2 * ra, 2 * ra, 180, -90)
+    path.closeSubpath()
+
+
 class Transicion(QWidget):
     """Capa que lleva la ventana de un modo al otro (tarjeta <-> barra compacta).
 
@@ -1619,11 +1690,14 @@ class Transicion(QWidget):
     """
     BASE = QColor(22, 22, 24)  # lo que se ve en las zonas que ninguna de las dos capturas cubre todavía
 
-    def __init__(self, parent, viejo, nuevo, tam1, tam2, radio1, radio2, ms=380):
+    def __init__(self, parent, viejo, nuevo, tam1, tam2, radio1, radio2, ms=380, sup=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.viejo, self.nuevo, self.tam1, self.tam2 = viejo, nuevo, tam1, tam2
-        self.radio1, self.radio2 = radio1, radio2
+        # cada radio es un número o un par (esquinas de arriba, esquinas de abajo): el notch tiene las de arriba rectas
+        self.radio1 = radio1 if isinstance(radio1, tuple) else (radio1, radio1)
+        self.radio2 = radio2 if isinstance(radio2, tuple) else (radio2, radio2)
+        self.sup = sup or (SOMBRA_MARGEN, SOMBRA_MARGEN)   # margen de arriba antes y después (el notch no lo tiene)
         self.t = 0.0
         self.anim = QVariantAnimation(self)
         self.anim.setDuration(ms)
@@ -1641,17 +1715,19 @@ class Transicion(QWidget):
 
     def paintEvent(self, e):
         t, m = self.t, SOMBRA_MARGEN       # las capturas incluyen el margen de la sombra; la forma va adentro
+        sup = self.sup[0] + (self.sup[1] - self.sup[0]) * t
         w = self.tam1.width() + (self.tam2.width() - self.tam1.width()) * t - 2 * m
-        h = self.tam1.height() + (self.tam2.height() - self.tam1.height()) * t - 2 * m
-        r = self.radio1 + (self.radio2 - self.radio1) * t
+        h = self.tam1.height() + (self.tam2.height() - self.tam1.height()) * t - m - sup
+        ra = self.radio1[0] + (self.radio2[0] - self.radio1[0]) * t
+        rb = self.radio1[1] + (self.radio2[1] - self.radio1[1]) * t
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         forma = QPainterPath()
-        forma.addRoundedRect(QRectF(m, m, w, h), r, r)
-        dibujar_sombra(p, QRectF(m, m, w, h), r)
+        trazar_forma(forma, QRectF(m, sup, w, h), ra, rb)
+        dibujar_sombra(p, QRectF(m, sup, w, h), rb)
         p.setClipPath(forma)
-        p.fillRect(QRectF(m, m, w, h), self.BASE)
+        p.fillRect(QRectF(m, sup, w, h), self.BASE)
         # primero se va el modo viejo y después aparece el nuevo, con la base oscura entre ambos: si se mezclaran a la
         # vez se verían los dos textos superpuestos (el título está en un lugar distinto en cada modo)
         p.setOpacity(1.0 - self._suave(t / 0.5))
@@ -1663,6 +1739,183 @@ class Transicion(QWidget):
     def _suave(x):
         x = min(max(x, 0.0), 1.0)
         return x * x * (3 - 2 * x)
+
+
+def muelle(p, amort=0.72, respuesta=0.38, dur=0.62):
+    """Posición de un resorte amortiguado (de 0 a 1) en el instante p (0-1) de la animación. Con amort < 1 se pasa un
+    poco y vuelve (el rebote); con 1 llega sin pasarse. Es la curva con la que se mueven las cosas en iOS y macOS."""
+    if p <= 0:
+        return 0.0
+    if p >= 1:
+        return 1.0
+    tau, w0 = p * dur, 2 * math.pi / respuesta
+    if amort >= 1:
+        return 1 - math.exp(-w0 * tau) * (1 + w0 * tau)
+    wd = w0 * math.sqrt(1 - amort * amort)
+    return 1 - math.exp(-amort * w0 * tau) * (math.cos(wd * tau) + amort * w0 / wd * math.sin(wd * tau))
+
+
+def _suave(x):
+    x = min(max(x, 0.0), 1.0)
+    return x * x * (3 - 2 * x)
+
+
+COLOR_BARRA = QColor(22, 22, 24, 235)
+
+
+def pintar_orejas(p, g, r, opacidad=1.0):
+    """Las dos curvas cóncavas que unen el notch (rectángulo g) con el borde de la pantalla: lo que lo hace leer como
+    notch y no como una pastilla pegada arriba. r es su radio."""
+    if r < 0.5 or opacidad <= 0:
+        return
+    p.save()
+    p.setOpacity(p.opacity() * opacidad)
+    p.setPen(Qt.NoPen)
+    p.setBrush(COLOR_BARRA)
+    for izq in (True, False):
+        x0 = g.left() - r if izq else g.right()
+        cuadro = QPainterPath()
+        cuadro.addRect(QRectF(x0, g.top(), r, r))
+        hueco = QPainterPath()
+        cx = x0 if izq else x0 + r      # el centro del círculo está en la esquina de abajo, del lado de afuera
+        hueco.addEllipse(QPointF(cx, g.top() + r), r, r)
+        p.drawPath(cuadro.subtracted(hueco))
+    p.restore()
+
+
+class Anclaje(QWidget):
+    """Anima la barra pasando de píldora a notch y de notch a píldora, con resortes.
+
+    El contenido es el mismo en los dos estados, así que no hay fundido: se mueve y se transforma la forma. Pegarse baja
+    el margen de la sombra, endereza las esquinas de arriba y hace crecer las orejas; soltarse lo hace al revés, con un
+    pequeño rebote al despegarse. En Wayland la ventana no se puede deslizar sola: ahí ("pegar_wl") la píldora se
+    recoge donde está, se la lleva arriba (al_mover) y el notch cae desde el borde con un rebote.
+    """
+
+    def __init__(self, parent, contenido, modo, al_mover=None, ms=None, viejo=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        # contenido: la barra tal como queda; viejo: como estaba (el notch no tiene el botón de volver a la tarjeta,
+        # así que la barra cambia un poco y el paso de una a otra se hace con un fundido corto)
+        self.contenido, self.modo, self.al_mover = contenido, modo, al_mover
+        self.viejo = viejo if viejo is not None else contenido
+        self._movido = al_mover is None
+        self.cw = contenido.width() / (contenido.devicePixelRatio() or 1)
+        self.ch = contenido.height() / (contenido.devicePixelRatio() or 1)
+        self.t = 0.0
+        self.anim = QVariantAnimation(self)
+        self.anim.setDuration(ms or (780 if modo == "pegar_wl" else 640))
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.valueChanged.connect(self._avanzar)
+        self.setGeometry(parent.rect())
+        self.show()
+        self.anim.start()
+
+    FASE_RECOGER = 0.22     # parte de la animación que dura el recogerse (solo "pegar_wl")
+
+    def cerrar(self):
+        """Si la animación se corta antes de llevar la ventana arriba, se la lleva igual."""
+        if not self._movido:
+            self._movido = True
+            self.al_mover()
+
+    def _avanzar(self, v):
+        self.t = float(v)
+        if self.modo == "pegar_wl" and not self._movido and self.t >= self.FASE_RECOGER:
+            self._movido = True
+            self.al_mover()
+        self.update()
+
+    def parametros(self, t=None):
+        """(sup, radio de arriba, radio de abajo, orejas 0-1, opacidad, escala) en el instante t."""
+        t = self.t if t is None else t
+        m = SOMBRA_MARGEN
+        if self.modo == "pegar":
+            k = muelle(t, 0.74)
+            return m * (1 - muelle(t, 1.0, 0.30)), max(0.0, 28 * (1 - k)), 28 + (NOTCH_RADIO - 28) * k, max(0.0, muelle((t - 0.3) / 0.7, 0.5)), 1.0, 1.0
+        if self.modo == "soltar":
+            k = muelle(t, 0.5)
+            return m * k, max(0.0, min(28.0, 28 * k)), NOTCH_RADIO + (28 - NOTCH_RADIO) * min(k, 1.0), 1 - _suave(t / 0.22), 1.0, 1.0
+        a = self.FASE_RECOGER                       # pegar_wl
+        if t < a:
+            u = _suave(t / a)
+            return m, 28.0, 28.0, 0.0, 1 - u, 1 - 0.07 * u
+        u = (t - a) / (1 - a)
+        k = muelle(u, 1.0, 0.32)                    # sin rebote: si se pasara quedaría un hueco entre el notch y el borde
+        return min(0.0, -(self.ch + 8) * (1 - k)), 0.0, float(NOTCH_RADIO), max(0.0, muelle((u - 0.45) / 0.55, 0.5)), 1.0, 1.0
+
+    def paintEvent(self, e):
+        sup, ra, rb, orejas, opacidad, escala = self.parametros()
+        if opacidad <= 0.01:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        rect = QRectF((self.width() - self.cw) / 2, sup, self.cw, self.ch)
+        p.setOpacity(opacidad)
+        if escala != 1.0:
+            c = rect.center()
+            p.translate(c)
+            p.scale(escala, escala)
+            p.translate(-c)
+        dibujar_sombra(p, rect, 25)
+        forma = QPainterPath()
+        trazar_forma(forma, rect, ra, rb)
+        p.save()
+        p.setClipPath(forma)
+        p.fillRect(rect, COLOR_BARRA)
+        if self.modo == "pegar_wl":                  # recogida con la barra de antes, caída con la de después
+            p.drawPixmap(rect.topLeft(), self.viejo if self.t < self.FASE_RECOGER else self.contenido)
+        elif self.viejo is self.contenido:
+            p.drawPixmap(rect.topLeft(), self.contenido)
+        else:
+            u = _suave(self.t / 0.4)
+            p.setOpacity(opacidad * (1 - u))
+            p.drawPixmap(rect.topLeft(), self.viejo)
+            p.setOpacity(opacidad * u)
+            p.drawPixmap(rect.topLeft(), self.contenido)
+        p.restore()
+        p.setOpacity(opacidad)
+        pintar_orejas(p, rect, NOTCH_OREJA * orejas, orejas)
+
+
+class Deslizar(QWidget):
+    """Capa que sube o baja la captura del notch dentro de la ventana (esconderlo y volver a mostrarlo). Los widgets
+    reales están ocultos mientras dura: se mueve una imagen, no se redimensiona la ventana en cada cuadro."""
+
+    def __init__(self, parent, pm, dy1, dy2, ms, fin):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.pm, self.dy1, self.dy2, self.t, self.fin = pm, dy1, dy2, 0.0, fin
+        self.anim = QVariantAnimation(self)
+        self.anim.setDuration(ms)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self.anim.valueChanged.connect(self._avanzar)
+        self.anim.finished.connect(self.terminar)
+        self.setGeometry(parent.rect())
+        self.show()
+        self.anim.start()
+
+    def _avanzar(self, v):
+        self.t = float(v)
+        self.update()
+
+    def terminar(self):
+        """Termina ya (lo llaman el final de la animación o quien la interrumpe). Solo actúa una vez."""
+        f, self.fin = self.fin, None
+        if f is None:
+            return
+        self.anim.stop()
+        self.hide()
+        f()
+        self.deleteLater()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.drawPixmap(0, round(self.dy1 + (self.dy2 - self.dy1) * self.t), self.pm)
 
 
 if HAY_DBUS:
@@ -3323,20 +3576,23 @@ class DialogoEcualizador(PanelLateral):
         guardar.clicked.connect(self._guardar_preset)
         borrar = None
         if player.mis_presets:
-            borrar = QPushButton(tr("Borrar preset…", "Delete preset…"))
+            borrar = QPushButton(tr("Borrar…", "Delete…"))
+            borrar.setToolTip(tr("Borrar uno de tus presets guardados", "Delete one of your saved presets"))
             borrar.clicked.connect(lambda: self._borrar_preset(borrar))
-        abajo = QVBoxLayout()                       # en dos filas: con todo en una el panel se ensancha y no entra en pantallas chicas
-        fila1, fila2 = QHBoxLayout(), QHBoxLayout()
-        fila1.addWidget(self.partir)
-        fila1.addWidget(afinar)
-        fila1.addStretch(1)
-        fila2.addStretch(1)
+        abajo = QHBoxLayout()                       # todo en una fila: botones compactos para que el panel no se ensanche
+        abajo.setSpacing(8)
+        abajo.addWidget(self.partir)
+        abajo.addWidget(afinar)
+        abajo.addStretch(1)
         if borrar is not None:
-            fila2.addWidget(borrar)
-        fila2.addWidget(guardar)
-        fila2.addWidget(listo)
-        abajo.addLayout(fila1)
-        abajo.addLayout(fila2)
+            abajo.addWidget(borrar)
+        abajo.addWidget(guardar)
+        abajo.addWidget(listo)
+        for b in (afinar, guardar, listo) + ((borrar,) if borrar is not None else ()):
+            b.setStyleSheet("padding: 8px 12px;")
+        self.partir.setStyleSheet("padding: 6px 10px;")
+        self.partir.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)   # no se estira al nombre más largo
+        self.partir.setMinimumContentsLength(9)
         lay = self.lay
         lay.addLayout(selector_ecualizador(player, "grafico"))
         lay.addLayout(cols, 1)
@@ -4722,7 +4978,7 @@ class Player(QWidget):
         self.btn_escoba.clicked.connect(self.limpiar_etiquetas)
 
         self.btn_compacto = IconButton("compact", 28)
-        self.btn_compacto.setToolTip(tr("Modo compacto (M)", "Compact mode (M)"))
+        self.btn_compacto.setToolTip(tr("Modo compacto (M) · notch (Shift+M)", "Compact mode (M) · notch (Shift+M)"))
         top = self.top = QHBoxLayout()
         top.setSpacing(8)
         top.addWidget(pill, 1)
@@ -4881,6 +5137,22 @@ class Player(QWidget):
             ml.addWidget(b, 0, Qt.AlignVCenter)
         self.mini.hide()
         self.compacto = False
+        self.notch = False   # la píldora compacta pegada al borde de arriba de la pantalla (solo si ese borde está libre)
+        self.notch_autoocultar = True    # se esconde solo (queda un borde fino) y aparece al acercar el mouse
+        self._oculto = False             # el notch está escondido
+        self._desl = None                # la animación de esconder/mostrar en curso
+        self._dy_oculto = 0
+        self._geom_oculto = QRectF()
+        self._pm_oculto = None           # captura del notch con la que se pinta el borde cuando está escondido
+        self._mov = None                 # la animación que lo lleva hasta el borde de arriba
+        self._es_encima = False          # el notch está "siempre encima" de las demás ventanas
+        self._en_borde = False           # la ventana ya está arriba, en el borde (en Wayland no se puede saber de otra forma)
+        self._despues = None             # lo que sigue cuando termine la transición en curso (tarjeta -> píldora -> notch)
+        self._n_scripts = itertools.count()
+        self._t_esconder = QTimer(self)
+        self._t_esconder.setSingleShot(True)
+        self._t_esconder.setInterval(NOTCH_ESPERA_MS)
+        self._t_esconder.timeout.connect(self._esconder_si_corresponde)
         self._fade = None
         self._trans = None   # la transición en curso entre la tarjeta y la barra compacta
 
@@ -4922,7 +5194,8 @@ class Player(QWidget):
                               (QKeySequence("Ctrl+Shift+O"), self.abrir_carpeta),
                               (QKeySequence(QKeySequence.Find), self.enfocar_buscador),
                               (QKeySequence(Qt.Key_R), self.alternar_repetir),
-                              (QKeySequence(Qt.Key_M), lambda: self.poner_compacto(not self.compacto))):
+                              (QKeySequence(Qt.Key_M), lambda: self.poner_compacto(not self.compacto)),
+                              (QKeySequence("Shift+M"), self.alternar_notch)):
             QShortcut(tecla, self).activated.connect(accion)
 
         if HAY_DBUS and not os.environ.get("SIMPLEPLAY_NO_MPRIS"):
@@ -5938,7 +6211,7 @@ class Player(QWidget):
                  "carpeta": self.carpeta_musica, "carpeta_listas": self.carpeta_listas,
                  "carpetas_musica": self.carpetas_musica,
                  "lista_actual": self.lista_actual, "orden_original": self.orden_original,
-                 "compacto": self.compacto, "ocultar_controles": self.ocultar_controles, "normalizar": self.normalizar, "preset": self.preset,
+                 "compacto": self.compacto, "notch": self.notch, "notch_autoocultar": self.notch_autoocultar, "ocultar_controles": self.ocultar_controles, "normalizar": self.normalizar, "preset": self.preset,
                  "eq_personal": self.eq_personal, "mis_presets": self.mis_presets,
                  "eq_param": self.eq_param, "balance": self.balance, "crossfeed": self.crossfeed}
         try:
@@ -5993,6 +6266,9 @@ class Player(QWidget):
         if isinstance(cm, list):
             self.carpetas_musica = [c for c in cm if isinstance(c, str)][:8]
         self.poner_compacto(bool(d.get("compacto")), animar=False)
+        self.notch_autoocultar = bool(d.get("notch_autoocultar", True))
+        if d.get("compacto") and d.get("notch"):
+            self.poner_notch(True, animar=False)
         if not con_pistas:
             return
         pistas = [a for a in d.get("pistas", []) if Path(a).exists()]
@@ -6106,10 +6382,18 @@ class Player(QWidget):
         """Pasa entre la tarjeta y la píldora con los controles. La música no se corta."""
         if si == self.compacto:
             return
+        self._despues = None
         self._fin_transicion()                       # si había una a medias, se completa al instante
+        self._mostrar(animar=False)                  # escondido, la captura de abajo saldría de un borde de 6 px
         viejo = self.grab() if animar and self.isVisible() else None
         tam1 = self.size()
         self.compacto = si
+        era_notch = self.notch
+        if si and self.notch:
+            self._forma_notch()
+        if not si and self.notch:
+            self.notch = False
+            self._forma_notch()
         if si:  # la lista se cierra de golpe: en la píldora no hay lugar para ella
             self.despliegue.stop()
             self.lista_abierta = False
@@ -6130,10 +6414,311 @@ class Player(QWidget):
         self.btn_compacto.setVisible(not si)
         self.adjustSize()
         if viejo is not None:
-            self._transicion(viejo, tam1)
+            m = SOMBRA_MARGEN
+            self._transicion(viejo, tam1, barra=(0, NOTCH_RADIO) if (si and self.notch) or era_notch else 28,
+                             sup=(0 if era_notch else m, 0 if (si and self.notch) else m))
         self.guardar_estado()
 
-    def _transicion(self, viejo, tam1):
+    # ---- notch: la píldora compacta pegada al borde de arriba ----
+    def _forma_notch(self):
+        """Aplica (o quita) la silueta del notch a la barra: esquinas de arriba rectas, orejas cóncavas a los lados."""
+        m = SOMBRA_MARGEN
+        self.layout().setContentsMargins(m, 0 if self.notch else m, m, m)   # pegado al borde: sin margen de sombra arriba
+        self._encima(self.notch)
+        self.mini_volver.setVisible(not self.notch)        # el notch queda con la pastilla y anterior / play / siguiente
+        self.mini.setProperty("notch", self.notch)
+        self.mini.style().unpolish(self.mini)
+        self.mini.style().polish(self.mini)
+        self.update()
+
+    def notch_disponible(self):
+        """El notch tiene que poder llevarse solo arriba, porque una vez pegado no se arrastra. Siempre se puede salvo
+        en Wayland, donde la aplicación no coloca su ventana: solo en KDE (script de KWin). En GNOME con Wayland, por
+        ejemplo, quedaría flotando donde lo ponga el escritorio y sin forma de moverlo."""
+        return not QApplication.platformName().startswith("wayland") or self._kwin_puede_mover()
+
+    def borde_superior_libre(self):
+        """True si el borde de arriba de la pantalla donde está la ventana no tiene ningún panel ni barra de inicio."""
+        pantalla = self.screen() or QApplication.primaryScreen()
+        return "top" not in bordes_ocupados(pantalla)
+
+    def _kwin_puede_mover(self):
+        return (QApplication.platformName() == "wayland" and HAY_DBUS
+                and "KDE" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper())
+
+    def _captura_barra(self):
+        """La barra (píldora o notch) sin su fondo: el fondo lo pone la animación."""
+        estilo = self.mini.styleSheet()
+        self.mini.setStyleSheet("QFrame#mini { background: transparent; }")
+        self.mini.layout().activate()
+        pm = self.mini.grab()
+        self.mini.setStyleSheet(estilo)
+        return pm
+
+    def _anclar_anim(self, modo, tam1, barra_vieja=None):
+        """Anima píldora <-> notch con resortes (la ventana ya está en su estado nuevo)."""
+        self.layout().activate()
+        tam2 = self.size()
+        contenido = self._captura_barra()
+        self._visibles = [(w, w.isVisible()) for w in (self.card, self.mini, self.caja)]
+        for w, _ in self._visibles:
+            w.hide()
+        self.layout().setSizeConstraint(QLayout.SetNoConstraint)
+        self.setFixedSize(max(tam1.width(), tam2.width()), max(tam1.height(), tam2.height()))
+        al_mover = None
+        if modo == "pegar_wl":
+            def al_mover():
+                QTimer.singleShot(0, lambda: self._kwin_notch(True, self._es_encima))   # fuera del cuadro que se pinta
+                self._en_borde = True
+        self._trans = Anclaje(self, contenido, modo, al_mover, viejo=barra_vieja)
+        self._trans.anim.finished.connect(self._fin_transicion)
+
+    def poner_notch(self, si, animar=True):
+        """Pega la píldora al borde de arriba como un notch (o la suelta). Solo se pega si ese borde está limpio."""
+        if si and not self.notch_disponible():
+            if animar:
+                self._aviso(tr("El notch no está disponible en este escritorio (Wayland sin KDE)",
+                               "The notch is not available on this desktop (Wayland without KDE)"), 4500)
+            return False
+        if si and not self.borde_superior_libre():
+            if animar:                                  # (al restaurar la sesión no se avisa: ya lo sabe)
+                self._aviso(tr("Hay un panel arriba: no se puede pegar el notch",
+                               "There is a panel at the top: can't dock the notch"), 3500)
+            return False
+        if si == self.notch and (not si or self.compacto):
+            return True
+        self._despues = None
+        self._fin_transicion()
+        self._mostrar(animar=False)
+        viejo = self.grab() if animar and self.isVisible() else None
+        barra_vieja = self._captura_barra() if viejo is not None and self.compacto and self.mini.isVisible() else None
+        tam1 = self.size()
+        if not si:                                      # soltarlo: vuelve a ser píldora (la sombra reaparece arriba)
+            self._t_esconder.stop()
+            self.notch = False
+            self._forma_notch()
+            self.adjustSize()
+            if viejo is not None:
+                self._anclar_anim("soltar", tam1, barra_vieja)
+            self.guardar_estado()
+            return True
+        if not self.compacto:
+            if viejo is not None:                       # tarjeta -> píldora y, cuando termina, píldora -> notch
+                self.poner_compacto(True, True)
+                if self._trans is not None:
+                    self._despues = lambda: self.poner_notch(True, True)
+                    return True
+                return self.poner_notch(True, False)
+            self.notch = True                           # sin animación: poner_compacto da la forma al armar la barra
+            self.poner_compacto(True, False)
+        else:
+            self.notch = True
+            self._forma_notch()
+            self.adjustSize()
+            if viejo is not None:
+                staged = self._kwin_puede_mover() and not self._en_borde
+                self._anclar_anim("pegar_wl" if staged else "pegar", tam1, barra_vieja)
+        self._pegar_arriba(animar)
+        self._t_esconder.start()
+        self.guardar_estado()
+        return True
+
+    # Script de KWin para esta ventana: centrarla en el borde de arriba de su pantalla (si %(mover)s) y ponerla siempre
+    # encima de las demás, en todos los escritorios y fuera de la barra de tareas (o devolverla a lo normal).
+    SCRIPT_KWIN_NOTCH = """
+(function () {
+    var lista = workspace.windowList();
+    for (var i = 0; i < lista.length; i++) {
+        var w = lista[i];
+        if (w.pid === %(pid)d && w.caption === "%(titulo)s") {
+            if (%(mover)s) {
+                var g = w.output.geometry, f = w.frameGeometry;
+                w.frameGeometry = {x: g.x + Math.round((g.width - f.width) / 2), y: g.y, width: f.width, height: f.height};
+            }
+            w.keepAbove = %(encima)s;
+            w.skipTaskbar = %(encima)s;
+            w.skipSwitcher = %(encima)s;
+            w.onAllDesktops = %(encima)s;
+        }
+    }
+})();
+"""
+
+    def _kwin_notch(self, mover, encima):
+        """En Wayland la aplicación no puede colocar su ventana ni ponerla encima, pero KDE sí deja hacerlo con un
+        script de KWin por D-Bus. Devuelve False si no es KDE (o no hay D-Bus): ahí la ventana queda donde la ponga
+        el escritorio."""
+        if not HAY_DBUS or "KDE" not in os.environ.get("XDG_CURRENT_DESKTOP", "").upper():
+            return False
+        bus = QDBusConnection.sessionBus()
+        if not bus.isConnected():
+            return False
+        nombre = f"simpleplay-notch-{os.getpid()}-{next(self._n_scripts)}"
+        try:
+            carpeta = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
+            ruta = carpeta / f"{nombre}.js"
+            ruta.write_text(self.SCRIPT_KWIN_NOTCH % {"pid": os.getpid(), "titulo": self.windowTitle().replace('"', ""),
+                                                      "mover": "true" if mover else "false",
+                                                      "encima": "true" if encima else "false"}, encoding="utf-8")
+        except OSError:
+            return False
+
+        def llamar(ruta_dbus, interfaz, metodo, *args):
+            m = QDBusMessage.createMethodCall("org.kde.KWin", ruta_dbus, interfaz, metodo)
+            m.setArguments(list(args))
+            return bus.call(m, QDBus.Block, 1000)
+
+        r = llamar("/Scripting", "org.kde.kwin.Scripting", "loadScript", str(ruta), nombre)
+        ok = r.type() == QDBusMessage.ReplyMessage and r.arguments() and int(r.arguments()[0]) >= 0
+        if ok:
+            llamar(f"/Scripting/Script{int(r.arguments()[0])}", "org.kde.kwin.Script", "run")
+
+        def limpiar():
+            llamar("/Scripting", "org.kde.kwin.Scripting", "unloadScript", nombre)
+            ruta.unlink(missing_ok=True)
+        QTimer.singleShot(1500, limpiar)
+        return bool(ok)
+
+    def _encima(self, si):
+        """El notch queda por encima de las ventanas (y se suelta al dejar de ser notch). En Wayland lo hace KWin; en
+        X11, Windows y Mac es la propiedad "siempre encima" de la ventana (en Mac sube su nivel por sobre las normales)."""
+        if si == self._es_encima:
+            return
+        self._es_encima = si
+        if QApplication.platformName() == "wayland":
+            for ms in (150, 800):               # la segunda por si la ventana todavía no estaba en pantalla (al arrancar)
+                QTimer.singleShot(ms, lambda: self._kwin_notch(False, self._es_encima))
+        elif bool(self.windowFlags() & Qt.WindowStaysOnTopHint) != si:
+            visible, pos = self.isVisible(), self.pos()
+            self.setWindowFlag(Qt.WindowStaysOnTopHint, si)   # cambiar las banderas oculta la ventana: se vuelve a mostrar
+            if visible:
+                self.show()
+                self.move(pos)
+
+    def _pegar_arriba(self, animar=True):
+        """Centra la ventana arriba, con la silueta del notch justo en el borde (la ventana no tiene margen arriba).
+        En Wayland la aplicación no puede colocarla sola: en KDE lo hace un script de KWin; en otros escritorios queda
+        donde la ponga el compositor y se arrastra."""
+        if QApplication.platformName() == "wayland":
+            if self._kwin_puede_mover() and not (animar and self._trans is not None and not self._en_borde):
+                QTimer.singleShot(150, lambda: self._kwin_notch(True, self._es_encima))   # con el tamaño ya final
+                self._en_borde = True
+            return
+        pantalla = self.screen() or QApplication.primaryScreen()
+        g = pantalla.geometry()
+        destino = QPoint(g.center().x() - self.width() // 2, g.top())
+        if self._mov is not None:
+            self._mov.stop()
+            self._mov = None
+        if not animar or not self.isVisible():
+            self.move(destino)
+            return
+        a = self._mov = QVariantAnimation(self)
+        a.setDuration(640)
+        a.setStartValue(self.pos())
+        a.setEndValue(destino)
+        a.setEasingCurve(QEasingCurve.OutQuint)           # sin rebote: arriba está el borde de la pantalla
+        a.valueChanged.connect(self.move)
+        a.start()
+
+    # ---- notch: esconderse solo y aparecer al acercar el mouse ----
+    def _esconder_si_corresponde(self):
+        """Pasó la espera con el mouse afuera: se esconde, salvo que haya algo que lo impida (un menú abierto, un
+        botón apretado, una transición en curso) y en ese caso vuelve a esperar."""
+        if not (self.notch and self.compacto and self.notch_autoocultar) or self._oculto:
+            return
+        if self.underMouse() or self._trans is not None or self._desl is not None \
+                or QApplication.activePopupWidget() is not None or QApplication.mouseButtons() != Qt.NoButton:
+            self._t_esconder.start()
+            return
+        self._esconder()
+
+    def alternar_notch(self):
+        """Shift+M: pega la barra al borde de arriba como notch, o la suelta si ya lo es."""
+        self.poner_notch(not self.notch)
+
+    def poner_notch_autoocultar(self, si):
+        self.notch_autoocultar = bool(si)
+        if si:
+            self._t_esconder.start()
+        else:
+            self._t_esconder.stop()
+            self._mostrar()
+        self.guardar_estado()
+
+    def _alto_forma(self):
+        return self.mini.geometry().bottom() + 1
+
+    def _esconder(self, animar=True):
+        """El notch sube y queda solo un borde fino a la vista."""
+        if self._oculto or not (self.notch and self.compacto) or not self.isVisible():
+            return
+        self._fin_desl()
+        pm = self._pm_oculto = self.grab()
+        tam = self.size()
+        self._geom_oculto = QRectF(self.mini.geometry())
+        dy = self._dy_oculto = -(self._alto_forma() - NOTCH_BORDE)
+        self.mini.hide()
+        self.layout().setSizeConstraint(QLayout.SetNoConstraint)
+        self.setFixedSize(tam)
+
+        def listo():
+            self._oculto = True
+            self._desl = None
+            self.setFixedSize(tam.width(), NOTCH_BORDE)
+            self.update()
+        if animar:
+            self._desl = Deslizar(self, pm, 0, dy, 260, listo)
+        else:
+            listo()
+
+    def _mostrar(self, animar=True):
+        """Vuelve a bajar el notch escondido (o termina de esconderlo si la animación estaba a medias)."""
+        self._fin_desl()
+        if not self._oculto:
+            return
+        self._oculto = False
+        self.layout().setSizeConstraint(QLayout.SetFixedSize)
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16777215, 16777215)
+        self.mini.show()
+        self.adjustSize()
+        self.layout().activate()
+        if not animar or not self.isVisible():
+            self.update()
+            return
+        pm = self.grab()                                 # con el título y lo demás al día
+        tam = self.size()
+        self.mini.hide()
+        self.layout().setSizeConstraint(QLayout.SetNoConstraint)
+        self.setFixedSize(tam)
+
+        def listo():
+            self._desl = None
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(16777215, 16777215)
+            self.layout().setSizeConstraint(QLayout.SetFixedSize)
+            self.mini.show()
+            self.adjustSize()
+            self.update()
+        self._desl = Deslizar(self, pm, -(self._alto_forma() - NOTCH_BORDE), 0, 220, listo)
+
+    def _fin_desl(self):
+        if self._desl is not None:
+            self._desl.terminar()
+
+    def enterEvent(self, e):
+        self._t_esconder.stop()
+        if self._oculto or (self._desl is not None and self.notch):
+            self._mostrar()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        if self.notch and self.compacto and self.notch_autoocultar and not self._oculto:
+            self._t_esconder.start()
+        super().leaveEvent(e)
+
+    def _transicion(self, viejo, tam1, barra=28, desde=None, hasta=None, sup=None):
         """Anima el paso de la captura `viejo` (de tamaño tam1) al estado en que quedó la ventana."""
         self.layout().activate()
         tam2 = self.size()
@@ -6143,9 +6728,11 @@ class Player(QWidget):
             w.hide()
         self.layout().setSizeConstraint(QLayout.SetNoConstraint)
         self.setFixedSize(max(tam1.width(), tam2.width()), max(tam1.height(), tam2.height()))
-        radio_tarjeta, radio_barra = 30, 28
+        radio_tarjeta, radio_barra = 30, barra
         r1, r2 = (radio_tarjeta, radio_barra) if self.compacto else (radio_barra, radio_tarjeta)
-        self._trans = Transicion(self, viejo, nuevo, tam1, tam2, r1, r2)
+        if desde is not None:                      # píldora <-> notch: las dos formas son de la barra
+            r1, r2 = desde, hasta
+        self._trans = Transicion(self, viejo, nuevo, tam1, tam2, r1, r2, sup=sup)
         self._trans.anim.finished.connect(self._fin_transicion)
 
     def _fin_transicion(self):
@@ -6153,6 +6740,8 @@ class Player(QWidget):
         if t is None:
             return
         self._trans = None
+        if hasattr(t, "cerrar"):
+            t.cerrar()
         t.anim.stop()
         t.hide()
         t.deleteLater()
@@ -6162,6 +6751,9 @@ class Player(QWidget):
         self.setMaximumSize(16777215, 16777215)
         self.layout().setSizeConstraint(QLayout.SetFixedSize)
         self.adjustSize()
+        despues, self._despues = self._despues, None
+        if despues is not None:
+            QTimer.singleShot(0, despues)
 
     def _entrada(self, w):
         """Aparece con un fundido corto (el efecto se saca al terminar: no cuesta nada después)."""
@@ -6462,7 +7054,7 @@ class Player(QWidget):
         """(rectángulo, radio, opacidad) de cada pieza visible que proyecta sombra: la tarjeta o la barra, y el
         panel de la lista (solo la parte ya desplegada, con la opacidad de su animación)."""
         formas = []
-        for w, radio in ((self.card, 30), (self.mini, 28)):
+        for w, radio in ((self.card, 30), (self.mini, NOTCH_RADIO if self.notch else 28)):
             if w.isVisible():
                 formas.append((QRectF(w.geometry()), radio, 1.0))
         if self.caja.isVisible():
@@ -6485,16 +7077,33 @@ class Player(QWidget):
         return True
 
     def paintEvent(self, e):
+        if self._oculto:
+            # escondido: solo asoma el borde de abajo del notch. Se dibuja la forma limpia y no la captura: en las pocas
+            # filas que quedan a la vista la captura trae la sombra difusa de los costados y el borde parece una mancha
+            p = QPainter(self)
+            p.setRenderHint(QPainter.Antialiasing)
+            g = self._geom_oculto
+            forma = QPainterPath()
+            trazar_forma(forma, QRectF(g.x(), self._dy_oculto, g.width(), g.height()), 0, NOTCH_RADIO)
+            p.fillPath(forma, QColor(22, 22, 24, 235))
+            return
         if not self._sombra_necesaria(QRectF(e.rect())):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         for rect, radio, opacidad in self._formas():
             dibujar_sombra(p, rect, radio, opacidad)
+        if self.notch and self.compacto and self._trans is None and self.mini.isVisible():
+            self._pintar_orejas(p, QRectF(self.mini.geometry()))
+
+    def _pintar_orejas(self, p, g):
+        pintar_orejas(p, g, NOTCH_OREJA)
 
     def mousePressEvent(self, e):
-        # sin barra de título: se mueve arrastrando cualquier zona vacía
-        if e.button() == Qt.LeftButton and self.windowHandle():
+        # sin barra de título: se mueve arrastrando cualquier zona vacía (el notch no: queda fijo en el borde y solo
+        # se suelta a propósito, desde el menú, con el botón de volver a la tarjeta o con la tecla M)
+        if e.button() == Qt.LeftButton and self.windowHandle() and not self.notch:
+            self._en_borde = False
             self.windowHandle().startSystemMove()
 
     def dragEnterEvent(self, e):
@@ -6512,6 +7121,20 @@ class Player(QWidget):
         menu.addAction(tr("Abrir carpeta…", "Open folder…"), self.abrir_carpeta)
         menu.addAction(tr("Modo normal", "Normal mode") if self.compacto else tr("Modo compacto", "Compact mode"),
                        lambda: self.poner_compacto(not self.compacto))
+        if self.notch:
+            menu.addAction(tr("Soltar el notch", "Release the notch"), lambda: self.poner_notch(False), QKeySequence("Shift+M"))
+            ae = menu.addAction(tr("Esconder el notch solo", "Hide the notch automatically"))
+            ae.setCheckable(True)
+            ae.setChecked(self.notch_autoocultar)
+            ae.toggled.connect(self.poner_notch_autoocultar)
+        else:
+            a = menu.addAction(tr("Pegar arriba (notch)", "Dock to the top (notch)"), lambda: self.poner_notch(True), QKeySequence("Shift+M"))
+            if not self.notch_disponible():
+                a.setEnabled(False)
+                a.setText(tr("Notch no disponible en este escritorio", "Notch not available on this desktop"))
+            elif not self.borde_superior_libre():
+                a.setEnabled(False)
+                a.setText(tr("Pegar arriba (notch) — hay un panel ahí", "Dock to the top (notch) — a panel is there"))
         if MOSQUITO:
             menu.addAction(tr("Mosquito (control remoto)…", "Mosquito (remote control)…") +
                            (tr(" · activo", " · on") if getattr(self, "_mosquito", None) is not None else ""),

@@ -6,7 +6,7 @@ No streaming, no accounts, no ads.
 **Website:** https://cufadev.github.io/simpleplay/
 
 <p align="center">
-  <img src="docs/demo.gif" alt="simpleplay playing a track: the card with the cover art, the spectrum bars, the compact bar and the playlist" width="320">
+  <img src="docs/demo.gif" alt="simpleplay playing a track: the card with the cover art, the spectrum bars, the playlist with search, the equalizer and the compact bar" width="360">
 </p>
 
 <p align="center">
@@ -32,6 +32,8 @@ No streaming, no accounts, no ads.
   folder you used. Select several tracks with `Ctrl`/`Shift`+click and remove them with **-**.
 - Remembers your last session (playlist, track, position, shuffle) and starts paused,
   ready to resume.
+- **The notch:** the compact bar can dock to the top edge of the screen, above the other windows, and hide itself
+  until you touch the edge. **Linux only for now, tested on KDE Plasma (Wayland)**: see [The notch](#the-notch).
 - Smooth transitions for play/pause, cover changes, the playlist and the buttons, and an animated morph
   between the card and the compact bar. A soft shadow lifts the window off the desktop
   (`SIMPLEPLAY_SOMBRA=0` turns it off).
@@ -58,11 +60,14 @@ No streaming, no accounts, no ads.
 
 ## Download
 
+> **Current version: 1.8.5, Linux only.** The Windows and macOS builds are still **1.8.2** (no notch there yet).
+> See [Where the notch works](#the-notch) before counting on it.
+
 Get the AppImage from the [Releases](../../releases) page, then make it executable and run it:
 
 ```
-chmod +x simpleplay-1.8.2-x86_64.AppImage
-./simpleplay-1.8.2-x86_64.AppImage
+chmod +x simpleplay-1.8.5-x86_64.AppImage
+./simpleplay-1.8.5-x86_64.AppImage
 ```
 
 On GNOME you can also right click the file, open **Properties > Permissions** and enable
@@ -74,7 +79,7 @@ Requirements:
   Fedora 36+, Linux Mint 21+, Arch and similar).
 - `libGL` and `libEGL` (every desktop install has them).
 - FUSE 2 to run AppImages directly (`libfuse2t64` on recent Ubuntu). Without it, run
-  `./simpleplay-1.8.2-x86_64.AppImage --appimage-extract-and-run`.
+  `./simpleplay-1.8.5-x86_64.AppImage --appimage-extract-and-run`.
 
 It does not add itself to your applications menu. Use
 [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher), or copy
@@ -82,7 +87,8 @@ It does not add itself to your applications menu. Use
 
 ### Windows
 
-Download `simpleplay-<version>-windows-x64.zip` from the [Releases](../../releases) page, unzip it
+The latest Windows build is **1.8.2** (1.8.5 is Linux only for now). Download
+`simpleplay-1.8.2-windows-x64.zip` from the [Releases](../../releases) page, unzip it
 and run `simpleplay.exe`. There is nothing to install. The file is not signed, so Windows
 SmartScreen shows "Windows protected your PC": click **More info** > **Run anyway**. The media
 keys are not available on Windows.
@@ -122,7 +128,7 @@ PipeWire or ALSA on Linux (WASAPI on Windows). There is no `ffmpeg` or SDL depen
 | Seek | click or drag the time bar; `Left` / `Right` jump 5 s |
 | Track info / spectrum | click the top pill |
 | Compact mode | the button next to the list one, `M`, or right click; the same to go back |
-| Compact mode | the button next to the list one, `M`, or right click; the same to go back |
+| Notch (dock the compact bar to the top edge) | `Shift+M`, or right click > **Dock to the top (notch)**; the same to release it |
 | Playlist | the list button (inside it: search box, sort, **-** and **+**) |
 | Search the list | `Ctrl+F`, type; `Enter` plays the first result, `Esc` clears the search |
 | Sort the list | the sort button in the playlist: by artist, title, album, or the order added |
@@ -131,8 +137,23 @@ PipeWire or ALSA on Linux (WASAPI on Windows). There is no `ffmpeg` or SDL depen
 | Open files or a folder | **+**, `Ctrl+O` (files), `Ctrl+Shift+O` (folder), right click, drag and drop, or command line |
 | Select several tracks | `Ctrl`+click or `Shift`+click in the list |
 | Remove the selected tracks | the **-** button or `Delete` (the files are not deleted) |
-| Move the window | drag any empty area |
+| Move the window | drag any empty area (not while it is docked as a notch) |
 | Quit | `Esc` (when no search is active), or right click > Close |
+
+## The notch
+
+Since **1.8.5** (Linux only for now) the compact bar can dock to the top edge of the screen and become a notch,
+centred, above the other windows. It keeps the title pill and previous / play / next, and it slides up and leaves a
+thin edge when the mouse stays away (touch the edge to bring it back; right click > **Hide the notch automatically**
+turns that off). Docked, it cannot be dragged: release it with right click > **Release the notch**, `Shift+M` or `M`.
+It only docks where the top edge of that screen is free (no panel or taskbar); with several monitors each one is checked.
+
+| Platform | Notch |
+|---|---|
+| KDE Plasma, Wayland | **Works. The only setup tested.** KDE lets the app place its window through a KWin script. |
+| X11 (any desktop) | Implemented with the "stay on top" window hint, **untested**. |
+| GNOME and other Wayland desktops | **Not available**: a Wayland app cannot place its own window there. The menu entry is disabled and says why. |
+| Windows, macOS | Not in a release yet (their builds stay at 1.8.2). |
 
 ## Troubleshooting
 
@@ -140,7 +161,7 @@ No sound, or the spectrum bars stay flat? Check the decoding and the sound devic
 the window:
 
 ```
-./simpleplay-1.8.2-x86_64.AppImage --diagnose some-song.mp3
+./simpleplay-1.8.5-x86_64.AppImage --diagnose some-song.mp3
 ```
 
 (or `python simpleplay.py --diagnose some-song.mp3` from source). To see what the player is

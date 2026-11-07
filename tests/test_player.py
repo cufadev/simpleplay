@@ -2057,7 +2057,7 @@ class TestPanelLateral(Base):
         d = self._abrir(10)
         visible = self.w.frameGeometry().adjusted(M, M, -M, -M)
         cuerpo_x = d.x() + M
-        if pant.width() > visible.width() * 2 + 100:
+        if pant.width() > visible.width() + (d.width() - 2 * M) + S.HUECO_PANEL + 40:     # solo si entra a su lado
             self.assertEqual(cuerpo_x, visible.right() + 1 + S.HUECO_PANEL)
         self.assertEqual(d.y() + M, visible.top())                       # alineado arriba
         d.reject()
@@ -2070,6 +2070,10 @@ class TestPanelLateral(Base):
 
     def test_sigue_a_la_ventana_y_se_despega_si_se_la_arrastra(self):
         d = self._abrir(10)
+        pant = self.w.screen().availableGeometry()
+        if pant.width() < self.w.width() + d.width() + 80:
+            d.reject()
+            self.skipTest("la pantalla de prueba es muy angosta para el panel junto a la ventana")
         x0 = d.x()
         self.w.move(self.w.x() + 40, self.w.y())
         espera(0.2, lambda: d.x() != x0)
@@ -2137,6 +2141,395 @@ class TestPanelLateral(Base):
         self.assertTrue(b.isVisible())
         b.reject()
 
+
+class TestNotch(Base):
+    """La píldora compacta pegada al borde de arriba (solo si ese borde no tiene panel)."""
+
+    def test_pega_la_pildora_y_la_suelta(self):
+        self.w.poner_compacto(True, animar=False)
+        self.assertTrue(self.w.poner_notch(True, animar=False))
+        self.assertTrue(self.w.notch)
+        self.assertTrue(self.w.mini.property("notch"))
+        self.assertTrue(self.w.poner_notch(False, animar=False))
+        self.assertFalse(self.w.notch)
+        self.assertFalse(self.w.mini.property("notch"))
+
+    def test_desde_la_tarjeta_pasa_por_la_pildora(self):
+        self.assertTrue(self.w.poner_notch(True, animar=False))
+        self.assertTrue(self.w.compacto and self.w.notch)
+
+    def test_volver_a_la_tarjeta_suelta_el_notch(self):
+        self.w.poner_notch(True, animar=False)
+        self.w.poner_compacto(False, animar=False)
+        self.assertFalse(self.w.notch)
+        self.assertFalse(self.w.mini.property("notch"))
+
+    def test_no_se_pega_si_el_borde_tiene_panel(self):
+        original = S.bordes_ocupados
+        S.bordes_ocupados = lambda pantalla: {"top"}
+        try:
+            self.w.poner_compacto(True, animar=False)
+            self.assertFalse(self.w.borde_superior_libre())
+            self.assertFalse(self.w.poner_notch(True, animar=False))
+            self.assertFalse(self.w.notch)
+        finally:
+            S.bordes_ocupados = original
+
+    def test_un_panel_abajo_no_impide_el_notch(self):
+        original = S.bordes_ocupados
+        S.bordes_ocupados = lambda pantalla: {"bottom"}
+        try:
+            self.assertTrue(self.w.poner_notch(True, animar=False))
+        finally:
+            S.bordes_ocupados = original
+
+    def test_se_guarda_y_se_restaura(self):
+        self.cargar(A)                       # sin música cargada la sesión no se guarda (para no pisar la anterior)
+        self.w.poner_notch(True, animar=False)
+        self.w.guardar_estado()
+        w2 = S.Player()
+        try:
+            w2.show()
+            w2.restaurar()
+            self.assertTrue(w2.compacto and w2.notch)
+        finally:
+            w2.close()
+            w2.motor.cerrar()
+
+    def test_paneles_de_plasma_se_leen_de_la_configuracion(self):
+        cfg = Path(CONFIG) / ".config"
+        cfg.mkdir(parents=True, exist_ok=True)
+        archivo = cfg / "plasma-org.kde.plasma.desktop-appletsrc"
+        self.addCleanup(lambda: archivo.unlink(missing_ok=True))     # que no ensucie los demás tests con un panel falso
+        archivo.write_text(
+            "[Containments][3]\nlastScreen=0\nlocation=4\nplugin=org.kde.panel\n\n"
+            "[Containments][61]\nlastScreen=0\nlocation=3\nplugin=org.kde.panel\n\n"
+            "[Containments][70]\nlastScreen=1\nlocation=0\nplugin=org.kde.desktopcontainment\n")
+        self.assertEqual(sorted(S._paneles_plasma()), [(0, "bottom"), (0, "top")])
+
+    def test_forma_con_esquinas_de_arriba_rectas(self):
+        from PySide6.QtCore import QRectF, QPointF
+        from PySide6.QtGui import QPainterPath
+        path = QPainterPath()
+        S.trazar_forma(path, QRectF(0, 0, 100, 40), 0, 20)
+        self.assertTrue(path.contains(QPointF(1, 1)))        # arriba-izquierda: esquina recta
+        self.assertTrue(path.contains(QPointF(99, 1)))
+        self.assertFalse(path.contains(QPointF(1, 39)))      # abajo-izquierda: redondeada
+        self.assertFalse(path.contains(QPointF(99, 39)))
+
+    # ---- esconderse solo ----
+    def _notch(self):
+        self.w.poner_notch(True, animar=False)
+        espera(0.15)                             # offscreen manda un "enter" espurio al primer ciclo de eventos: que pase ya
+        self.w._t_esconder.stop()
+        self.w.underMouse = lambda: False        # y el cursor simulado queda en (0,0), encima de la ventana
+
+    def test_se_esconde_y_deja_un_borde_fino(self):
+        self._notch()
+        alto = self.w.height()
+        self.w._esconder(animar=False)
+        self.assertTrue(self.w._oculto)
+        self.assertEqual(self.w.height(), S.NOTCH_BORDE)
+        self.assertEqual(self.w.width(), self.w.width())
+        self.w._mostrar(animar=False)
+        self.assertFalse(self.w._oculto)
+        self.assertEqual(self.w.height(), alto)
+        self.assertTrue(self.w.mini.isVisible())
+
+    def test_esconder_y_mostrar_animados(self):
+        self._notch()
+        alto = self.w.height()
+        self.w._esconder()
+        espera(0.8, lambda: self.w._oculto)
+        self.assertTrue(self.w._oculto)
+        self.assertEqual(self.w.height(), S.NOTCH_BORDE)
+        self.w._mostrar()
+        espera(0.8, lambda: self.w._desl is None and self.w.mini.isVisible())
+        self.assertFalse(self.w._oculto)
+        self.assertEqual(self.w.height(), alto)
+
+    def test_mostrar_a_mitad_de_esconder_termina_bien(self):
+        self._notch()
+        alto = self.w.height()
+        self.w._esconder()
+        espera(0.08)
+        self.w._mostrar(animar=False)
+        self.assertFalse(self.w._oculto)
+        self.assertIsNone(self.w._desl)
+        self.assertEqual(self.w.height(), alto)
+        self.assertTrue(self.w.mini.isVisible())
+
+    def test_el_temporizador_lo_esconde_si_el_mouse_esta_afuera(self):
+        self._notch()
+        self.w._esconder_si_corresponde()
+        espera(0.8, lambda: self.w._oculto)
+        self.assertTrue(self.w._oculto)
+
+    def test_no_se_esconde_con_el_mouse_encima_ni_si_esta_apagado(self):
+        self._notch()
+        self.w.underMouse = lambda: True
+        self.w._esconder_si_corresponde()
+        self.assertFalse(self.w._oculto)
+        self.assertTrue(self.w._t_esconder.isActive())          # vuelve a esperar
+        self.w._t_esconder.stop()
+        self.w.underMouse = lambda: False
+        self.w.poner_notch_autoocultar(False)
+        self.w._esconder_si_corresponde()
+        self.assertFalse(self.w._oculto)
+
+    def test_apagar_el_autoocultar_lo_muestra(self):
+        self._notch()
+        self.w._esconder(animar=False)
+        self.w.poner_notch_autoocultar(False)
+        espera(0.8, lambda: not self.w._oculto and self.w._desl is None)
+        self.assertFalse(self.w._oculto)
+
+    def test_soltarlo_escondido_vuelve_a_la_pildora(self):
+        self._notch()
+        self.w._esconder(animar=False)
+        self.w.poner_notch(False, animar=False)
+        self.assertFalse(self.w._oculto)
+        self.assertFalse(self.w.notch)
+        self.assertTrue(self.w.mini.isVisible())
+        self.assertGreater(self.w.height(), 60)
+
+    def test_volver_a_la_tarjeta_escondido(self):
+        self._notch()
+        self.w._esconder(animar=False)
+        self.w.poner_compacto(False, animar=False)
+        self.assertFalse(self.w._oculto)
+        self.assertTrue(self.w.card.isVisible())
+        self.assertGreater(self.w.height(), 200)
+
+    def test_despegar_con_animacion(self):
+        self._notch()
+        self.w.poner_notch(False)
+        self.assertIsNotNone(self.w._trans)                      # anima el paso notch -> píldora
+        espera(0.8, lambda: self.w._trans is None)
+        self.assertFalse(self.w.notch)
+        self.assertTrue(self.w.mini.isVisible())
+
+    def test_el_notch_no_se_arrastra_pero_la_pildora_si(self):
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+        movimientos = []
+        h = self.w.windowHandle()
+        original = type(h).startSystemMove
+        type(h).startSystemMove = lambda self_: movimientos.append(1) or True
+
+        def clic():
+            e = QMouseEvent(QEvent.MouseButtonPress, QPointF(5, 5), QPointF(5, 5), Qt.LeftButton, Qt.LeftButton,
+                            Qt.NoModifier)
+            self.w.mousePressEvent(e)
+        try:
+            self.w.poner_compacto(True, animar=False)
+            clic()
+            self.assertEqual(len(movimientos), 1)             # la píldora se arrastra
+            self.w.poner_notch(True, animar=False)
+            clic()
+            self.assertEqual(len(movimientos), 1)             # el notch no: queda fijo en el borde
+            self.w.poner_notch(False, animar=False)
+            clic()
+            self.assertEqual(len(movimientos), 2)             # soltado, vuelve a arrastrarse
+        finally:
+            type(h).startSystemMove = original
+
+    def test_el_notch_no_tiene_el_boton_de_volver_a_la_tarjeta(self):
+        self.w.poner_compacto(True, animar=False)
+        self.assertFalse(self.w.mini_volver.isHidden())             # la píldora lo tiene
+        self.w.poner_notch(True, animar=False)
+        self.assertTrue(self.w.mini_volver.isHidden())              # el notch no: queda anterior / play / siguiente
+        self.assertFalse(self.w.mini_play.isHidden())
+        self.assertFalse(self.w.mini_prev.isHidden())
+        self.assertFalse(self.w.mini_next.isHidden())
+        self.w.poner_notch(False, animar=False)
+        self.assertFalse(self.w.mini_volver.isHidden())             # al soltarlo vuelve
+        self.w.poner_notch(True, animar=False)
+        self.w.poner_compacto(False, animar=False)                  # y también al volver a la tarjeta
+        self.w.poner_compacto(True, animar=False)
+        self.assertFalse(self.w.mini_volver.isHidden())
+
+    def test_avisa_si_no_se_puede_pegar_por_un_panel(self):
+        original = S.bordes_ocupados
+        S.bordes_ocupados = lambda pantalla: {"top"}
+        try:
+            self.w.poner_compacto(True, animar=False)
+            self.assertFalse(self.w.poner_notch(True))
+            self.assertIn("panel", self.w.titulo.texto.lower())
+            self.w.vaciar_texto()
+            self.assertFalse(self.w.poner_notch(True, animar=False))        # al restaurar la sesión no avisa
+            self.assertNotIn("panel", self.w.titulo.texto.lower())
+        finally:
+            S.bordes_ocupados = original
+
+    def test_en_wayland_sin_kde_el_notch_no_se_ofrece(self):
+        """Pegado no se arrastra: sin forma de llevarlo arriba solo (GNOME + Wayland) quedaría flotando sin poder moverlo."""
+        original, desktop = S.QApplication.platformName, os.environ.get("XDG_CURRENT_DESKTOP")
+        S.QApplication.platformName = staticmethod(lambda: "wayland")
+        try:
+            os.environ["XDG_CURRENT_DESKTOP"] = "GNOME"
+            self.assertFalse(self.w.notch_disponible())
+            self.w.poner_compacto(True, animar=False)
+            self.assertFalse(self.w.poner_notch(True))
+            self.assertFalse(self.w.notch)
+            self.assertIn("notch", self.w.titulo.texto.lower())          # y avisa por qué
+            os.environ["XDG_CURRENT_DESKTOP"] = "KDE"
+            self.assertTrue(self.w.notch_disponible())                   # con KDE sí (lo lleva KWin)
+        finally:
+            S.QApplication.platformName = original
+            if desktop is None:
+                os.environ.pop("XDG_CURRENT_DESKTOP", None)
+            else:
+                os.environ["XDG_CURRENT_DESKTOP"] = desktop
+        self.assertTrue(self.w.notch_disponible())                       # X11, Windows y Mac: siempre
+
+    def test_shift_m_alterna_el_notch(self):
+        from PySide6.QtGui import QShortcut
+        teclas = [sc.key().toString() for sc in self.w.findChildren(QShortcut)]
+        self.assertIn("Shift+M", teclas)
+        self.assertIn("M", teclas)                                  # y la M de siempre sigue siendo el modo compacto
+        self.w.alternar_notch()
+        espera(2.5, lambda: self.w.notch and self.w._trans is None and self.w._despues is None)
+        self.assertTrue(self.w.notch and self.w.compacto)
+        self.w.alternar_notch()
+        espera(1.5, lambda: not self.w.notch and self.w._trans is None)
+        self.assertFalse(self.w.notch)
+        self.assertTrue(self.w.compacto)                            # soltar el notch deja la píldora
+
+    def test_muelle_arranca_en_cero_termina_en_uno_y_rebota(self):
+        self.assertEqual(S.muelle(0), 0.0)
+        self.assertEqual(S.muelle(1), 1.0)
+        self.assertGreater(max(S.muelle(i / 100, 0.5) for i in range(101)), 1.05)     # con poco amortiguamiento se pasa
+        crit = [S.muelle(i / 100, 1.0) for i in range(101)]
+        self.assertLessEqual(max(crit), 1.0001)                                        # amortiguado crítico: no rebota
+        self.assertEqual(crit, sorted(crit))
+        self.assertAlmostEqual(S.muelle(0.98, 0.7), 1.0, delta=0.01)                   # al final ya se asentó
+
+    def test_anclaje_empieza_y_termina_en_las_formas_de_verdad(self):
+        pm = self.w.mini.grab()
+        m = S.SOMBRA_MARGEN
+        for modo, ini, fin in (("pegar", (m, 28, 28, 0), (0, 0, S.NOTCH_RADIO, 1)),
+                               ("soltar", (0, 0, S.NOTCH_RADIO, 1), (m, 28, 28, 0)),
+                               ("pegar_wl", (m, 28, 28, 0), (0, 0, S.NOTCH_RADIO, 1))):
+            a = S.Anclaje(self.w, pm, modo)
+            a.anim.stop()
+            for t, esperado in ((0.0, ini), (1.0, fin)):
+                sup, ra, rb, orejas = a.parametros(t)[:4]
+                for obtenido, quiero in zip((sup, ra, rb, orejas), esperado):
+                    self.assertAlmostEqual(obtenido, quiero, delta=0.01, msg=f"{modo} t={t}")
+            a.hide()
+            a.deleteLater()
+
+    def test_el_notch_nunca_se_separa_del_borde_al_pegarse(self):
+        """Sin rebote en la posición: se acerca al borde y frena contra él. Si se pasara, quedaría un hueco entre el
+        notch y la pantalla hasta que volviera a subir (se veía como si se despegara)."""
+        pm = self.w.mini.grab()
+        a = S.Anclaje(self.w, pm, "pegar")
+        a.anim.stop()
+        sups = [a.parametros(i / 200)[0] for i in range(201)]
+        self.assertTrue(all(x >= -0.001 for x in sups), "pasó de largo el borde")
+        self.assertTrue(all(b <= a_ + 1e-9 for a_, b in zip(sups, sups[1:])), "volvió a alejarse del borde")
+        self.assertAlmostEqual(sups[-1], 0.0, delta=0.01)
+        a.hide()
+        a.deleteLater()
+        b = S.Anclaje(self.w, pm, "pegar_wl")                     # cae desde arriba de la pantalla
+        b.anim.stop()
+        caida = [b.parametros(S.Anclaje.FASE_RECOGER + (1 - S.Anclaje.FASE_RECOGER) * i / 200)[0] for i in range(201)]
+        self.assertTrue(all(x <= 0.001 for x in caida), "el notch bajó más que su lugar: queda un hueco arriba")
+        self.assertTrue(all(b_ >= a_ - 1e-9 for a_, b_ in zip(caida, caida[1:])), "rebotó")
+        self.assertAlmostEqual(caida[-1], 0.0, delta=0.01)
+        b.hide()
+        b.deleteLater()
+
+    def test_anclaje_en_wayland_lleva_la_ventana_arriba_una_sola_vez(self):
+        llamadas = []
+        a = S.Anclaje(self.w, self.w.mini.grab(), "pegar_wl", lambda: llamadas.append(1))
+        a.anim.stop()
+        a._avanzar(0.1)
+        self.assertEqual(llamadas, [])                      # todavía se está recogiendo donde estaba
+        a._avanzar(0.3)
+        a._avanzar(0.5)
+        self.assertEqual(len(llamadas), 1)
+        a.cerrar()
+        self.assertEqual(len(llamadas), 1)
+        a.hide()
+        a.deleteLater()
+
+    def test_anclaje_cortado_a_mitad_igual_lleva_la_ventana_arriba(self):
+        llamadas = []
+        a = S.Anclaje(self.w, self.w.mini.grab(), "pegar_wl", lambda: llamadas.append(1))
+        a.anim.stop()
+        a._avanzar(0.05)
+        a.cerrar()
+        self.assertEqual(len(llamadas), 1)
+        a.hide()
+        a.deleteLater()
+
+    def test_desde_la_tarjeta_anima_los_dos_pasos(self):
+        self.w.poner_notch(True)
+        self.assertIsNotNone(self.w._trans)                 # tarjeta -> píldora
+        self.assertFalse(self.w.notch)                      # todavía no es notch: primero se arma la píldora
+        espera(2.5, lambda: self.w.notch and self.w._trans is None and self.w._despues is None)
+        self.assertTrue(self.w.notch and self.w.compacto)
+        self.assertTrue(self.w.mini.isVisible())
+
+    def test_cortar_la_cadena_con_la_tecla_m_no_deja_el_notch_a_medias(self):
+        self.w.poner_notch(True)
+        self.w.poner_compacto(False)                        # vuelve a la tarjeta antes de que termine el primer paso
+        espera(1.5, lambda: self.w._trans is None)
+        self.assertFalse(self.w.notch)
+        self.assertIsNone(self.w._despues)
+
+    def test_script_de_kwin_apunta_a_esta_ventana(self):
+        def js(mover, encima):
+            return S.Player.SCRIPT_KWIN_NOTCH % {"pid": os.getpid(), "titulo": self.w.windowTitle(),
+                                                 "mover": mover, "encima": encima}
+        c = js("true", "true")
+        self.assertIn(f"w.pid === {os.getpid()}", c)
+        self.assertIn('w.caption === "simpleplay"', c)
+        self.assertIn("if (true)", c)
+        self.assertIn("g.y", c)                                   # arriba del todo de la pantalla de la ventana
+        self.assertIn("w.keepAbove = true;", c)
+        self.assertIn("w.keepAbove = false;", js("false", "false"))
+
+    def test_el_notch_se_pone_encima_y_se_suelta(self):
+        llamadas = []
+        self.w._kwin_notch = lambda mover, encima: llamadas.append((mover, encima))
+        self.w.poner_notch(True, animar=False)
+        self.assertTrue(self.w._es_encima)
+        self.assertTrue(self.w.windowFlags() & Qt.WindowStaysOnTopHint)    # offscreen no es Wayland: usa la bandera
+        self.w.poner_notch(False, animar=False)
+        self.assertFalse(self.w._es_encima)
+        self.assertFalse(self.w.windowFlags() & Qt.WindowStaysOnTopHint)
+
+    def test_en_wayland_se_lo_pide_a_kwin(self):
+        llamadas = []
+        self.w._kwin_notch = lambda mover, encima: llamadas.append((mover, encima))
+        original = S.QApplication.platformName
+        S.QApplication.platformName = staticmethod(lambda: "wayland")
+        try:
+            self.w._encima(True)
+            espera(1.0, lambda: len(llamadas) >= 2)
+            self.assertTrue(llamadas and all(c == (False, True) for c in llamadas))
+            llamadas.clear()
+            self.w._encima(False)
+            espera(1.0, lambda: len(llamadas) >= 2)
+            self.assertTrue(llamadas and all(c == (False, False) for c in llamadas))
+        finally:
+            S.QApplication.platformName = original
+
+    def test_el_ajuste_se_guarda_y_se_restaura(self):
+        self.cargar(A)
+        self.w.poner_notch(True, animar=False)
+        self.w.poner_notch_autoocultar(False)
+        w2 = S.Player()
+        try:
+            w2.show()
+            w2.restaurar()
+            self.assertFalse(w2.notch_autoocultar)
+        finally:
+            w2.close()
+            w2.motor.cerrar()
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

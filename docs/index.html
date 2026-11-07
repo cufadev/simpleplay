@@ -335,6 +335,9 @@ html.js .versiones li.pasada .v, html.js .versiones li.actual .v { color: var(--
 .paso h3 { font-size: clamp(1.6rem, 2.8vw, 2.4rem); line-height: 1.18; letter-spacing: -.03em; font-weight: 650; text-wrap: balance; }
 .paso p { color: var(--muted); max-width: 38ch; font-size: 1.1rem; }
 .paso .fig-movil { display: none; }
+.paso .nota-notch { max-width: 46ch; font-size: .98rem; border-left: 3px solid var(--accent); padding-left: 14px; }
+.paso .nota-notch strong { color: var(--text); font-weight: 650; }
+.paso .nota-notch kbd { display: inline-block; min-width: 0; height: auto; padding: 3px 7px; font-size: .78rem; vertical-align: baseline; }
 .vitrina { --pad: clamp(20px, 3vw, 44px); position: sticky; top: 14dvh; height: 72dvh; border-radius: calc(var(--radio) + 8px); border: 1px solid var(--line); background: var(--surface); overflow: hidden; }
 .vitrina figure { position: absolute; inset: 0; display: grid; place-items: center; padding: var(--pad); opacity: 0; transition: opacity .45s var(--ease-out), transform .45s var(--ease-out); transform: scale(.97); }
 .vitrina figure.activa { opacity: 1; transform: none; }
@@ -726,8 +729,9 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
         <li class="revela cierre"><span class="v">1.8</span><span class="t"><span class="es">Ecualizador paramétrico, crossfeed y balance para auriculares, y un panel para elegir carpetas y listas.</span><span class="en">Parametric equalizer, crossfeed and balance for headphones, and a panel for choosing folders and playlists.</span></span></li>
         <li class="revela menor"><span class="v">1.8.1</span><span class="t"><span class="es">Burbujas de luz que cambian de color y laten con la música cuando el tema no tiene carátula.</span><span class="en">Bubbles of light that change colour and pulse with the music when a track has no cover art.</span></span></li>
         <li class="revela menor"><span class="v">1.8.2</span><span class="t"><span class="es">Correcciones y ajustes menores: el botón «–», el guardado de listas y detalles de la lista.</span><span class="en">Fixes and minor adjustments: the “–” button, playlist saving and list details.</span></span></li>
+        <li class="revela"><span class="v">1.8.5</span><span class="t"><span class="es">El notch: la barra compacta se pega al borde de arriba de la pantalla, por encima de las demás ventanas, y se esconde sola. Solo Linux por ahora, probado en KDE Plasma con Wayland.</span><span class="en">The notch: the compact bar docks to the top edge of the screen, above the other windows, and hides itself. Linux only for now, tested on KDE Plasma with Wayland.</span></span></li>
       </ol>
-      <button type="button" class="boton secundario ver-mas" id="ver-versiones" aria-expanded="false" aria-controls="versiones"><span class="mas"><span class="es">Ver las 15 versiones</span><span class="en">See all 15 versions</span></span><span class="menos"><span class="es">Ver menos</span><span class="en">Show less</span></span></button>
+      <button type="button" class="boton secundario ver-mas" id="ver-versiones" aria-expanded="false" aria-controls="versiones"><span class="mas"><span class="es">Ver las 16 versiones</span><span class="en">See all 16 versions</span></span><span class="menos"><span class="es">Ver menos</span><span class="en">Show less</span></span></button>
     </div>
   </section>
 
@@ -756,6 +760,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
           <article class="paso" data-i="3">
             <h3><span class="es">Se achica a una barra</span><span class="en">It shrinks to a bar</span></h3>
             <p><span class="es">Una transición suave pasa de la tarjeta a una barra compacta. La música no se corta.</span><span class="en">A smooth transition turns the card into a compact bar. The music keeps playing.</span></p>
+            <p class="nota-notch"><span class="es"><strong>Nuevo en 1.8.5 (solo Linux): el notch.</strong> Con <kbd>Shift</kbd>+<kbd>M</kbd> la barra se pega al borde de arriba de la pantalla, sobre las demás ventanas, y se esconde sola hasta que tocás el borde. Solo se pega si ese borde está libre (sin panel). Funciona en <strong>KDE Plasma con Wayland</strong>, que es donde lo probé. En X11 debería andar, pero no lo probé. En GNOME y otros Wayland no está disponible. En Windows y Mac todavía no.</span><span class="en"><strong>New in 1.8.5 (Linux only): the notch.</strong> With <kbd>Shift</kbd>+<kbd>M</kbd> the bar docks to the top edge of the screen, above the other windows, and hides itself until you touch the edge. It only docks if that edge is free (no panel). It works on <strong>KDE Plasma with Wayland</strong>, which is where I tested it. On X11 it should work, but I have not tested it. On GNOME and other Wayland desktops it is not available. Not on Windows or Mac yet.</span></p>
             <figure class="fig-movil"><img src="img/compact.webp" width="432" height="108" loading="lazy" alt="La barra compacta con el espectro y los botones anterior, pausa, siguiente y detener" data-alt-es="La barra compacta con el espectro y los botones anterior, pausa, siguiente y detener" data-alt-en="The compact bar with the spectrum and the previous, pause, next and stop buttons"></figure>
           </article>
           <article class="paso" data-i="4">
@@ -904,6 +909,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
             <li class="atajo" data-k="right"><span class="accion"><span class="es">Adelante 5 segundos</span><span class="en">Forward 5 seconds</span></span><span class="teclas"><kbd class="flecha">&rarr;</kbd></span></li>
             <li class="atajo" data-k="r"><span class="accion"><span class="es">Repetir: nada, lista o un tema</span><span class="en">Repeat: off, list or one track</span></span><span class="teclas"><kbd>R</kbd></span></li>
             <li class="atajo" data-k="m"><span class="accion"><span class="es">Modo compacto</span><span class="en">Compact mode</span></span><span class="teclas"><kbd>M</kbd></span></li>
+            <li class="atajo" data-k="shift+m"><span class="accion"><span class="es">Notch: pegar la barra arriba (solo Linux, KDE con Wayland)</span><span class="en">Notch: dock the bar to the top (Linux only, KDE with Wayland)</span></span><span class="teclas"><kbd>Shift</kbd><i>+</i><kbd>M</kbd></span></li>
           </ul>
         </article>
         <article class="hoja revela" style="--i:1">
@@ -977,30 +983,32 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
       </div>
     <div class="cont">
       <h2 class="grande-titulo revela"><span class="es">Descargar</span><span class="en">Download</span></h2>
-      <p class="sub-d revela" style="--i:1"><span class="es">Versión 1.8.2. Gratis y sin registro.</span><span class="en">Version 1.8.2. Free, no sign-up.</span></p>
+      <p class="sub-d revela" style="--i:1"><span class="es">Linux: versión 1.8.5. Windows y Mac: versión 1.8.2. Gratis y sin registro.</span><span class="en">Linux: version 1.8.5. Windows and Mac: version 1.8.2. Free, no sign-up.</span></p>
       <div class="filas">
         <article class="fila revela">
           <div class="so"><svg class="ic" aria-hidden="true"><use href="#i-linux-logo"/></svg><div>Linux<span class="peso">AppImage, 75 MB</span></div></div>
           <div>
             <p class="es">Descargalo, dale permiso de ejecución y abrilo. Necesita glibc 2.35 o más nuevo (Ubuntu 22.04, Debian 12 o posteriores).</p>
             <p class="en">Download it, make it executable and run it. It needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or later).</p>
-            <code>chmod +x simpleplay-1.8.2-x86_64.AppImage</code>
+            <p class="es"><strong>Versión 1.8.5.</strong> Es la única con el notch (ver arriba): probado en KDE Plasma con Wayland.</p>
+            <p class="en"><strong>Version 1.8.5.</strong> It is the only one with the notch (see above): tested on KDE Plasma with Wayland.</p>
+            <code>chmod +x simpleplay-1.8.5-x86_64.AppImage</code>
           </div>
-          <a class="boton principal" href="https://github.com/cufadev/simpleplay/releases/download/v1.8.2/simpleplay-1.8.2-x86_64.AppImage"><svg class="ic" aria-hidden="true"><use href="#i-bi-download"/></svg><span class="es">Descargar para Linux</span><span class="en">Download for Linux</span></a>
+          <a class="boton principal" href="https://github.com/cufadev/simpleplay/releases/download/v1.8.5/simpleplay-1.8.5-x86_64.AppImage"><svg class="ic" aria-hidden="true"><use href="#i-bi-download"/></svg><span class="es">Descargar para Linux</span><span class="en">Download for Linux</span></a>
         </article>
         <article class="fila revela">
-          <div class="so"><svg class="ic" aria-hidden="true"><use href="#i-windows-logo"/></svg><div>Windows<span class="peso">ZIP, 54 MB</span></div></div>
+          <div class="so"><svg class="ic" aria-hidden="true"><use href="#i-windows-logo"/></svg><div>Windows<span class="peso">ZIP, 54 MB · v1.8.2</span></div></div>
           <div>
-            <p class="es">Descomprimí y abrí simpleplay.exe. Como no está firmado, Windows va a avisar: tocá Más información y Ejecutar de todas formas. Todavía lo probé en pocas PC: si algo falla, avisame.</p>
-            <p class="en">Unzip it and open simpleplay.exe. It is not signed, so Windows will warn you: click More info, then Run anyway. I have tried it on few PCs so far: if something fails, let me know.</p>
+            <p class="es"><strong>Versión 1.8.2</strong> (la 1.8.5 es solo para Linux por ahora, sin notch). Descomprimí y abrí simpleplay.exe. Como no está firmado, Windows va a avisar: tocá Más información y Ejecutar de todas formas. Todavía lo probé en pocas PC: si algo falla, avisame.</p>
+            <p class="en"><strong>Version 1.8.2</strong> (1.8.5 is Linux only for now, no notch). Unzip it and open simpleplay.exe. It is not signed, so Windows will warn you: click More info, then Run anyway. I have tried it on few PCs so far: if something fails, let me know.</p>
           </div>
           <a class="boton principal" href="https://github.com/cufadev/simpleplay/releases/download/v1.8.2/simpleplay-1.8.2-windows-x64.zip"><svg class="ic" aria-hidden="true"><use href="#i-bi-download"/></svg><span class="es">Descargar para Windows</span><span class="en">Download for Windows</span></a>
         </article>
         <article class="fila revela">
-          <div class="so"><svg class="ic" aria-hidden="true"><use href="#i-apple-logo"/></svg><div>macOS<span class="peso">DMG, 38 / 42 MB</span></div></div>
+          <div class="so"><svg class="ic" aria-hidden="true"><use href="#i-apple-logo"/></svg><div>macOS<span class="peso">DMG, 38 / 42 MB · v1.8.2</span></div></div>
           <div>
-            <p class="es">Hay un DMG para Apple Silicon (M1 y posteriores) y otro para Intel. No está firmado por Apple: la primera vez macOS avisa, y se abre desde Ajustes del Sistema &gt; Privacidad y seguridad &gt; Abrir igualmente. Lo probé muy poco en una Mac real: si algo falla, avisame.</p>
-            <p class="en">There is a DMG for Apple Silicon (M1 and later) and another for Intel. It is not signed by Apple: the first time macOS will warn you, and you open it from System Settings &gt; Privacy &amp; Security &gt; Open Anyway. I have tried it very little on a real Mac: if something fails, let me know.</p>
+            <p class="es"><strong>Versión 1.8.2</strong> (la 1.8.5 es solo para Linux por ahora, sin notch). Hay un DMG para Apple Silicon (M1 y posteriores) y otro para Intel. No está firmado por Apple: la primera vez macOS avisa, y se abre desde Ajustes del Sistema &gt; Privacidad y seguridad &gt; Abrir igualmente. Lo probé muy poco en una Mac real: si algo falla, avisame.</p>
+            <p class="en"><strong>Version 1.8.2</strong> (1.8.5 is Linux only for now, no notch). There is a DMG for Apple Silicon (M1 and later) and another for Intel. It is not signed by Apple: the first time macOS will warn you, and you open it from System Settings &gt; Privacy &amp; Security &gt; Open Anyway. I have tried it very little on a real Mac: if something fails, let me know.</p>
             <a class="seguir" href="https://github.com/cufadev/simpleplay/releases/download/v1.8.2/simpleplay-1.8.2-macos-intel.dmg"><span class="es">Descargar la versión para Intel</span><span class="en">Download the Intel version</span></a>
           </div>
           <a class="boton principal" href="https://github.com/cufadev/simpleplay/releases/download/v1.8.2/simpleplay-1.8.2-macos-apple-silicon.dmg"><span class="es">Descargar para Mac</span><span class="en">Download for Mac</span></a>
@@ -1042,9 +1050,9 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
         <div class="cierre-vela" aria-hidden="true"></div>
         <div>
           <h2 class="grande-titulo revela" id="cierre-t"><span class="es">Poné play.</span><span class="en">Hit play.</span></h2>
-          <p class="cierre-sub revela" style="--i:1"><span class="es">Gratis, sin registro y sin internet. Versión 1.8.2.</span><span class="en">Free, no sign-up and no internet needed. Version 1.8.2.</span></p>
+          <p class="cierre-sub revela" style="--i:1"><span class="es">Gratis, sin registro y sin internet. Linux: 1.8.5. Windows y Mac: 1.8.2.</span><span class="en">Free, no sign-up and no internet needed. Linux: 1.8.5. Windows and Mac: 1.8.2.</span></p>
           <div class="botones revela" style="--i:2">
-            <a class="boton principal" href="https://github.com/cufadev/simpleplay/releases/download/v1.8.2/simpleplay-1.8.2-x86_64.AppImage"><svg class="ic" aria-hidden="true"><use href="#i-linux-logo"/></svg><span class="es">Descargar para Linux</span><span class="en">Download for Linux</span></a>
+            <a class="boton principal" href="https://github.com/cufadev/simpleplay/releases/download/v1.8.5/simpleplay-1.8.5-x86_64.AppImage"><svg class="ic" aria-hidden="true"><use href="#i-linux-logo"/></svg><span class="es">Descargar para Linux</span><span class="en">Download for Linux</span></a>
             <a class="boton secundario" href="https://github.com/cufadev/simpleplay/releases/download/v1.8.2/simpleplay-1.8.2-windows-x64.zip"><svg class="ic" aria-hidden="true"><use href="#i-windows-logo"/></svg><span class="es">Descargar para Windows</span><span class="en">Download for Windows</span></a>
             <a class="boton secundario" href="https://github.com/cufadev/simpleplay/releases/download/v1.8.2/simpleplay-1.8.2-macos-apple-silicon.dmg"><svg class="ic" aria-hidden="true"><use href="#i-apple-logo"/></svg><span class="es">Descargar para Mac</span><span class="en">Download for Mac</span></a>
           </div>
@@ -1453,6 +1461,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
     const temporizadores = new Map();
     const nombreDe = (e) => {
       let t = e.key === ' ' ? 'space' : e.key === 'ArrowLeft' ? 'left' : e.key === 'ArrowRight' ? 'right' : e.key.toLowerCase();
+      if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && t === 'm') t = 'shift+m';
       if ((e.ctrlKey || e.metaKey) && e.altKey && /^Key[A-Z]$/.test(e.code)) t = 'ctrl+alt+' + e.code.slice(3).toLowerCase();
       else if ((e.ctrlKey || e.metaKey) && t.length === 1) t = 'ctrl+' + (e.shiftKey ? 'shift+' : '') + t;
       return t;

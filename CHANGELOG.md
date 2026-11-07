@@ -3,6 +3,38 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
+## [1.8.5] - 2026-11-07
+
+> **Linux only for now.** This version is published as an AppImage only. The Windows and macOS builds stay at 1.8.2
+> and do not have the notch yet.
+
+### Added
+- **The notch.** The compact bar can dock to the top edge of the screen and become a notch: flat top corners, rounded
+  bottom corners and two small concave "ears" that blend it into the edge of the screen. It keeps the title pill and
+  previous / play / next; the "back to the card" button is gone (use `M`, `Shift+M` or the menu). Right click >
+  **Dock to the top (notch)**, or `Shift+M` (`M` and the expand button still toggle the compact bar). It centres itself
+  on the top edge of the screen it is on, stays above the other windows (on every desktop, out of the taskbar and the
+  Alt+Tab list) and cannot be dragged while docked: release it with right click > **Release the notch**, `Shift+M` or `M`.
+- **It hides itself.** With the mouse away for 1.8 s the notch slides up and leaves a thin 6 px edge; touching that edge
+  brings it back. Right click > **Hide the notch automatically** turns this off.
+- **It only docks where the top edge is free.** If that screen has a panel or taskbar at the top, the notch is not
+  docked and the title pill says why. With two monitors, each one is checked on its own.
+- Docking and releasing are animated with springs (a small bounce when it lets go and when the ears pop out; no bounce
+  against the screen edge, so it never looks detached). The bar changes shape with no cross-fade of its content.
+
+### Where the notch works
+| Platform | Notch in 1.8.5 |
+|---|---|
+| KDE Plasma, Wayland | **Works. This is the only setup it has been tested on.** A KWin script (through D-Bus) centres it at the top and keeps it on top. |
+| X11 (any desktop) | Implemented with the "stay on top" window hint, **not tested yet**. |
+| GNOME and other Wayland desktops | **Not available.** A Wayland app cannot place its own window there, and a docked notch cannot be dragged, so the menu entry is disabled and says why. |
+| Windows, macOS | Not in this release (those builds stay at 1.8.2). |
+
+### Changed
+- The buttons at the bottom of the equalizer panel fit in one row (the "Delete preset…" button is now "Delete…").
+- `numpy` is capped below 2.4 (`numpy>=2.0,<2.4`): from 2.4 it needs a CPU with SSE4.2, and the app did not start on
+  computers older than about 2009.
+
 ## [1.8.2] - 2026-10-26
 
 ### Fixed

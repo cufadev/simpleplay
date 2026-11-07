@@ -7,7 +7,7 @@
 #
 PySide6-Essentials>=6.8   # interfaz (Qt): solo Core, Gui y Widgets, sin los módulos que no se usan
 mutagen>=1.47      # leer y escribir las etiquetas del mp3 (título, artista, portada)
-numpy>=2.0         # análisis del espectro (FFT) y mezcla del audio
+numpy>=2.0,<2.4    # análisis del espectro (FFT) y mezcla del audio. Tope: desde la 2.4 pide CPU con SSE4.2 y no abre en equipos de antes de 2009
 miniaudio>=1.60    # motor de audio: decodifica y reproduce (no hace falta ffmpeg ni SDL)
 certifi>=2024.0    # certificados HTTPS de respaldo para la escoba (MusicBrainz)
 qrcode>=7.4        # el código QR de Mosquito (control remoto desde el celular); sin él se muestra solo el enlace
