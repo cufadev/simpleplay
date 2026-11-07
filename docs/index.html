@@ -1313,6 +1313,7 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
       const cuadro = (t) => { lenis.raf(t); requestAnimationFrame(cuadro); };
       requestAnimationFrame(cuadro);
     }
+    window.__lenis = lenis;   // la lista de versiones lo usa para corregir el scroll sin pelearse con la inercia
     return lenis;
   };
 
@@ -1407,11 +1408,14 @@ kbd.flecha { font-size: 1.3rem; padding-bottom: 2px; }
       const mover = !reducir.matches && listaV.animate;
       // al cerrar, algo se queda quieto en la pantalla: el botón (si lo tocaste) o la última versión (si se cerró sola al llegar a ella)
       const ancla = abrir ? null : (auto ? ultimo() : verMas);
-      const y0 = ancla ? ancla.getBoundingClientRect().top : 0;
-      const corregir = () => { if (!ancla) return; const d = ancla.getBoundingClientRect().top - y0; if (Math.abs(d) > 0.5) window.scrollTo({ top: scrollY + d, behavior: 'instant' }); };
+      let y0 = ancla ? ancla.getBoundingClientRect().top : 0;
+      const corregir = () => { if (!ancla) return; const d = ancla.getBoundingClientRect().top - y0; if (Math.abs(d) < 0.5) return;
+        const L = window.__lenis;
+        // con scroll suave (Lenis) hay que moverlo por su API: si no, sigue yendo hacia su destino viejo y la página pega un salto
+        if (L && L.scrollTo) L.scrollTo(scrollY + d, { immediate: true, force: true }); else window.scrollTo({ top: scrollY + d, behavior: 'instant' }); };
       const h0 = listaV.offsetHeight;
       if (abrir) menores.forEach((li) => li.classList.add('dentro'));
-      const sinAnimar = () => { listaV.classList.toggle('abierta', abrir); corregir(); pedir(); };
+      const sinAnimar = () => { if (ancla) y0 = ancla.getBoundingClientRect().top; listaV.classList.toggle('abierta', abrir); corregir(); pedir(); };   // la posición se toma justo antes de compactar: el scroll sigue mientras se desvanece
       if (!mover) return sinAnimar();
       const ease = 'cubic-bezier(.22,.8,.2,1)';
       if (auto) {
