@@ -2196,6 +2196,69 @@ class TestNotch(Base):
             w2.close()
             w2.motor.cerrar()
 
+    def test_la_pantalla_del_notch_se_guarda_y_se_restaura(self):
+        self.cargar(A)
+        self.w.poner_notch(True, animar=False)
+        self.w._notch_pantalla = "DP-2"                      # (en pruebas la ventana no está en una pantalla real)
+        self.w.guardar_estado()
+        import json
+        self.assertEqual(json.loads(S.ESTADO.read_text(encoding="utf-8")).get("notch_pantalla"), "DP-2")
+        w2 = S.Player()
+        try:
+            w2.restaurar()
+            self.assertEqual(w2._notch_pantalla, "DP-2")
+        finally:
+            w2.close()
+            w2.motor.cerrar()
+
+    def test_al_restaurar_el_pegado_espera_al_primer_dibujado(self):
+        # la ventana todavía no existe para el compositor: el script de KWin se lanza recién cuando se dibuja
+        w2 = S.Player()
+        w2._kwin_puede_mover = lambda: True
+        llamadas = []
+        w2._lanzar_pegado_al_abrir = lambda: llamadas.append(1)
+        try:
+            w2.poner_compacto(True, animar=False)
+            QApplication.platformName = staticmethod(lambda: "wayland")
+            try:
+                w2.notch = True
+                w2._pegar_arriba(False)
+            finally:
+                del QApplication.platformName
+            self.assertTrue(w2._pegar_pendiente)
+            self.assertEqual(llamadas, [])
+            w2.show()
+            w2.repaint()
+            QApplication.processEvents()
+            self.assertEqual(llamadas, [1])
+            self.assertFalse(w2._pegar_pendiente)
+        finally:
+            w2.close()
+            w2.motor.cerrar()
+
+    def test_el_script_de_kwin_acepta_una_pantalla_de_destino(self):
+        self.assertIn("%(salida)s", S.Player.SCRIPT_KWIN_NOTCH)
+        texto = S.Player.SCRIPT_KWIN_NOTCH % {"pid": 1, "titulo": "x", "mover": "true", "encima": "true", "salida": "DP-2"}
+        self.assertIn('"DP-2"', texto)
+        self.assertIn("workspace.screens", texto)
+
+    def test_sin_una_pantalla_libre_la_ventana_vuelve_a_pildora(self):
+        original = S.bordes_ocupados
+        S.bordes_ocupados = lambda pantalla: {"top"}
+        try:
+            self.w.poner_compacto(True, animar=False)
+            self.w.notch = True
+            self.w._forma_notch()
+            self.w.show()
+            self.w._kwin_notch = lambda *a, **k: True
+            self.w._lanzar_pegado_al_abrir()
+            for _ in range(60):                              # esperar los reintentos (150, 600 y 1500 ms)
+                QApplication.processEvents()
+                time.sleep(0.03)
+            self.assertFalse(self.w.notch)
+        finally:
+            S.bordes_ocupados = original
+
     def test_paneles_de_plasma_se_leen_de_la_configuracion(self):
         cfg = Path(CONFIG) / ".config"
         cfg.mkdir(parents=True, exist_ok=True)
@@ -2483,7 +2546,7 @@ class TestNotch(Base):
     def test_script_de_kwin_apunta_a_esta_ventana(self):
         def js(mover, encima):
             return S.Player.SCRIPT_KWIN_NOTCH % {"pid": os.getpid(), "titulo": self.w.windowTitle(),
-                                                 "mover": mover, "encima": encima}
+                                                 "mover": mover, "encima": encima, "salida": ""}
         c = js("true", "true")
         self.assertIn(f"w.pid === {os.getpid()}", c)
         self.assertIn('w.caption === "simpleplay"', c)

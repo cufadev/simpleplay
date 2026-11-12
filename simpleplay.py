@@ -5149,6 +5149,8 @@ class Player(QWidget):
         self._en_borde = False           # la ventana ya está arriba, en el borde (en Wayland no se puede saber de otra forma)
         self._despues = None             # lo que sigue cuando termine la transición en curso (tarjeta -> píldora -> notch)
         self._n_scripts = itertools.count()
+        self._notch_pantalla = ""                  # pantalla donde estaba pegado el notch al cerrar (para volver ahí)
+        self._pegar_pendiente = False              # hay que mandar el notch arriba en cuanto se dibuje la ventana
         self._t_esconder = QTimer(self)
         self._t_esconder.setSingleShot(True)
         self._t_esconder.setInterval(NOTCH_ESPERA_MS)
@@ -6211,7 +6213,7 @@ class Player(QWidget):
                  "carpeta": self.carpeta_musica, "carpeta_listas": self.carpeta_listas,
                  "carpetas_musica": self.carpetas_musica,
                  "lista_actual": self.lista_actual, "orden_original": self.orden_original,
-                 "compacto": self.compacto, "notch": self.notch, "notch_autoocultar": self.notch_autoocultar, "ocultar_controles": self.ocultar_controles, "normalizar": self.normalizar, "preset": self.preset,
+                 "compacto": self.compacto, "notch": self.notch, "notch_pantalla": self._pantalla_actual_notch(), "notch_autoocultar": self.notch_autoocultar, "ocultar_controles": self.ocultar_controles, "normalizar": self.normalizar, "preset": self.preset,
                  "eq_personal": self.eq_personal, "mis_presets": self.mis_presets,
                  "eq_param": self.eq_param, "balance": self.balance, "crossfeed": self.crossfeed}
         try:
@@ -6267,6 +6269,7 @@ class Player(QWidget):
             self.carpetas_musica = [c for c in cm if isinstance(c, str)][:8]
         self.poner_compacto(bool(d.get("compacto")), animar=False)
         self.notch_autoocultar = bool(d.get("notch_autoocultar", True))
+        self._notch_pantalla = str(d.get("notch_pantalla") or "")
         if d.get("compacto") and d.get("notch"):
             self.poner_notch(True, animar=False)
         if not con_pistas:
@@ -6439,8 +6442,21 @@ class Player(QWidget):
 
     def borde_superior_libre(self):
         """True si el borde de arriba de la pantalla donde está la ventana no tiene ningún panel ni barra de inicio."""
-        pantalla = self.screen() or QApplication.primaryScreen()
+        pantalla = (None if self.isVisible() else self._pantalla_notch()) or self.screen() or QApplication.primaryScreen()
         return "top" not in bordes_ocupados(pantalla)
+
+    def _pantalla_actual_notch(self):
+        """Nombre de la pantalla para guardar: la actual si está pegado como notch; si no, la última que se guardó."""
+        if self.notch and self.isVisible() and self.screen() is not None and self.screen().name():
+            self._notch_pantalla = self.screen().name()
+        return self._notch_pantalla
+
+    def _pantalla_notch(self):
+        """La pantalla donde estaba pegado el notch al cerrar (si todavía existe): la sesión vuelve a abrirse ahí."""
+        for p in QApplication.screens():
+            if p.name() == self._notch_pantalla:
+                return p
+        return None
 
     def _kwin_puede_mover(self):
         return (QApplication.platformName() == "wayland" and HAY_DBUS
@@ -6532,7 +6548,9 @@ class Player(QWidget):
         var w = lista[i];
         if (w.pid === %(pid)d && w.caption === "%(titulo)s") {
             if (%(mover)s) {
-                var g = w.output.geometry, f = w.frameGeometry;
+                var o = w.output, pantallas = workspace.screens;
+                for (var k = 0; k < pantallas.length; k++) if ("%(salida)s" !== "" && pantallas[k].name === "%(salida)s") o = pantallas[k];
+                var g = o.geometry, f = w.frameGeometry;
                 w.frameGeometry = {x: g.x + Math.round((g.width - f.width) / 2), y: g.y, width: f.width, height: f.height};
             }
             w.keepAbove = %(encima)s;
@@ -6544,7 +6562,7 @@ class Player(QWidget):
 })();
 """
 
-    def _kwin_notch(self, mover, encima):
+    def _kwin_notch(self, mover, encima, salida=""):
         """En Wayland la aplicación no puede colocar su ventana ni ponerla encima, pero KDE sí deja hacerlo con un
         script de KWin por D-Bus. Devuelve False si no es KDE (o no hay D-Bus): ahí la ventana queda donde la ponga
         el escritorio."""
@@ -6559,6 +6577,7 @@ class Player(QWidget):
             ruta = carpeta / f"{nombre}.js"
             ruta.write_text(self.SCRIPT_KWIN_NOTCH % {"pid": os.getpid(), "titulo": self.windowTitle().replace('"', ""),
                                                       "mover": "true" if mover else "false",
+                                                      "salida": str(salida).replace('"', ""),
                                                       "encima": "true" if encima else "false"}, encoding="utf-8")
         except OSError:
             return False
@@ -6601,7 +6620,10 @@ class Player(QWidget):
         donde la ponga el compositor y se arrastra."""
         if QApplication.platformName() == "wayland":
             if self._kwin_puede_mover() and not (animar and self._trans is not None and not self._en_borde):
-                QTimer.singleShot(150, lambda: self._kwin_notch(True, self._es_encima))   # con el tamaño ya final
+                if self.isVisible():
+                    QTimer.singleShot(150, lambda: self._kwin_notch(True, self._es_encima))   # con el tamaño ya final
+                else:
+                    self._pegar_al_abrir()
                 self._en_borde = True
             return
         pantalla = self.screen() or QApplication.primaryScreen()
@@ -6620,6 +6642,28 @@ class Player(QWidget):
         a.setEasingCurve(QEasingCurve.OutQuint)           # sin rebote: arriba está el borde de la pantalla
         a.valueChanged.connect(self.move)
         a.start()
+
+    def _pegar_al_abrir(self):
+        """Al abrir la app ya como notch (se restaura la sesión) la ventana todavía no existe para el compositor: el
+        script de KWin no la encuentra y queda en el medio de la pantalla. Por eso se espera al primer dibujado
+        (ver paintEvent) y ahí se lo manda arriba, a la pantalla donde estaba al cerrar."""
+        self._pegar_pendiente = True
+
+    def _lanzar_pegado_al_abrir(self):
+        """Ya se dibujó la ventana: se reintenta unas veces porque el compositor tarda un poco en conocerla. Si en la
+        pantalla de destino el borde de arriba está ocupado por un panel, vuelve a ser píldora en vez de taparse."""
+        def intento():
+            if not (self.notch and self.compacto and self.isVisible()):
+                return
+            destino = self._pantalla_notch()
+            if destino is not None and "top" not in bordes_ocupados(destino):
+                self._kwin_notch(True, self._es_encima, destino.name())     # donde estaba cuando se cerró
+            elif self.borde_superior_libre():
+                self._kwin_notch(True, self._es_encima)
+            else:
+                self.poner_notch(False, False)
+        for ms in (150, 600, 1500):
+            QTimer.singleShot(ms, intento)
 
     # ---- notch: esconderse solo y aparecer al acercar el mouse ----
     def _esconder_si_corresponde(self):
@@ -7077,6 +7121,9 @@ class Player(QWidget):
         return True
 
     def paintEvent(self, e):
+        if self._pegar_pendiente:
+            self._pegar_pendiente = False
+            self._lanzar_pegado_al_abrir()
         if self._oculto:
             # escondido: solo asoma el borde de abajo del notch. Se dibuja la forma limpia y no la captura: en las pocas
             # filas que quedan a la vista la captura trae la sombra difusa de los costados y el borde parece una mancha
