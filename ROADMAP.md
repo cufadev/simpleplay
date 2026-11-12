@@ -2,11 +2,11 @@
 
 Ideas for future versions. What is already done is in [CHANGELOG.md](CHANGELOG.md).
 
-## Priorities (2026-10-23)
+## Priorities (2026-10-23, headings updated 2026-11-12 at 1.8.5)
 
 The sections below keep the detail of each idea; this is the order to do them in.
 
-**Before the next release (1.7)**
+**Carried over (planned for 1.7, still open at 1.8.5)**
 1. **macOS.** The build script and the manual GitHub Actions workflow exist but were never run. Test the `.dmg` on a real Intel
    Mac, note the macOS version, then bring back the `release: published` trigger and enable the button on the website.
    Apple Silicon is untested; signing and notarization are still to decide.
@@ -17,7 +17,7 @@ The sections below keep the detail of each idea; this is the order to do them in
 4. **Website clean-up.** Remove the `?idioma=` language-switch test modes (`cascada`, `barrido`, `cruce`), keeping the
    letter-by-letter one.
 
-**Next (1.8 or later)**
+**Next**
 5. **Connect to a server the user owns** (Navidrome, Jellyfin, any Subsonic-compatible one).
 6. **Weigh shuffle by artist** so two tracks of the same artist rarely play back to back.
 7. **The broom** (fill in track info from inside the player): understand why it recognised nothing on the user's machine
@@ -29,8 +29,8 @@ The sections below keep the detail of each idea; this is the order to do them in
 - **Tolerant search in the list:** ignore accents and typos, put originals before covers.
 - **Radio from your own library:** pick a track and queue similar ones by artist, genre and year, offline. Goes together with
   weighing shuffle by artist (item 6).
-- **Download hygiene:** publish the SHA-256 of every AppImage and zip in the release notes, plus a short `SECURITY.md`
-  explaining how to check a download.
+- **Download hygiene:** done 2026-11-12 (`SECURITY.md`, and the builds write a `.sha256` next to every AppImage, zip
+  and dmg). Still by hand: upload the AppImage's `.sha256` with each release.
 - **Share the track as a picture:** a button that exports the card (cover, title, player style) as a PNG.
 
 **Synced lyrics (to be worked on properly, own version; not rushed)**
