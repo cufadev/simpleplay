@@ -3,6 +3,12 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
+## [1.8.6] - unreleased
+
+### Changed
+- **The notch remembers its screen.** On a multi-monitor setup, it now docks back to the screen it was on when you
+  last released or closed it, instead of always the one under the mouse.
+
 ## [1.8.5] - 2026-11-07
 
 > **Linux only for now.** This version is published as an AppImage only. The Windows and macOS builds stay at 1.8.2
