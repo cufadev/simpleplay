@@ -1,11 +1,10 @@
 """Genera las capturas y el GIF del README y de la página, con la aplicación real (sin pantalla ni sonido).
 
-    python tools/demo_gif/capturas.py                       (usa ~/Música/Tu Cuerpo.mp3)
-    TEMA=/ruta/otro.mp3 python tools/demo_gif/capturas.py
-
+    .venv/bin/python tools/demo_gif/capturas.py
+    
 Escribe docs/screenshots/{player,spectrum,playlist,compact}.png (al doble de resolución, con la sombra y el fondo
 transparente) y docs/demo.gif + docs/demo.mp4. Los otros temas de la lista son ficticios (se generan acá).
-El tema que se pasa se copia a una carpeta temporal: el original no se toca.
+Todos los temas de la lista son ficticios (sin música ni portadas de nadie); el GIF recorre portada, barras, lista con búsqueda, ecualizador y modo compacto.
 """
 import os
 import shutil
@@ -15,7 +14,6 @@ import tempfile
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[2]
-TEMA = Path(os.environ.get("TEMA", Path.home() / "Música" / "Tu Cuerpo.mp3"))
 TMP = Path(tempfile.mkdtemp(prefix="simpleplay-capturas-"))
 MODO = sys.argv[1] if len(sys.argv) > 1 else "todo"
 
@@ -26,16 +24,12 @@ def preparar_temas():
     from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, Qt
     from PySide6.QtGui import QColor, QImage, QLinearGradient, QPainter
     TMP.mkdir(exist_ok=True)
-    real = TMP / "01 Tu Cuerpo.mp3"
-    shutil.copy(TEMA, real)
-    t = ID3(real)
-    t.add(TPE1(encoding=3, text=str(t.get("TPE1", "")).replace(" - Topic", "")))   # el "- Topic" es un resto de YouTube
-    t.save()
-    falsos = [("Night Drive", "Lumen Park", "Neon Roads", ("#1b1464", "#ff4e01"), [220, 277, 330]),
+    falsos = [("Golden Hour", "Lumen Park", "Neon Roads", ("#7a1f5c", "#ff8a3d"), [233, 294, 349]),
+              ("Night Drive", "Lumen Park", "Neon Roads", ("#1b1464", "#ff4e01"), [220, 277, 330]),
               ("Paper Moons", "The Quiet Hours", "Slow Light", ("#134e5e", "#f7b733"), [196, 247, 294]),
               ("Static Garden", "Mira Voss", "Greenhouse", ("#0f2027", "#2ecc71"), [262, 330, 392]),
               ("Low Tide", "Harbor & Pine", "Salt", ("#42275a", "#ff9a8b"), [175, 220, 262])]
-    for n, (tit, art, alb, (c1, c2), notas) in enumerate(falsos, 2):
+    for n, (tit, art, alb, (c1, c2), notas) in enumerate(falsos, 1):
         ruta = TMP / f"{n:02d} {tit}.mp3"
         expr = "+".join(f"0.18*sin(2*PI*{f}*t)*(0.6+0.4*sin(2*PI*{0.4 + 0.15 * i}*t))" for i, f in enumerate(notas))
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"aevalsrc={expr}:s=44100:d=60",
@@ -106,11 +100,12 @@ def correr(modo):
     else:
         cuadros = TMP / "cuadros"
         cuadros.mkdir(exist_ok=True)
-        CW, CH = 460, 700
+        CW, CH = 520, 640
         n = [0]
 
         def foto():
-            pm = w.grab()
+            pan = getattr(w, "_panel", None)
+            pm = (pan if pan is not None and pan.isVisible() else w).grab()
             lienzo = QImage(CW * 2, CH * 2, QImage.Format_RGB32)   # al doble de resolución, como la captura
             lienzo.setDevicePixelRatio(2)
             p = QPainter(lienzo)
@@ -119,7 +114,8 @@ def correr(modo):
             g.setColorAt(1, QColor("#15161a"))
             p.fillRect(QRectF(0, 0, CW, CH), g)
             ancho = pm.width() / pm.devicePixelRatio()               # tamaño lógico (la captura es de doble resolución)
-            p.drawPixmap(round((CW - ancho) / 2), 20, pm)
+            alto = pm.height() / pm.devicePixelRatio()
+            p.drawPixmap(round((CW - ancho) / 2), round((CH - alto) / 2), pm)
             p.end()
             lienzo.save(str(cuadros / f"f{n[0]:04d}.png"))
             n[0] += 1
@@ -129,16 +125,21 @@ def correr(modo):
         reloj.start(50)
         en(0.8, lambda: w.reproducir(0))
         en(1.6, lambda: w.saltar(0.30))
-        en(3.5, w.alternar_barras)
-        en(7.5, w.alternar_barras)
-        en(8.6, lambda: w.poner_compacto(True))
-        en(11.6, lambda: w.poner_compacto(False))
-        en(12.8, lambda: w.alternar_lista(True))
-        for i in range(1, 5):
-            en(13.8 + i * 0.28, lambda i=i: w.buscador.setText("cuer"[:i]))
-        en(16.4, lambda: w.buscador.setText(""))
-        en(17.2, lambda: w.alternar_lista(False))
-        fin = 19.6
+        en(4.0, w.alternar_barras)
+        en(8.0, lambda: w.alternar_lista(True))
+        for i in range(1, 6):
+            en(9.0 + i * 0.28, lambda i=i: w.buscador.setText("night"[:i]))
+        en(11.6, lambda: w.buscador.setText(""))
+        en(12.2, lambda: w.reproducir(2))
+        en(14.0, lambda: w.alternar_lista(False))
+        en(14.6, w.ecualizador)
+        en(15.4, lambda: w._panel.poner_curva(S.curva_de_preset("graves"), animar=True))
+        en(16.6, lambda: w._panel.poner_curva(S.curva_de_preset("voces"), animar=True))
+        en(17.8, lambda: w._panel.poner_curva(S.curva_de_preset("brillante"), animar=True))
+        en(19.2, lambda: w._panel.close())
+        en(19.4, lambda: w.poner_compacto(True))
+        en(21.2, lambda: w.poner_compacto(False))
+        fin = 22.2
     for seg, f in agenda:
         QTimer.singleShot(int(seg * 1000), f)
     QTimer.singleShot(int(fin * 1000), app.quit)
@@ -155,20 +156,21 @@ if __name__ == "__main__":
             cuadros = len(list(carpeta.glob("*.png")))
             print(f"{cuadros} cuadros en {carpeta}")
             print(f"CARPETA={carpeta}")
-        sys.exit(0)
+        sys.stdout.flush()
+        os._exit(0)                                 # el panel del ecualizador puede dejar colgado el cierre normal
     for modo in ("png", "gif"):
         r = subprocess.run([sys.executable, __file__, modo], capture_output=True, text=True,
-                           env={**os.environ, "TEMA": str(TEMA)})
+                           env=os.environ)
         sys.stderr.write("\n".join(l for l in r.stderr.splitlines() if "propagateSizeHints" not in l) + "\n")
         if modo == "gif":
             carpeta = [l.split("=", 1)[1] for l in r.stdout.splitlines() if l.startswith("CARPETA=")][-1]
             docs = RAIZ / "docs"
             filtro = "scale=720:-2:flags=lanczos"   # los cuadros son de 920x1400
-            filtro_gif = "scale=360:-1:flags=lanczos"
-            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", "20", "-start_number", "6", "-i",
+            filtro_gif = "scale=440:-1:flags=lanczos"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", "20", "-start_number", "8", "-i",
                             f"{carpeta}/f%04d.png", "-vf", f"{filtro_gif},fps=15,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];"
                             "[b][p]paletteuse=dither=bayer:bayer_scale=4", str(docs / "demo.gif")], check=True)
-            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", "20", "-start_number", "6", "-i",
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", "20", "-start_number", "8", "-i",
                             f"{carpeta}/f%04d.png", "-vf", filtro, "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-pix_fmt", "yuv420p",
                             "-movflags", "+faststart", "-an", str(docs / "demo.mp4")], check=True)
             print("listo:", docs / "demo.gif", f"({(docs / 'demo.gif').stat().st_size // 1024} KB)")
