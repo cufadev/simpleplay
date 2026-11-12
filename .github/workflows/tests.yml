@@ -1,0 +1,37 @@
+# Runs the test suite on every push and pull request (Linux, no sound card and no screen:
+# the tests use a simulated audio device and Qt's offscreen platform).
+name: tests
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "*.md"]
+  pull_request:
+    paths-ignore: ["docs/**", "*.md"]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: System packages (ffmpeg for the test corpus, libraries Qt needs without a screen)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1
+
+      - name: Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate the test corpus
+        run: python tests/generar_corpus.py
+
+      - name: Tests
+        run: python tests/correr.py
