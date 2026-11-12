@@ -63,7 +63,8 @@ No streaming, no accounts, no ads.
 > **Current version: 1.8.5, Linux only.** The Windows and macOS builds are still **1.8.2** (no notch there yet).
 > See [Where the notch works](#the-notch) before counting on it.
 
-Get the AppImage from the [Releases](../../releases) page, then make it executable and run it:
+Get the AppImage from the [Releases](../../releases) page (to check the file you got, see
+[SECURITY.md](SECURITY.md)), then make it executable and run it:
 
 ```
 chmod +x simpleplay-1.8.5-x86_64.AppImage

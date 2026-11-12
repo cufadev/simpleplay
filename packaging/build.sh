@@ -42,4 +42,7 @@ chmod +x "$A/AppRun"
 ARCH=x86_64 "$TOOL" --appimage-extract-and-run "$A" "dist/simpleplay-$VERSION-x86_64.AppImage"
 # dist/simpleplay-actual.AppImage apunta siempre al último que se armó (los lanzadores fijados en la barra lo usan)
 ln -sfn "simpleplay-$VERSION-x86_64.AppImage" dist/simpleplay-actual.AppImage
+# la suma SHA-256 va al lado, para subirla al release junto con el AppImage (ver SECURITY.md)
+(cd dist && sha256sum "simpleplay-$VERSION-x86_64.AppImage" > "simpleplay-$VERSION-x86_64.AppImage.sha256")
 ls -lh dist/*.AppImage
+cat "dist/simpleplay-$VERSION-x86_64.AppImage.sha256"

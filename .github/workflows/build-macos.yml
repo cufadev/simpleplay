@@ -63,16 +63,20 @@ jobs:
           test -d /tmp/simpleplay-dmg/simpleplay.app
           test -L /tmp/simpleplay-dmg/Applications
           hdiutil detach /tmp/simpleplay-dmg
+          # SHA-256 next to the dmg (see SECURITY.md)
+          (cd dist && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256")
           echo "DMG=$dmg" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
         with:
           name: simpleplay-macos-${{ matrix.arch }}
-          path: ${{ env.DMG }}
+          path: |
+            ${{ env.DMG }}
+            ${{ env.DMG }}.sha256
 
       - name: Attach to the release
         if: inputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
-        run: gh release upload "$TAG" "$DMG" --clobber
+        run: gh release upload "$TAG" "$DMG" "$DMG.sha256" --clobber
