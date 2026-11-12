@@ -25,6 +25,19 @@ The sections below keep the detail of each idea; this is the order to do them in
 8. **Rename and domain.** The new name (Tarab, `playtarab`) needs the domain, then a full rename: repository, download
    file names, icon, texts and links. Best done together with 2.0.
 
+**Planned for the next version (decided 2026-11-09, ideas taken from reviewing VANTA Music)**
+- **Tolerant search in the list:** ignore accents and typos, put originals before covers.
+- **Radio from your own library:** pick a track and queue similar ones by artist, genre and year, offline. Goes together with
+  weighing shuffle by artist (item 6).
+- **Download hygiene:** publish the SHA-256 of every AppImage and zip in the release notes, plus a short `SECURITY.md`
+  explaining how to check a download.
+- **Share the track as a picture:** a button that exports the card (cover, title, player style) as a PNG.
+
+**Synced lyrics (to be worked on properly, own version; not rushed)**
+- Read them offline from a `.lrc` next to the file or from the tags; highlight the current line in the card and show it in the
+  notch instead of the title. Optional, off by default: fetch lyrics from LRCLIB (open, no key), the only thing that would leave
+  the computer.
+
 **2.0**
 9. **Split `simpleplay.py` into modules** (plan below). Never mixed with feature work.
 10. **Connect to a server (Navidrome / Subsonic, then Jellyfin)** as a music source (item 5 above). Wanted for 2.0 (decided 2026-10-23); reference: Rufin.
