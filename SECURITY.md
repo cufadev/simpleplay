@@ -8,7 +8,7 @@ exact file. Download both into the same folder and compare them before running a
 **Linux**
 
 ```sh
-sha256sum -c simpleplay-1.8.5-x86_64.AppImage.sha256
+sha256sum -c simpleplay-1.8.6-x86_64.AppImage.sha256
 ```
 
 **macOS**
