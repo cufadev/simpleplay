@@ -3,7 +3,7 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
-## [1.8.6] - unreleased
+## [1.8.6] - 2026-11-12
 
 ### Changed
 - **The notch remembers its screen.** On a multi-monitor setup, it now docks back to the screen it was on when you
