@@ -61,15 +61,15 @@ No streaming, no accounts, no ads.
 
 ## Download
 
-> **Current version: 1.8.6, Linux only.** The Windows and macOS builds are still **1.8.2** (no notch there yet).
+> **Current version: 1.8.9, Linux only.** The Windows and macOS builds are still **1.8.2** (no notch there yet).
 > See [Where the notch works](#the-notch) before counting on it.
 
 Get the AppImage from the [Releases](../../releases) page (to check the file you got, see
 [SECURITY.md](SECURITY.md)), then make it executable and run it:
 
 ```
-chmod +x simpleplay-1.8.6-x86_64.AppImage
-./simpleplay-1.8.6-x86_64.AppImage
+chmod +x simpleplay-1.8.9-x86_64.AppImage
+./simpleplay-1.8.9-x86_64.AppImage
 ```
 
 On GNOME you can also right click the file, open **Properties > Permissions** and enable
@@ -81,7 +81,7 @@ Requirements:
   Fedora 36+, Linux Mint 21+, Arch and similar).
 - `libGL` and `libEGL` (every desktop install has them).
 - FUSE 2 to run AppImages directly (`libfuse2t64` on recent Ubuntu). Without it, run
-  `./simpleplay-1.8.6-x86_64.AppImage --appimage-extract-and-run`.
+  `./simpleplay-1.8.9-x86_64.AppImage --appimage-extract-and-run`.
 
 It does not add itself to your applications menu. Use
 [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher), or copy
@@ -89,7 +89,7 @@ It does not add itself to your applications menu. Use
 
 ### Windows
 
-The latest Windows build is **1.8.2** (1.8.6 is Linux only for now). Download
+The latest Windows build is **1.8.2** (1.8.9 is Linux only for now). Download
 `simpleplay-1.8.2-windows-x64.zip` from the [Releases](../../releases) page, unzip it
 and run `simpleplay.exe`. There is nothing to install. The file is not signed, so Windows
 SmartScreen shows "Windows protected your PC": click **More info** > **Run anyway**. The media
@@ -164,7 +164,7 @@ No sound, or the spectrum bars stay flat? Check the decoding and the sound devic
 the window:
 
 ```
-./simpleplay-1.8.6-x86_64.AppImage --diagnose some-song.mp3
+./simpleplay-1.8.9-x86_64.AppImage --diagnose some-song.mp3
 ```
 
 (or `python simpleplay.py --diagnose some-song.mp3` from source). To see what the player is

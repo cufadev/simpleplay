@@ -3,7 +3,7 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
-## [Unreleased]
+## [1.8.9] - 2026-11-17
 
 ### Added
 - **The track list in the compact bar and the notch.** A list button sits next to "back to the card"; the list hangs
