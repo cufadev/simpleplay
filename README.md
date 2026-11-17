@@ -61,7 +61,7 @@ No streaming, no accounts, no ads.
 
 ## Download
 
-> **Current version: 1.8.9.** Linux (AppImage) and Windows (zip). The macOS builds are still **1.8.2**.
+> **Current version: 1.8.9.** Linux (AppImage), Windows (zip) and macOS (.dmg for Intel and Apple Silicon, tested only on GitHub's servers).
 > See [Where the notch works](#the-notch) before counting on it.
 
 Get the AppImage from the [Releases](../../releases) page (to check the file you got, see
@@ -156,7 +156,7 @@ It only docks where the top edge of that screen is free (no panel or taskbar); w
 | KDE Plasma, Wayland | **Works. The only setup tested.** KDE lets the app place its window through a KWin script. |
 | X11 (any desktop) | Implemented with the "stay on top" window hint, **untested**. |
 | GNOME and other Wayland desktops | **Not available**: a Wayland app cannot place its own window there. The menu entry is disabled and says why. |
-| Windows, macOS | Windows: yes (the 1.8.9 zip). macOS: not in a release yet. Neither has the notch. |
+| Windows, macOS | Yes, in the 1.8.9 release, but without the notch. |
 
 ## Troubleshooting
 

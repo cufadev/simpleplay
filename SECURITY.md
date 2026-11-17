@@ -14,7 +14,7 @@ sha256sum -c simpleplay-1.8.9-x86_64.AppImage.sha256
 **macOS**
 
 ```sh
-shasum -a 256 -c simpleplay-1.8.2-macos-x86_64.dmg.sha256
+shasum -a 256 -c simpleplay-1.8.9-macos-intel.dmg.sha256
 ```
 
 **Windows (PowerShell)**
