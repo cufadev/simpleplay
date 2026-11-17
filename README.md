@@ -61,7 +61,7 @@ No streaming, no accounts, no ads.
 
 ## Download
 
-> **Current version: 1.8.9, Linux only.** The Windows and macOS builds are still **1.8.2** (no notch there yet).
+> **Current version: 1.8.9.** Linux (AppImage) and Windows (zip). The macOS builds are still **1.8.2**.
 > See [Where the notch works](#the-notch) before counting on it.
 
 Get the AppImage from the [Releases](../../releases) page (to check the file you got, see
@@ -89,8 +89,8 @@ It does not add itself to your applications menu. Use
 
 ### Windows
 
-The latest Windows build is **1.8.2** (1.8.9 is Linux only for now). Download
-`simpleplay-1.8.2-windows-x64.zip` from the [Releases](../../releases) page, unzip it
+The latest Windows build is **1.8.9**. Download
+`simpleplay-1.8.9-windows-x64.zip` from the [Releases](../../releases) page, unzip it
 and run `simpleplay.exe`. There is nothing to install. The file is not signed, so Windows
 SmartScreen shows "Windows protected your PC": click **More info** > **Run anyway**. The media
 keys are not available on Windows.
@@ -156,7 +156,7 @@ It only docks where the top edge of that screen is free (no panel or taskbar); w
 | KDE Plasma, Wayland | **Works. The only setup tested.** KDE lets the app place its window through a KWin script. |
 | X11 (any desktop) | Implemented with the "stay on top" window hint, **untested**. |
 | GNOME and other Wayland desktops | **Not available**: a Wayland app cannot place its own window there. The menu entry is disabled and says why. |
-| Windows, macOS | Not in a release yet (their builds stay at 1.8.2). |
+| Windows, macOS | Windows: yes (the 1.8.9 zip). macOS: not in a release yet. Neither has the notch. |
 
 ## Troubleshooting
 

@@ -20,8 +20,8 @@ shasum -a 256 -c simpleplay-1.8.2-macos-x86_64.dmg.sha256
 **Windows (PowerShell)**
 
 ```powershell
-(Get-FileHash simpleplay-1.8.2-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
-Get-Content simpleplay-1.8.2-windows-x64.zip.sha256
+(Get-FileHash simpleplay-1.8.9-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
+Get-Content simpleplay-1.8.9-windows-x64.zip.sha256
 ```
 
 On Linux and macOS the answer must be `OK`. On Windows the two lines must show the same sum. If they do not match,
