@@ -511,6 +511,40 @@ def _norm(t):
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]+", " ", t)).strip()
 
 
+def _distancia(a, b, tope):
+    """Distancia de edición entre a y b (una letra de más, de menos, cambiada o dos intercambiadas cuentan 1);
+    devuelve tope + 1 en cuanto se sabe que lo pasa."""
+    if abs(len(a) - len(b)) > tope:
+        return tope + 1
+    ant2, ant = None, list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        fila = [i]
+        for j, cb in enumerate(b, 1):
+            v = min(ant[j] + 1, fila[j - 1] + 1, ant[j - 1] + (ca != cb))
+            if ant2 is not None and i > 1 and j > 1 and ca == b[j - 2] and a[i - 2] == cb:
+                v = min(v, ant2[j - 2] + 1)
+            fila.append(v)
+        if min(fila) > tope:
+            return tope + 1
+        ant2, ant = ant, fila
+    return ant[-1]
+
+
+def coincide_tolerante(palabra, pajar):
+    """¿La palabra buscada está en el texto, aunque tenga un error de tipeo? Ya normalizados. Con 4 letras o más
+    tolera 1 error (2 desde 8 letras); compara con cada palabra del texto o con su comienzo (se escribe de a poco)."""
+    if palabra in pajar:
+        return True
+    n = len(palabra)
+    if n < 4:
+        return False
+    tope = 1 if n < 8 else 2
+    for t in pajar.split():
+        if _distancia(palabra, t, tope) <= tope or (len(t) > n and _distancia(palabra, t[:n], tope) <= tope):
+            return True
+    return False
+
+
 def parecido(a, b):
     return difflib.SequenceMatcher(None, _norm(a), _norm(b)).ratio()
 
@@ -3340,6 +3374,61 @@ def lado_para_panel(pantalla, vent, ancho):
     return "der" if libre_der >= libre_izq else "izq"
 
 
+def atajos_de_teclado():
+    """Las teclas de la ventana, en grupos: (título del grupo, [(tecla, qué hace)])."""
+    return [
+        (tr("Reproducción", "Playback"), [
+            ("Espacio" if ES else "Space",tr("Reproducir / pausar", "Play / pause")),
+            ("N", tr("Siguiente tema", "Next track")),
+            ("P", tr("Tema anterior", "Previous track")),
+            ("← / →", tr("Retroceder / adelantar 5 s", "Back / forward 5 s")),
+            ("R", tr("Cambiar la repetición", "Change repeat mode")),
+        ]),
+        (tr("Lista", "List"), [
+            ("L", tr("Mostrar / ocultar la lista", "Show / hide the list")),
+            ("Ctrl+F", tr("Buscar en la lista", "Search the list")),
+            ("Supr" if ES else "Del",tr("Quitar el tema elegido", "Remove the selected track")),
+            ("Ctrl+O", tr("Abrir archivos", "Open files")),
+            ("Ctrl+Shift+O", tr("Abrir carpeta", "Open folder")),
+        ]),
+        (tr("Ventana", "Window"), [
+            ("M", tr("Modo compacto", "Compact mode")),
+            ("Shift+M", tr("Pegar arriba (notch) / soltarlo", "Dock to the top (notch) / release")),
+            ("Ctrl+Alt+M", tr("Mosquito (control remoto)", "Mosquito (remote control)")),
+            ("Esc", tr("Salir de la búsqueda, plegar la lista o cerrar", "Leave the search, fold the list or close")),
+            ("F1", tr("Esta ayuda", "This help")),
+        ]),
+    ]
+
+
+class DialogoAtajos(QDialog):
+    """Ayuda con todas las teclas, para no tener que adivinarlas."""
+
+    def __init__(self, padre):
+        super().__init__(padre)
+        self.setWindowTitle(tr("Atajos de teclado", "Keyboard shortcuts"))
+        self.setModal(False)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(22, 18, 22, 18)
+        lay.setSpacing(4)
+        for n, (grupo, filas) in enumerate(atajos_de_teclado()):
+            tit = QLabel(grupo.upper())
+            tit.setStyleSheet(tinte("color: #ff6a1a; font-size: 11px; font-weight: 600; letter-spacing: 1px;"))
+            lay.addSpacing(10 if n else 0)
+            lay.addWidget(tit)
+            for tecla, texto in filas:
+                f = QHBoxLayout()
+                k = QLabel(tecla)
+                k.setMinimumWidth(110)
+                k.setStyleSheet("color: #ffffff; font-weight: 600;")
+                t = QLabel(texto)
+                t.setStyleSheet("color: #cfcfd4;")
+                f.addWidget(k)
+                f.addWidget(t, 1)
+                lay.addLayout(f)
+        self.setFixedSize(self.sizeHint())
+
+
 class PanelLateral(QDialog):
     """Base de los paneles del sonido: una ventana sin marco, con el mismo vidrio oscuro, esquinas y sombra que el
     reproductor. Se abre pegada al costado de la ventana (a la derecha si hay lugar, si no a la izquierda), la sigue
@@ -5128,12 +5217,15 @@ class Player(QWidget):
         self.mini_prev = IconButton("prev", 30)
         self.mini_play = IconButton("play", 36)
         self.mini_next = IconButton("next", 30)
+        self.mini_lista = IconButton("list", 30)           # despliega la lista colgando de la barra (y del notch)
+        self.mini_lista.setCheckable(True)
+        self.mini_lista.setToolTip(tr("Lista de temas (L)", "Track list (L)"))
         self.mini_volver = IconButton("expand", 28)
         self.mini_volver.setToolTip(tr("Volver a la tarjeta (M)", "Back to the card (M)"))
         ml = self.mini_lay = QHBoxLayout(self.mini)
         ml.setContentsMargins(10, 10, 10, 10)
         ml.setSpacing(6)
-        for b in (self.mini_prev, self.mini_play, self.mini_next, self.mini_volver):
+        for b in (self.mini_prev, self.mini_play, self.mini_next, self.mini_lista, self.mini_volver):
             ml.addWidget(b, 0, Qt.AlignVCenter)
         self.mini.hide()
         self.compacto = False
@@ -5175,6 +5267,7 @@ class Player(QWidget):
         self.btn_compacto.clicked.connect(lambda: self.poner_compacto(True))
         self.mini_volver.clicked.connect(lambda: self.poner_compacto(False))
         self.btn_lista.toggled.connect(self.alternar_lista)
+        self.mini_lista.toggled.connect(self.btn_lista.setChecked)
         self.lista.itemDoubleClicked.connect(lambda it: self.reproducir(self.lista.row(it)))
 
         self.timer = QTimer(self)
@@ -5197,7 +5290,9 @@ class Player(QWidget):
                               (QKeySequence(QKeySequence.Find), self.enfocar_buscador),
                               (QKeySequence(Qt.Key_R), self.alternar_repetir),
                               (QKeySequence(Qt.Key_M), lambda: self.poner_compacto(not self.compacto)),
-                              (QKeySequence("Shift+M"), self.alternar_notch)):
+                              (QKeySequence("Shift+M"), self.alternar_notch),
+                              (QKeySequence(Qt.Key_L), lambda: self.btn_lista.setChecked(not self.btn_lista.isChecked())),
+                              (QKeySequence(Qt.Key_F1), self.mostrar_atajos)):
             QShortcut(tecla, self).activated.connect(accion)
 
         if HAY_DBUS and not os.environ.get("SIMPLEPLAY_NO_MPRIS"):
@@ -5543,13 +5638,18 @@ class Player(QWidget):
         self.cuenta.setText(txt)
 
     def _filtrar(self, texto):
-        """Muestra solo los temas que contienen todas las palabras buscadas (sin acentos ni mayúsculas)."""
+        """Muestra solo los temas que contienen todas las palabras buscadas (sin acentos ni mayúsculas, y tolerando
+        un error de tipeo)."""
         palabras = _norm(texto).split()
+        pajares = []
         for i in range(self.lista.count()):
-            item = self.lista.item(i)
-            d = self.datos.get(item.data(Qt.UserRole))
-            pajar = _norm(f"{d['nombre']} {d['album']}") if d else ""
-            item.setHidden(bool(palabras) and not all(w in pajar for w in palabras))
+            d = self.datos.get(self.lista.item(i).data(Qt.UserRole))
+            pajares.append(_norm(f"{d['nombre']} {d['album']}") if d else "")
+        exactos = [all(w in p for w in palabras) for p in pajares]
+        if palabras and not any(exactos):      # si nada coincide tal cual, se prueba tolerando errores de tipeo
+            exactos = [all(coincide_tolerante(w, p) for w in palabras) for p in pajares]
+        for i, ok in enumerate(exactos):
+            self.lista.item(i).setHidden(bool(palabras) and not ok)
         # con una búsqueda activa no se arrastra: las posiciones visibles no son las reales
         self.lista.setDragDropMode(QAbstractItemView.NoDragDrop if palabras else QAbstractItemView.InternalMove)
         self._t_cuenta.start()
@@ -5578,6 +5678,9 @@ class Player(QWidget):
 
     def _esc(self):
         """Esc primero sale de la búsqueda; con la búsqueda vacía cierra el reproductor."""
+        if self.compacto and self.lista_abierta and not (self.buscador.hasFocus() or self.buscador.text()):
+            self.btn_lista.setChecked(False)               # en la barra / notch, Esc primero pliega la lista
+            return
         if self.buscador.hasFocus() or self.buscador.text():
             self.buscador.clear()
             self.buscador.clearFocus()
@@ -6363,7 +6466,17 @@ class Player(QWidget):
     def alternar_lista(self, abrir):
         self.lista_abierta = abrir
         self.despliegue.stop()
+        self.mini_lista.blockSignals(True)
+        self.mini_lista.setChecked(abrir)
+        self.mini_lista.blockSignals(False)
+        if self.compacto:                      # colgando de la barra: del ancho de la barra, no del de la tarjeta
+            self.caja.setFixedWidth(self.mini.width())
+        else:
+            self.caja.setMinimumWidth(0)
+            self.caja.setMaximumWidth(16777215)
         if abrir:
+            if self.compacto:
+                self._mostrar(animar=False)    # con el notch escondido, la lista no tendría de dónde colgar
             self._medir_panel()
             self.caja.show()
         self.despliegue.setStartValue(self.mezcla_lista if hasattr(self, "mezcla_lista") else 0.0)
@@ -6397,18 +6510,13 @@ class Player(QWidget):
         if not si and self.notch:
             self.notch = False
             self._forma_notch()
-        if si:  # la lista se cierra de golpe: en la píldora no hay lugar para ella
-            self.despliegue.stop()
-            self.lista_abierta = False
-            self.mezcla_lista = 0.0
-            self.caja.setMaximumHeight(0)
-            self.caja.hide()
-            self.btn_lista.blockSignals(True)
-            self.btn_lista.setChecked(False)
-            self.btn_lista.blockSignals(False)
+        if si:  # la lista (si estaba abierta) pasa a colgar de la barra
+            self.caja.setFixedWidth(self.mini.width())
             self.top.removeWidget(self.pill)
             self.mini_lay.insertWidget(0, self.pill, 1)
         else:
+            self.caja.setMinimumWidth(0)
+            self.caja.setMaximumWidth(16777215)
             self.mini_lay.removeWidget(self.pill)
             self.top.insertWidget(0, self.pill, 1)
         self.pill.show()
@@ -6671,7 +6779,7 @@ class Player(QWidget):
         botón apretado, una transición en curso) y en ese caso vuelve a esperar."""
         if not (self.notch and self.compacto and self.notch_autoocultar) or self._oculto:
             return
-        if self.underMouse() or self._trans is not None or self._desl is not None \
+        if self.lista_abierta or self.underMouse() or self._trans is not None or self._desl is not None \
                 or QApplication.activePopupWidget() is not None or QApplication.mouseButtons() != Qt.NoButton:
             self._t_esconder.start()
             return
@@ -7164,10 +7272,20 @@ class Player(QWidget):
         menu = Menu(self)
         menu.addAction(f"simpleplay v{VERSION}").setEnabled(False)
         menu.addSeparator()
-        menu.addAction(tr("Abrir archivos…", "Open files…"), self.abrir)
-        menu.addAction(tr("Abrir carpeta…", "Open folder…"), self.abrir_carpeta)
+        # archivos
+        menu.addAction(tr("Abrir archivos…", "Open files…"), self.abrir, QKeySequence(QKeySequence.Open))
+        menu.addAction(tr("Abrir carpeta…", "Open folder…"), self.abrir_carpeta, QKeySequence("Ctrl+Shift+O"))
+        menu.addSeparator()
+        # la lista
+        al = menu.addAction(tr("Lista de temas", "Track list"),
+                            lambda: self.btn_lista.setChecked(not self.btn_lista.isChecked()), QKeySequence(Qt.Key_L))
+        al.setCheckable(True)
+        al.setChecked(self.lista_abierta)
+        menu.addAction(tr("Buscar", "Search"), self.enfocar_buscador, QKeySequence(QKeySequence.Find))
+        menu.addSeparator()
+        # la ventana
         menu.addAction(tr("Modo normal", "Normal mode") if self.compacto else tr("Modo compacto", "Compact mode"),
-                       lambda: self.poner_compacto(not self.compacto))
+                       lambda: self.poner_compacto(not self.compacto), QKeySequence(Qt.Key_M))
         if self.notch:
             menu.addAction(tr("Soltar el notch", "Release the notch"), lambda: self.poner_notch(False), QKeySequence("Shift+M"))
             ae = menu.addAction(tr("Esconder el notch solo", "Hide the notch automatically"))
@@ -7182,23 +7300,29 @@ class Player(QWidget):
             elif not self.borde_superior_libre():
                 a.setEnabled(False)
                 a.setText(tr("Pegar arriba (notch) — hay un panel ahí", "Dock to the top (notch) — a panel is there"))
-        if MOSQUITO:
-            menu.addAction(tr("Mosquito (control remoto)…", "Mosquito (remote control)…") +
-                           (tr(" · activo", " · on") if getattr(self, "_mosquito", None) is not None else ""),
-                           self.abrir_mosquito, QKeySequence("Ctrl+Alt+M"))
+        menu.addSeparator()
+        # ajustes
+        self._menu_sonido(menu)
         col = menu.addMenu(tr("Color de acento", "Accent color"))
         for clave, (es, en, hexa) in ACENTOS.items():
             b = col.addAction(_cubo(hexa), tr(es, en))
             b.setCheckable(True)
             b.setChecked(self.acento == clave)
             b.triggered.connect(lambda _=False, c=clave: self.poner_acento(c))
-        oc = menu.addAction(tr("Ocultar controles solos", "Hide controls automatically"))
+        oc = menu.addAction(tr("Ocultar controles si no se usan", "Hide controls when idle"))
         oc.setCheckable(True)
         oc.setChecked(self.ocultar_controles)
         oc.triggered.connect(self.poner_ocultar_controles)
-        self._menu_sonido(menu)
         menu.addSeparator()
+        # extras
+        if MOSQUITO:
+            am = menu.addAction(tr("Mosquito (control remoto)…", "Mosquito (remote control)…"), self.abrir_mosquito,
+                                QKeySequence("Ctrl+Alt+M"))
+            am.setCheckable(True)
+            am.setChecked(getattr(self, "_mosquito", None) is not None)
+        menu.addAction(tr("Atajos de teclado…", "Keyboard shortcuts…"), self.mostrar_atajos, QKeySequence(Qt.Key_F1))
         menu.addAction(tr("Apoyar el proyecto…", "Support the project…"), self.apoyar)
+        menu.addSeparator()
         menu.addAction(tr("Cerrar", "Close"), self.close)
         menu.exec(e.globalPos())
 
@@ -7236,6 +7360,15 @@ class Player(QWidget):
             self.poner_acento(ARCHIVO_ACENTO.read_text().strip(), guardar=False)
         except OSError:
             pass
+
+    def mostrar_atajos(self):
+        """F1: la ayuda con todas las teclas (si ya está abierta, se cierra)."""
+        d = getattr(self, "_dlg_atajos", None)
+        if d is not None and d.isVisible():
+            d.close()
+            return
+        self._dlg_atajos = DialogoAtajos(self)
+        self._dlg_atajos.show()
 
     def apoyar(self):
         """Abre la página de donaciones en el navegador (es voluntario: nada en la ventana lo pide)."""

@@ -26,7 +26,8 @@ No streaming, no accounts, no ads.
 - Previous, play/pause, next, shuffle, repeat (off, the whole list, one track), and a time bar you
   can click or drag to seek.
 - A playlist panel that slides open. It shows "Artist - Title" from the tags, and has a **search
-  box**, **sorting** (by artist, title or album) and **drag and drop** to reorder.
+  box** that forgives typos, **sorting** (by artist, title or album) and **drag and drop** to reorder. It also opens
+  from the compact bar and the notch.
 - Add files or **a whole folder** (with its subfolders) from the **+** button, with a right click,
   by dragging files or folders onto the window, or from the command line. It remembers the last
   folder you used. Select several tracks with `Ctrl`/`Shift`+click and remove them with **-**.
@@ -130,8 +131,9 @@ PipeWire or ALSA on Linux (WASAPI on Windows). There is no `ffmpeg` or SDL depen
 | Track info / spectrum | click the top pill |
 | Compact mode | the button next to the list one, `M`, or right click; the same to go back |
 | Notch (dock the compact bar to the top edge) | `Shift+M`, or right click > **Dock to the top (notch)**; the same to release it |
-| Playlist | the list button (inside it: search box, sort, **-** and **+**) |
-| Search the list | `Ctrl+F`, type; `Enter` plays the first result, `Esc` clears the search |
+| Playlist | the list button or `L` (inside it: search box, sort, **-** and **+**); it also hangs from the compact bar and the notch |
+| Search the list | `Ctrl+F`, type (a typo or two is forgiven); `Enter` plays the first result, `Esc` clears the search |
+| All the keys | `F1`, or right click > **Keyboard shortcuts…** |
 | Sort the list | the sort button in the playlist: by artist, title, album, or the order added |
 | Reorder tracks | drag them in the playlist (not while a search is active) |
 | Repeat | the button at the left of the controls, or `R`: off > whole list > one track |

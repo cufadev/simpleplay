@@ -370,11 +370,51 @@ class TestTransicion(Base):
         self.assertGreater(self.w.height(), 320)
         self.w.poner_compacto(True)
         self.assertTrue(espera(2.0, lambda: self.w._trans is None))
-        self.assertEqual((self.w.width(), self.w.height()), (380 + 2 * M, 56 + 2 * M))
-        self.assertFalse(self.w.caja.isVisible())
+        self.assertTrue(self.w.lista_abierta)                      # la lista pasa a colgar de la barra
+        self.assertEqual(self.w.caja.width(), self.w.mini.width())
         self.w.poner_compacto(False)
         self.assertTrue(espera(2.0, lambda: self.w._trans is None))
-        self.assertEqual((self.w.width(), self.w.height()), (320 + 2 * M, 320 + 2 * M))   # la lista queda cerrada
+        self.assertTrue(self.w.lista_abierta)
+        self.w.alternar_lista(False)
+        espera(0.6)
+
+    def test_la_tecla_l_despliega_la_lista(self):
+        from PySide6.QtGui import QShortcut, QKeySequence
+        atajo = next(a for a in self.w.findChildren(QShortcut) if a.key() == QKeySequence(Qt.Key_L))
+        self.cargar(A, B)
+        self.w.poner_compacto(True, animar=False)
+        atajo.activated.emit()
+        espera(0.6)
+        self.assertTrue(self.w.lista_abierta)
+        atajo.activated.emit()
+        espera(0.6)
+        self.assertFalse(self.w.lista_abierta)
+
+    def test_la_ayuda_de_atajos_se_abre_y_cierra_y_las_nombra_todas(self):
+        from PySide6.QtGui import QShortcut
+        self.w.mostrar_atajos()
+        self.assertTrue(self.w._dlg_atajos.isVisible())
+        self.w.mostrar_atajos()
+        self.assertFalse(self.w._dlg_atajos.isVisible())
+        teclas = " ".join(t for _, filas in S.atajos_de_teclado() for t, _ in filas)
+        for a in self.w.findChildren(QShortcut):
+            nombre = a.key().toString()
+            if nombre in ("Space", "Left", "Right", "Del", "Delete", "Ctrl+Shift+M"):
+                continue                                       # van escritas con otro nombre ("Espacio", "←", "Supr")
+            self.assertIn(nombre, teclas, nombre)
+
+    def test_la_lista_cuelga_de_la_barra(self):
+        self.cargar(A, B)
+        self.w.poner_compacto(True, animar=False)
+        self.assertTrue(self.w.mini_lista.isVisibleTo(self.w.mini))
+        self.w.mini_lista.setChecked(True)
+        espera(0.6)
+        self.assertTrue(self.w.lista_abierta and self.w.btn_lista.isChecked())
+        self.assertGreater(self.w.height(), 56 + 2 * M + 60)
+        self.w.mini_lista.setChecked(False)
+        espera(0.6)
+        self.assertFalse(self.w.lista_abierta)
+        self.assertEqual(self.w.height(), 56 + 2 * M)
 
 
 class TestSombra(Base):
@@ -400,7 +440,7 @@ class TestSombra(Base):
         espera(0.6)
         self.assertEqual([r for _, r, _ in self.w._formas()], [30, 18])    # y el panel de la lista
         self.w.poner_compacto(True, animar=False)
-        self.assertEqual([r for _, r, _ in self.w._formas()], [28])        # o solo la barra
+        self.assertEqual([r for _, r, _ in self.w._formas()], [28, 18])    # la barra y la lista que cuelga de ella
 
     def test_apagada_no_hay_margen(self):
         import subprocess
@@ -463,6 +503,25 @@ class TestContadorYMiniatura(Base):
         self.w.quitar()
         espera(0.1)
         self.assertEqual(self.w.cuenta.text(), "1 tema")
+
+    def test_la_busqueda_tolera_errores_de_tipeo(self):
+        self.cargar(A, B)
+        espera(0.1)
+        for escrito, visibles in (("mnoo", 1), ("mon", 1), ("tonno", 1), ("zzzz", 0), ("mn", 0)):
+            self.w.buscador.setText(escrito)
+            espera(0.1)
+            vis = sum(1 for i in range(self.w.lista.count()) if not self.w.lista.item(i).isHidden())
+            self.assertEqual(vis, visibles, escrito)
+        self.w.buscador.clear()
+
+    def test_coincide_tolerante(self):
+        c = S.coincide_tolerante
+        self.assertTrue(c("metalica", "metallica one"))
+        self.assertTrue(c("bohemain", "bohemian rhapsody"))
+        self.assertTrue(c("zeppelin", "led zepelin"))
+        self.assertFalse(c("cat", "dog"))
+        self.assertFalse(c("perro", "pera"))
+        self.assertFalse(c("ab", "xyz"))
 
     def test_la_miniatura_se_funde_al_cambiar_de_tema(self):
         from PySide6.QtGui import QPixmap

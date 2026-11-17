@@ -3,6 +3,22 @@
 All notable changes to simpleplay. The version number lives in the `VERSION` constant in
 `simpleplay.py` and is shown when you right click the window.
 
+## [Unreleased]
+
+### Added
+- **The track list in the compact bar and the notch.** A list button sits next to "back to the card"; the list hangs
+  from the bar with the bar's width. While it is open the notch does not hide itself, and `Esc` folds the list before
+  anything else. Going from the card to the bar no longer closes the list.
+- **`L` shows and hides the list** (card, bar and notch).
+- **Keyboard shortcuts help.** `F1`, or right click > **Keyboard shortcuts…**, lists every key in one window.
+- **The search forgives typos.** If nothing matches exactly, it tries again allowing one wrong letter (two from eight
+  letters): "metalica" finds "Metallica". An exact match always wins, so "mono" does not bring "tono".
+
+### Changed
+- **The right-click menu is grouped** (files, list, window, settings, extras) with separators and every shortcut
+  shown. New entries: **Track list** and **Search**. "Hide controls automatically" is now "Hide controls when idle",
+  and Mosquito shows a check mark instead of "· on".
+
 ## [1.8.6] - 2026-11-12
 
 ### Changed
